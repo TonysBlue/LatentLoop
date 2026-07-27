@@ -1,0 +1,786 @@
+# LatentLoop：双通道连续状态自回归语言模型方案
+
+> 状态：研究方案草案 v0.1  
+> 日期：2026-07-25  
+> 目标：在保留标准 token 自回归一致性的同时，引入可跨 token、跨句子和跨对话轮次传播的连续 latent memory，并支持无外显 token 的内部思考步骤。
+
+## 1. 摘要
+
+LatentLoop 是一种双通道语言模型架构：模型一方面像标准自回归 Transformer 一样输出 token，并把实际输出 token 反馈给下一步，使模型能够“听见自己刚才说了什么”；另一方面，将当前最后一层隐藏状态写入独立的连续 latent memory，用于保存未被单个离散 token 完整表达的目标、计划、约束、语义和跨轮信息。
+
+该方案不以 latent state 替代 token 通道，而是让两者形成不同时间尺度的互补机制：
+
+- token/KV 通道保存近期、精确、可观察的语言历史；
+- latent memory 保存长期、压缩、连续的内部状态；
+- 用户、工具和环境输入作为外部事件注入，带独立来源标识；
+- 控制器在 `THINK`、`SPEAK` 和 `STOP` 三种动作间选择，允许模型只更新内部状态而不产生外显文本。
+
+核心研究问题不是 latent 分支能否获得梯度，而是如何通过结构约束、时间尺度分离和训练任务，使它真正承担长期信息，而非复制 token embedding 或被完整 KV Cache 忽略。
+
+## 2. 设计目标与非目标
+
+### 2.1 设计目标
+
+1. **保持自回归一致性**：未来生成条件于实际输出 token，而不是仅条件于输出前的概率分布。
+2. **连续信息传播**：隐藏状态中的高维信息无需完全经过离散 token 瓶颈即可跨步传播。
+3. **跨轮长期记忆**：latent memory 主要承载目标、约束、计划和较早对话信息。
+4. **支持静默思考**：内部状态可以推进若干步而不向用户输出 token。
+5. **控制缓存增长**：长期目标是用固定容量 latent memory 配合短窗口 KV，而不是额外保留无限增长的双份历史。
+6. **训练与推理对齐**：逐步引入模型自身输出，降低 teacher forcing 与真实生成之间的分布偏移。
+
+### 2.2 非目标
+
+- 第一阶段不追求完全替代标准 Transformer 或 KV Cache。
+- 不假设单个 latent vector 能无损压缩任意长历史。
+- 不要求 latent state 可直接翻译为自然语言思维链。
+- 不把静默思考等同于可靠推理；它仍需受预算、监督和评测约束。
+
+## 3. 核心概念
+
+设第 $t$ 个生成步包含以下变量：
+
+| 符号 | 含义 |
+|---|---|
+| $y_t$ | 第 $t$ 步实际输出的 token |
+| $e_t=E(y_t)$ | 实际输出 token 的 embedding |
+| $h_t$ | 主干模型在当前步的最后层隐藏状态 |
+| $Z_t\in\mathbb{R}^{M\times d_z}$ | 固定数量的 latent memory slots |
+| $U_t$ | 当前步新增的用户、工具或环境输入表示 |
+| $C_t$ | 短窗口局部 KV Cache |
+| $a_t$ | 控制动作：`THINK`、`SPEAK` 或 `STOP` |
+
+LatentLoop 将模型的内部状态分为两种时间尺度：
+
+- **快速状态**：token embedding 与局部 KV，每个 token 更新，负责句法、指代和局部一致性；
+- **慢速状态**：latent memory，按学习到的写入门更新，负责长期目标、计划和跨轮信息。
+
+### 3.1 $h_t$：当前位置的最后层隐藏状态
+
+$h_t$ 是第 $t$ 个生成位置经过主干 Transformer 最后一层后得到的表示。单个样本在 decode 阶段通常为：
+
+$$
+h_t\in\mathbb R^{d_{\text{model}}}
+$$
+
+加入 batch 维后为：
+
+$$
+h_t\in\mathbb R^{B\times d_{\text{model}}}
+$$
+
+例如 $B=2$、$d_{\text{model}}=4096$ 时，`h_t.shape = [2, 4096]`。实现中也可能保留长度为 1 的序列维，写成 `[B, 1, d_model]`。
+
+$h_t$ 综合了上一实际输出 token、局部 KV Cache、外部新增输入和 latent memory，是模型在当前位置的快速工作状态。它通常有两个主要去向：
+
+```text
+h_t -> LM Head -> logits -> 实际输出 token
+h_t -> Latent 更新器 -> 候选长期记忆
+```
+
+Prefill 阶段一次处理 $S$ 个位置，最后层输出为 $H\in\mathbb R^{B\times S\times d_{\text{model}}}$；其中最后一个有效位置的向量可记为 $h_S$，用于预测第一个新 token。Decode 阶段每次只有一个新位置，因此通常简写为 $h_t$。
+
+### 3.2 $Z_t$：固定容量的 latent memory
+
+$$
+Z_t\in\mathbb R^{M\times d_z}
+$$
+
+表示单个样本包含 $M$ 个 memory slots，每个 slot 是一个 $d_z$ 维连续向量。加入 batch 维后，实际张量通常为：
+
+$$
+Z_t\in\mathbb R^{B\times M\times d_z}
+$$
+
+例如 $B=2$、$M=16$、$d_z=2048$ 时，`Z_t.shape = [2, 16, 2048]`。可以将其理解为：
+
+```text
+Z_t = [z_t^(1), z_t^(2), ..., z_t^(M)]
+```
+
+每个 $z_t^{(i)}$ 都是一个 $d_z$ 维向量。不同 slots 可能在训练中逐渐形成用户偏好、当前目标、重要事实、未完成约束和下一步计划等分工，但默认不人工规定其语义。
+
+$Z_t$ 的容量不随序列长度增长。它保存的是经过学习压缩的长期状态，而不是每个历史 token 的精确副本。多个 slots 相比单个 latent vector 提供更大的容量，也允许主干和更新器通过 attention 选择性读取、写入不同记忆位置。
+
+### 3.3 KV Cache：逐层、逐 token 的注意力记录
+
+对于第 $l$ 层，Key 和 Value cache 的典型形状分别为：
+
+$$
+K_t^{(l)},V_t^{(l)}\in
+\mathbb R^{B\times H_{kv}\times S\times D}
+$$
+
+其中 $H_{kv}$ 是 KV head 数，$S$ 是已缓存的序列长度，$D$ 是每个 head 的维度。例如：
+
+```text
+K_cache[layer].shape = [2, 8, 1024, 128]
+V_cache[layer].shape = [2, 8, 1024, 128]
+```
+
+模型有 $L$ 层时，每层分别保存一组 K/V；逻辑上也可写成 `[L, B, H_kv, S, D]`，但实现中通常按层管理。KV Cache 对历史 token 的记录更精确，但存储量随 $S$ 线性增长。
+
+### 3.4 三种状态的区别
+
+| 状态 | 典型形状 | 是否随序列增长 | 信息粒度 | 主要用途 |
+|---|---|---:|---|---|
+| $h_t$ | `[B, d_model]` | 否 | 当前生成位置的综合工作状态 | 预测 token，驱动 latent 更新 |
+| $Z_t$ | `[B, M, d_z]` | 否 | 长期信息的固定容量压缩表示 | 保存目标、计划、约束和跨轮事实 |
+| 每层 KV Cache | `[B, H_kv, S, D]` 各两份 | 是 | 每层、每个历史 token 的精确 K/V | 让当前 Query 注意近期或完整历史 |
+
+三者的关系可以概括为：
+
+```text
+KV Cache：历史细节的逐层精确记录
+Z_t：长期历史和任务状态的压缩摘要
+h_t：当前一步读取 token、KV、Z_t 和外部输入后的即时结果
+```
+
+不能简单用 $h_t$ 直接替代 $Z_t$。$h_t$ 只有一个当前位置的向量，并且随每个 token 快速变化；若令 $Z_{t+1}=h_t$，当前措辞和句法信息可能覆盖长期约束。LatentLoop 因此使用多个 slots、独立更新器和写入门，让 $h_t$ 只作为更新长期记忆的信息来源之一。
+
+## 4. 整体架构
+
+```mermaid
+flowchart LR
+    U["新增外部输入<br/>用户 / 工具 / 环境"] --> UE["外部输入编码器<br/>含角色与来源标识"]
+    Y["上一实际输出 token"] --> TE["Token Embedding"]
+
+    UE --> F["主干 Transformer F"]
+    TE --> F
+    C["短窗口 KV Cache C_t"] --> F
+    Z["Latent Memory Z_t<br/>M 个连续 slots"] --> CA["Latent Cross-Attention"]
+    CA --> F
+
+    F --> H["Last Hidden State h_t"]
+    H --> LM["LM Head"]
+    LM --> P["Token 分布 p_t"]
+    P --> CTRL["动作与采样控制器"]
+    CTRL -->|SPEAK| OUT["输出 token y_t"]
+    CTRL -->|THINK| SIL["内部 SILENT 事件"]
+    CTRL -->|STOP| WAIT["停止并等待外部输入"]
+
+    H --> G["Latent Update Transformer G"]
+    Z --> G
+    OUT --> ACK["实际输出确认信号"]
+    SIL --> ACK
+    UE --> G
+    ACK --> G
+    G --> GATE["写入门 / 保持门"]
+    GATE --> ZN["更新后的 Z_(t+1)"]
+    ZN --> Z
+    OUT --> TE
+```
+
+### 4.1 三条输入通道
+
+下一步主干模型不应简单接收三个向量的逐元素相加，而应显式区分来源：
+
+1. **Self-token 通道**：上一实际输出 token，保证模型知道自己真正说了什么；
+2. **External-event 通道**：用户、工具或环境新增信息，只在事件发生时注入；
+3. **Latent-memory 通道**：固定容量连续状态，通过 cross-attention 或 gated adapter 注入。
+
+每条通道应使用独立的 type/role embedding，例如 `SELF_TOKEN`、`USER_TOKEN`、`TOOL_TOKEN`、`LATENT_SLOT` 和 `SILENT_EVENT`。
+
+## 5. 单步状态转移
+
+### 5.1 主干计算与 token 输出
+
+主干模型接收上一实际输出 token、外部新增输入、latent memory 和局部缓存：
+
+$$
+h_t = F_\theta\!\left(e_{t-1}, U_t, Z_t, C_t\right)
+$$
+
+词表分布为：
+
+$$
+p_t = \operatorname{softmax}(W_{\text{vocab}}h_t)
+$$
+
+当动作是 `SPEAK` 时，从 $p_t$ 中选择实际输出：
+
+$$
+y_t \sim \operatorname{Decode}(p_t)
+$$
+
+实际的 $y_t$ 会在下一步重新进入 self-token 通道，从而保持：
+
+$$
+p(y_{t+1}\mid y_{\le t},Z_t,U_{\le t})
+$$
+
+而不是让未来与本次实际采样结果条件独立。
+
+### 5.2 Latent memory 更新
+
+这一过程可以理解为三步：**形成候选记忆、判断写入多少、融合新旧记忆**。模型不是每生成一个 token 就覆盖全部长期状态，而是只把当前值得长期保存的信息写入相应 slots。
+
+#### 第一步：形成候选记忆
+
+候选状态由独立的更新网络产生：
+
+$$
+\widehat Z_{t+1}
+=G_\phi\!\left(Z_t,h_t,A_t,U_t\right)
+$$
+
+各输入的职责如下：
+
+| 输入 | 含义 |
+|---|---|
+| $Z_t$ | 更新前已经保存的长期记忆 |
+| $h_t$ | 主干模型对当前位置和上下文的综合理解 |
+| $A_t$ | 当前实际说了什么，或执行了 THINK/STOP |
+| $U_t$ | 当前新增的用户、工具或环境信息 |
+| $\widehat Z_{t+1}$ | 更新器建议写入的候选记忆，不会立即覆盖旧记忆 |
+
+例如，旧记忆可能保存“用户要求中文”“当前主题是 KV Cache”“最后需要给计算例子”。当模型完成概念解释时，更新器可以提出候选状态“下一步开始计算例子”，但是否覆盖对应 slot 仍由写入门决定。
+
+#### 第二步：记录实际发生的动作
+
+其中 $A_t$ 是当前动作的确认信息：
+
+$$
+A_t=
+\begin{cases}
+E(y_t)+E_{\text{SPEAK}}, & a_t=\text{SPEAK}\\
+E_{\text{SILENT}}, & a_t=\text{THINK}\\
+E_{\text{STOP}}, & a_t=\text{STOP}
+\end{cases}
+$$
+
+- `SPEAK`：$E(y_t)$ 告诉更新器实际采样并公开输出了哪个 token，$E_{\text{SPEAK}}$ 标记这是外显输出。这样内部状态不会在模型说出“狗”后仍沿着“猫”的分支推进。
+- `THINK`：没有用户可见 token，但 `SILENT` 事件告诉更新器发生了一次内部状态推进。
+- `STOP`：表示当前回答结束，更新器可以保存跨轮约束、未完成事项或等待状态。
+
+#### 第三步：计算写入门并融合记忆
+
+通过写入门控制更新速度：
+
+$$
+\alpha_t=\sigma\!\left(W_\alpha[h_t;\operatorname{Pool}(Z_t);A_t;\operatorname{Pool}(U_t)]\right)
+$$
+
+$$
+Z_{t+1}=\operatorname{Norm}\!\left((1-\alpha_t)\odot Z_t+\alpha_t\odot\widehat Z_{t+1}\right)
+$$
+
+$\sigma$ 将写入强度限制到 0 到 1。忽略 `Norm` 时，更新公式就是：
+
+```text
+新记忆 = (1 - 写入比例) * 旧记忆 + 写入比例 * 候选记忆
+```
+
+- $\alpha_t\approx0$：基本保留旧记忆；
+- $\alpha_t\approx1$：主要采用候选记忆；
+- 中间值：只做部分更新。
+
+`Norm` 用来稳定连续递归中的数值尺度，避免 latent 向量逐步放大、缩小或漂移。
+
+$\alpha_t$ 可以是全局标量、逐 slot 门或逐维门。首个实现建议采用逐 slot 标量门：
+
+$$
+\alpha_t\in[0,1]^{B\times M}
+$$
+
+第 $i$ 个 slot 独立更新：
+
+$$
+Z_{t+1}^{(i)}=
+\operatorname{Norm}\!\left(
+(1-\alpha_t^{(i)})Z_t^{(i)}
++\alpha_t^{(i)}\widehat Z_{t+1}^{(i)}
+\right)
+$$
+
+例如工具返回关键事实时，事实相关 slot 的门值可能接近 1，而用户语言偏好相关 slot 的门值接近 0。普通功能词通常只触发很小的长期写入；用户新增约束、任务目标改变或关键工具结果则应触发较强写入。
+
+完整数据流为：
+
+```text
+旧记忆 Z_t ───────────────┐
+当前 hidden h_t ──────────┤
+实际动作 A_t ─────────────┼─> 更新器 G ─> 候选记忆 Z_hat_(t+1)
+新增外部输入 U_t ─────────┘                  │
+                                             ├─> 写入门 alpha_t
+旧记忆 Z_t ──────────────────────────────────┘
+                                             │
+                                             v
+                      (1-alpha_t)Z_t + alpha_t Z_hat_(t+1)
+                                             │
+                                            Norm
+                                             │
+                                             v
+                                      新记忆 Z_(t+1)
+```
+
+随后，$Z_{t+1}$ 与实际输出 token 的 embedding、下一步外部输入和更新后的局部 KV 一起供主干模型使用：
+
+$$
+h_{t+1}=F_\theta\!\left(E(y_t),U_{t+1},Z_{t+1},C_{t+1}\right)
+$$
+
+因此系统存在两条互补反馈路径：实际 token 路径保证模型知道自己真正说了什么；latent 路径保留未被单个 token 完整表达的高维长期信息。
+
+### 5.3 为什么反馈实际 token
+
+连续状态保留输出前的丰富候选信息，但实际采样决定了模型公开选择的分支。把实际 token 作为**确认信号**传入更新器，可以同时满足：
+
+- latent 通道仍是主要连续信息载体；
+- 模型知道公开文本已经选择了哪条路径；
+- top-p、temperature 和 beam search 下不会出现内部计划与可见文本脱节；
+- token embedding 不必直接覆盖或替代 latent memory。
+
+## 6. THINK / SPEAK / STOP 状态机
+
+```mermaid
+stateDiagram-v2
+    [*] --> Observe
+    Observe --> Think: 需要内部计算
+    Observe --> Speak: 可以输出
+    Think --> Think: 继续思考且预算未耗尽
+    Think --> Speak: 形成可输出内容
+    Speak --> Think: 输出后需要重新规划
+    Speak --> Speak: 继续逐 token 输出
+    Speak --> Stop: 回答完成
+    Think --> Stop: 无需输出或等待信息
+    Stop --> Observe: 新用户/工具/环境输入
+```
+
+### 6.1 动作定义
+
+- `THINK`：不产生用户可见 token；写入一个内部 `SILENT_EVENT`，更新 latent memory。
+- `SPEAK`：输出实际 token；该 token 在下一步进入 self-token 通道，并参与 latent 更新。
+- `STOP`：结束当前响应，冻结或轻量整理 latent memory，等待新的外部输入。
+
+### 6.2 防止无限思考
+
+推理系统必须配置：
+
+- 单次回答最大 THINK 步数；
+- 连续 THINK 上限；
+- THINK 的计算成本惩罚；
+- 超预算后的强制 `SPEAK` 或 `STOP`；
+- 对无收益重复状态的收敛/循环检测。
+
+## 7. 跨轮工作流
+
+```mermaid
+sequenceDiagram
+    participant U as 用户/工具
+    participant E as 外部输入编码器
+    participant S as Self-token Embedding
+    participant F as 主干 Transformer
+    participant G as Latent 更新器
+    participant M as Latent Memory
+
+    U->>E: 新输入 tokens + role/type
+    E->>F: U_t
+    S->>F: 上一实际 token embedding e_(t-1)
+    M->>F: Z_t
+    loop 当前回答
+        F->>F: 读取短窗口 KV C_t
+        F-->>U: SPEAK 时输出 y_t
+        F->>S: y_t
+        S->>F: 下一步输入 embedding e_t
+        F->>G: h_t + 动作
+        S-->>G: 实际输出 token 确认（模型自听）
+        M->>G: Z_t
+        G->>M: Z_(t+1)
+        M->>F: 下一步 latent context
+    end
+    F-->>U: STOP，等待下一轮
+```
+
+图中 `S -> F` 是不可省略的 self-token 通道：在正常 `SPEAK` 解码中，上一实际输出 token 的 embedding $e_{t-1}$ 与 $U_t$、$Z_t$ 和局部 KV Cache 一起进入主干 Transformer。原图遗漏这条边是不完整的画法，不代表架构可以省略它。
+
+在一轮回答刚开始时，$e_{t-1}$ 可以是上一轮最后一个 assistant token 的 embedding，也可以是表示角色切换的 `<TURN_START>` 或 `<ASSISTANT>` 边界 embedding；如果当前轮先接收用户输入，则用户输入经过 prefill 后，最后一个用户 token 或 assistant 边界 token 作为首次生成步的 self-token 输入。进入连续生成后，每生成一个实际 token，就将它编码为下一个步的 $e_t$。
+
+用户在生成中追加输入时，将其视为高优先级外部事件。系统应在安全的 token 边界暂停生成，编码新输入并更新 $Z_t$，而不是把用户 token 与模型 self-token 无标识混合。
+
+## 8. 缓存与记忆分工
+
+### 8.1 推荐的混合记忆
+
+| 组件 | 容量 | 时间尺度 | 主要职责 |
+|---|---:|---|---|
+| Self-token embedding | 1 个或极短历史 | 单 token | 确认刚才实际输出 |
+| 局部 KV Cache | 固定窗口 $W$ | 近期 | 精确措辞、局部语法、近距离指代 |
+| Latent memory | 固定 $M$ slots | 长期/跨轮 | 目标、计划、约束、较早事实的压缩表示 |
+| 外部事件缓存 | 按事件注入 | 稀疏 | 用户、工具、环境的新信息 |
+
+推荐让 KV Cache 采用滑动窗口，使旧信息最终只能通过 latent memory 保留。若保留完整 KV，latent 分支很容易退化为冗余旁路，并且无法证明其存储价值。
+
+### 8.2 建议初始配置
+
+- latent slots：$M=16$ 或 $32$；
+- latent width：与主干 hidden size 相同，或先投影到 $d_z=d/2$；
+- 局部 KV 窗口：1K--4K tokens；
+- latent 更新器：2--4 层轻量 Transformer；
+- 写入频率：每 token 可计算门，但鼓励在标点、句界、用户事件和计划变化处写入；
+- latent cross-attention：每若干主干层插入一次，而非每层都插入。
+
+## 9. 训练目标
+
+### 9.1 标准 next-token loss
+
+主任务仍为因果语言建模：
+
+$$
+\mathcal L_{\text{NTP}}
+=-\sum_t\log p_\theta(y_t^*\mid y_{<t},Z_t,U_{\le t})
+$$
+
+这一路损失同时训练主干和 latent 更新器，因为未来 token 的梯度会沿着递归状态传播。
+
+### 9.2 多时间尺度未来预测
+
+只预测紧邻 token 容易让 latent memory 复制局部语言特征。为促使其保存较远信息，从 $Z_t$ 增加多个轻量预测头：
+
+$$
+\mathcal L_{\text{future}}
+=\sum_t\sum_{k\in\mathcal K}\beta_k
+\operatorname{CE}\!\left(Q_k(Z_t),y_{t+k}^*\right)
+$$
+
+初始可取 $\mathcal K=\{4,16,64\}$。该损失只使用训练时可获得的未来标签作为监督，不允许这些标签进入前向输入。
+
+### 9.3 跨轮记忆任务
+
+构造或采样需要跨较长距离才能回答的训练片段，例如：
+
+- 用户早期给出的偏好或约束；
+- 中间插入大量干扰内容后的事实回忆；
+- 多轮任务中的未完成子目标；
+- 工具结果在后续轮次的正确引用；
+- 早期承诺与后期输出的一致性。
+
+对应损失记为 $\mathcal L_{\text{memory}}$。训练时逐步裁剪旧 KV，使模型必须将关键信息写入 $Z_t$。
+
+### 9.4 动作策略目标
+
+动作控制器可先通过有标注或规则合成的轨迹进行监督：
+
+$$
+\mathcal L_{\text{action}}
+=-\sum_t\log p(a_t^*\mid h_t,Z_t)
+$$
+
+后续再用强化学习或偏好优化，在质量与计算成本之间权衡：
+
+$$
+R=R_{\text{quality}}-\lambda_c N_{\text{THINK}}-\lambda_l\operatorname{Latency}
+$$
+
+### 9.5 门控与容量正则
+
+为避免每个 token 都重写全部 slots，可使用：
+
+$$
+\mathcal L_{\text{write}}=\lambda_w\sum_t\|\alpha_t\|_1
+$$
+
+但不应过强，否则 memory 无法更新。还可以对不同 slots 加入轻量多样性正则，降低所有 slots 学成相同向量的风险。
+
+### 9.6 总损失
+
+$$
+\mathcal L=
+\mathcal L_{\text{NTP}}
++\lambda_f\mathcal L_{\text{future}}
++\lambda_m\mathcal L_{\text{memory}}
++\lambda_a\mathcal L_{\text{action}}
++\lambda_w\mathcal L_{\text{write}}
+$$
+
+第一阶段应让 $\mathcal L_{\text{NTP}}$ 占主导，其余权重通过小规模消融确定。
+
+## 10. 训练课程
+
+```mermaid
+flowchart TD
+    S1["阶段 1：冻结或半冻结主干<br/>训练 latent adapter 与更新器"] --> S2["阶段 2：短序列联合训练<br/>保留完整局部 KV"]
+    S2 --> S3["阶段 3：逐步缩短 KV 窗口<br/>加入跨距记忆任务"]
+    S3 --> S4["阶段 4：混合 teacher/self token<br/>降低 exposure bias"]
+    S4 --> S5["阶段 5：加入 THINK/SPEAK/STOP 轨迹"]
+    S5 --> S6["阶段 6：质量-成本偏好优化"]
+```
+
+### 阶段 1：初始化连续通道
+
+- 从现有因果 LM 初始化主干；
+- 新增 latent slots、cross-attention adapter、更新器和门控；
+- 主干冻结或使用低秩适配，仅训练新增模块；
+- 保持 `SPEAK` 为唯一动作，先验证语言建模不退化。
+
+### 阶段 2：联合训练
+
+- 解冻部分或全部主干；
+- 使用标准 next-token loss；
+- 加入 latent dropout 与 adapter dropout，防止单一路径脆弱依赖；
+- 监测 latent 梯度、门值和消融后困惑度差异。
+
+### 阶段 3：强制长期分工
+
+- 随训练进度逐步缩短可见 KV 窗口；
+- 加入长距离事实、跨轮约束和计划保持任务；
+- 加入多时间尺度未来预测；
+- 只在训练后期施加温和写入稀疏正则。
+
+### 阶段 4：缓解训练-推理偏移
+
+- 初期反馈真实标签 token；
+- 逐步混入模型 greedy 或采样 token；
+- 对错误输出后的恢复能力专门训练；
+- 保证 latent 更新器始终接收“实际采用”的 token，而非另一个未采用分支。
+
+### 阶段 5：训练静默思考
+
+- 从可验证推理任务开始，构造带 THINK/SPEAK 边界的轨迹；
+- 使用可控最大 THINK 步数；
+- 对无提升的 THINK 收取成本；
+- 不把不可验证的长隐式链条作为唯一成功信号。
+
+## 11. 推理算法
+
+```text
+输入：外部事件 U，持久 latent memory Z，局部 KV Cache C
+
+1. 编码 U，并按角色/来源注入主干和 latent 更新器。
+2. 循环直到 STOP 或达到预算：
+   a. 用上一实际输出 token、U、Z、C 计算 h。
+   b. 控制器选择 THINK / SPEAK / STOP。
+   c. SPEAK：从 LM Head 选择 token，发送给用户并记录实际 token。
+   d. THINK：不发送 token，记录 SILENT_EVENT。
+   e. 用 h、旧 Z、实际动作事件和 U 更新 Z。
+   f. 更新短窗口 KV；淘汰窗口外 KV。
+3. STOP 后保存必要的 Z，清理本轮临时状态并等待新事件。
+```
+
+### 11.1 伪代码
+
+```python
+def generate(external_event, state, budgets):
+    user_ctx = encode_external(external_event)
+    last_self_token = state.last_self_token
+
+    while not budgets.exhausted():
+        hidden, state.local_kv = backbone.step(
+            self_token=last_self_token,
+            external=user_ctx,
+            latent_memory=state.latent,
+            local_kv=state.local_kv,
+        )
+
+        action = controller(hidden, state.latent, budgets)
+
+        if action == "STOP":
+            break
+        if action == "SPEAK":
+            token = decode(lm_head(hidden))
+            emit(token)
+            event = embed_self_token(token)
+            last_self_token = token
+        else:
+            event = silent_event_embedding()
+
+        candidate, write_gate = latent_updater(
+            memory=state.latent,
+            hidden=hidden,
+            action_event=event,
+            external=user_ctx,
+        )
+        state.latent = gated_update(state.latent, candidate, write_gate)
+        user_ctx = empty_external_event()
+
+    state.last_self_token = last_self_token
+    return state
+```
+
+## 12. 防止 latent 分支退化
+
+### 12.1 退化模式
+
+1. **被忽略**：完整 KV 已包含全部历史，latent adapter 权重趋近零。
+2. **复制 token**：$Z_t$ 只编码上一 token，未保存长期信息。
+3. **全部 slots 同质化**：多个 slots 表示近似相同内容。
+4. **过度写入**：每一步彻底覆盖长期状态，产生漂移和遗忘。
+5. **过度保持**：写入门长期关闭，无法吸收新用户信息。
+6. **隐式轨迹失控**：THINK 循环增加成本但不改善输出。
+
+### 12.2 对策
+
+- 使用短窗口 KV，并逐步缩短窗口；
+- 训练时随机裁剪旧 KV 或遮蔽部分远程历史；
+- 使用跨轮和长距离任务，而不只训练邻接 token；
+- 对 latent 和 token 通道分别做小概率 dropout；
+- 监控关闭 latent 后的性能下降，作为“是否被使用”的直接指标；
+- 对写入门、slot 相似度和 memory 范数做可观测性分析；
+- 给 THINK 设置显式预算和质量增益门槛。
+
+## 13. 与相关范式的区别
+
+| 架构 | 实际 token 反馈 | 连续跨步状态 | 独立长期 latent memory | 静默步骤 |
+|---|---:|---:|---:|---:|
+| 标准 Transformer + KV | 是 | 仅通过各层 KV | 否 | 否 |
+| RNN/LSTM | 是 | 是 | 通常单一 recurrent state | 否 |
+| Feedback Transformer | 是 | 高层表示反馈 | 非固定长期 slots | 否 |
+| Coconut | 连续思考阶段否 | 是 | 连续 hidden state | 是 |
+| Mamba/RWKV | 是 | 是 | 架构内递归状态 | 通常否 |
+| LatentLoop | 是 | 是 | 是，固定 slots + 门控 | 是 |
+
+LatentLoop 的关键区别不是简单增加一条 hidden-state skip connection，而是明确建立：
+
+1. 实际输出 token 的自听反馈；
+2. 固定容量、慢速更新的连续记忆；
+3. 外部事件与内部输出的来源区分；
+4. 可预算的无外显 token 状态转移。
+
+## 14. 实验计划
+
+### 14.1 最小可行实验（MVP）
+
+先不加入 THINK。以小型因果 LM 为主干，增加：
+
+- 16 个 latent slots；
+- 2 层 latent update Transformer；
+- 每 4 个主干层插入一次 latent cross-attention；
+- 1K 局部 KV 窗口；
+- next-token + $k\in\{16,64\}$ 的未来预测损失。
+
+目标是先回答三个问题：
+
+1. 相同局部 KV 窗口下，latent memory 是否提升长距离任务？
+2. 关闭 latent 通道后性能是否显著下降？
+3. 增加的计算与显存是否获得足够收益？
+
+### 14.2 基线与消融
+
+| 编号 | 模型 | 用途 |
+|---|---|---|
+| A | 标准 Transformer，完整 KV | 质量上界与高缓存基线 |
+| B | 标准 Transformer，短窗口 KV | 局部缓存基线 |
+| C | B + latent memory，不反馈实际 token 给更新器 | 验证采样分叉影响 |
+| D | B + latent memory + 实际 token 确认 | 核心 LatentLoop |
+| E | D 去除未来预测损失 | 验证多时间尺度监督 |
+| F | D 保留完整 KV | 验证 latent 是否被完整历史忽略 |
+| G | D + THINK 控制器 | 验证静默计算收益 |
+| H | Feedback/Coconut 风格近邻实现 | 架构对照 |
+
+### 14.3 评测维度
+
+**语言质量**
+
+- validation perplexity；
+- 开放式生成质量；
+- greedy、temperature、top-p 下的一致性差异；
+- 重复、漏词、指代错误和自相矛盾率。
+
+**长期与跨轮能力**
+
+- needle-in-a-haystack 与多 needle；
+- 跨轮用户约束保持；
+- 长任务目标延续；
+- 工具结果延迟引用；
+- 早期承诺与后续回答一致性。
+
+**记忆机制有效性**
+
+- latent on/off 性能差；
+- 不同 KV 窗口下的退化曲线；
+- slots 数量与性能/成本曲线；
+- 写入门在不同 token、句界和用户事件处的分布；
+- latent state 对较远未来的线性探测能力。
+
+**系统成本**
+
+- 首 token 延迟与每 token 延迟；
+- THINK 平均步数；
+- KV 与 latent 显存占用；
+- 训练吞吐量和反向传播显存；
+- 单位质量提升所需 FLOPs。
+
+## 15. 成功标准
+
+MVP 可设定以下阶段性成功标准：
+
+1. 在 1K--2K KV 窗口下，长距离任务显著优于无 latent 的短窗口基线；
+2. 关闭 latent memory 后性能明显下降，证明分支未被忽略；
+3. 普通短文本 perplexity 相对同规模基线无明显恶化；
+4. top-p 生成中，反馈实际 token 的模型显著优于不反馈版本；
+5. latent 显存固定，不随已生成序列长度线性增长；
+6. 加入 THINK 后，可验证推理任务的质量增益超过计算成本阈值。
+
+## 16. 风险与缓解
+
+| 风险 | 影响 | 缓解策略 |
+|---|---|---|
+| 顺序递归降低训练并行度 | 训练速度下降 | 先采用 token 主干并行训练 + 分块 recurrent adapter；探索分段 BPTT |
+| 长链梯度不稳定 | 状态难以学会长期保持 | 残差门控、归一化、梯度裁剪、截断 BPTT、辅助远期目标 |
+| latent 被 KV 忽略 | 无实际收益 | 缩短 KV、历史裁剪、latent 消融监控 |
+| latent 复制局部 token | 无长期能力 | 慢速门、多时间尺度目标、跨轮任务 |
+| 用户输入与 self-token 混淆 | 角色错乱 | 独立 type/role embedding 和事件编码 |
+| THINK 无限循环 | 延迟不可控 | 硬预算、成本惩罚、循环检测、强制动作 |
+| 隐状态难以审计 | 安全与调试困难 | 探测器、事件日志、状态消融、可验证任务优先 |
+| 固定 slots 容量不足 | 长上下文遗忘 | 增加 slots、层次化 memory、可选外部检索 |
+
+## 17. 实现路线图
+
+### P0：可运行原型
+
+- 定义 `LatentState`、`ExternalEvent` 和 `ActionEvent` 数据结构；
+- 在小型 decoder-only Transformer 上增加 latent cross-attention；
+- 实现 2 层 latent updater 和逐 slot 写入门；
+- 保持仅 `SPEAK`，完成标准 next-token 训练；
+- 建立 latent on/off 与 KV 窗口对照。
+
+### P1：长期记忆验证
+
+- 加入滑动窗口 KV；
+- 加入远期预测头和跨轮合成任务；
+- 实现写入门、slot 相似度和梯度监控；
+- 完成基线 A--F 消融。
+
+### P2：真实输出反馈与鲁棒生成
+
+- 训练中从 teacher token 逐步过渡到 self-generated token；
+- 比较 greedy、top-p 和 temperature；
+- 加入错误输出后的状态恢复训练。
+
+### P3：静默思考
+
+- 实现动作控制器和 `SILENT_EVENT`；
+- 加入 THINK 预算与循环检测；
+- 在可验证推理任务上训练和评估；
+- 完成质量-成本 Pareto 曲线。
+
+### P4：跨轮持久化与系统集成
+
+- 定义轮次结束时 latent memory 的保存、压缩和重置策略；
+- 支持用户中途追加输入、工具调用和中断恢复；
+- 建立版本兼容、状态加密和隐私清理机制。
+
+## 18. 待验证的关键假设
+
+1. 最后一层隐藏状态经更新器处理后，包含比实际 token 更有用的长期预测信息。
+2. 实际输出 token 反馈能够解决连续计划与可见采样分叉，而不会使 latent 再次退化。
+3. 慢速门控 latent slots 能自然形成目标、计划、约束等跨轮信息分工。
+4. 短窗口 KV + 固定 latent memory 能在显存近似恒定的同时，逼近更长完整 KV 的效果。
+5. 静默步骤能够带来可测量的推理收益，而不是仅增加顺序计算。
+
+## 19. 结论
+
+LatentLoop 的推荐形态是一个**双通道、双时间尺度的自回归模型**：token 通道让模型听见自己实际说出的内容，保证语言轨迹和采样分支一致；latent 通道保存未被离散 token 完整表达的长期状态；外部输入通道负责注入用户、工具和环境事件；动作控制器允许模型在说话、思考和停止之间切换。
+
+最稳妥的研究顺序是先证明固定 latent memory 在短窗口 KV 条件下具有明确的长期记忆收益，再加入静默思考。若第一阶段无法在消融中证明 latent 被真实使用，直接扩展 THINK 只会放大计算成本和调试难度。反之，如果 latent memory 能稳定替代部分长期 KV，本方案将同时具有表达能力、跨轮记忆和缓存效率方面的研究价值。
+
+## 20. 参考方向
+
+以下工作与本方案的部分机制相关，但均不等同于 LatentLoop 的完整组合：
+
+1. Fan et al., *Addressing Some Limitations of Transformers with Feedback Memory*, 2020. <https://arxiv.org/abs/2002.09402>
+2. Hao et al., *Training Large Language Models to Reason in a Continuous Latent Space (Coconut)*, 2024/2025. <https://arxiv.org/abs/2412.06769>
+3. Gu et al., *Non-Autoregressive Neural Machine Translation*, 2017. <https://arxiv.org/abs/1711.02281>
+4. Gu and Dao, *Mamba: Linear-Time Sequence Modeling with Selective State Spaces*, 2023. <https://arxiv.org/abs/2312.00752>
+5. Peng et al., *RWKV: Reinventing RNNs for the Transformer Era*, 2023. <https://arxiv.org/abs/2305.13048>
+
+这些工作分别提供了高层反馈、连续潜空间推理、无 token feedback 的生成对照以及固定递归状态建模等证据。LatentLoop 需要通过本文定义的消融实验，单独验证“实际 token 自听 + 慢速 latent memory + 短窗口 KV + 可选静默步骤”这一组合的增量价值。
