@@ -193,19 +193,19 @@ $$
 词表分布为：
 
 $$
-p_t = \operatorname{softmax}(W_{\text{vocab}}h_t)
+p_t = \mathrm{softmax}(W_{\text{vocab}}h_t)
 $$
 
 当动作是 `SPEAK` 时，从 $p_t$ 中选择实际输出：
 
 $$
-y_t \sim \operatorname{Decode}(p_t)
+y_t \sim \mathrm{Decode}(p_t)
 $$
 
 实际的 $y_t$ 会在下一步重新进入 self-token 通道，从而保持：
 
 $$
-p(y_{t+1}\mid y_{\le t},Z_t,U_{\le t})
+p(y_{t+1}\mid y_{\leq t},Z_t,U_{\leq t})
 $$
 
 而不是让未来与本次实际采样结果条件独立。
@@ -257,11 +257,11 @@ $$
 通过写入门控制更新速度：
 
 $$
-\alpha_t=\sigma\!\left(W_\alpha[h_t;\operatorname{Pool}(Z_t);A_t;\operatorname{Pool}(U_t)]\right)
+\alpha_t=\sigma\!\left(W_\alpha[h_t;\mathrm{Pool}(Z_t);A_t;\mathrm{Pool}(U_t)]\right)
 $$
 
 $$
-Z_{t+1}=\operatorname{Norm}\!\left((1-\alpha_t)\odot Z_t+\alpha_t\odot\widehat Z_{t+1}\right)
+Z_{t+1}=\mathrm{Norm}\!\left((1-\alpha_t)\odot Z_t+\alpha_t\odot\widehat Z_{t+1}\right)
 $$
 
 $\sigma$ 将写入强度限制到 0 到 1。忽略 `Norm` 时，更新公式就是：
@@ -286,7 +286,7 @@ $$
 
 $$
 Z_{t+1}^{(i)}=
-\operatorname{Norm}\!\left(
+\mathrm{Norm}\!\left(
 (1-\alpha_t^{(i)})Z_t^{(i)}
 +\alpha_t^{(i)}\widehat Z_{t+1}^{(i)}
 \right)
@@ -438,14 +438,14 @@ $$
 
 $$
 p_{b,t}(v)
-=\operatorname{softmax}(\ell_{b,t})_v
+=\mathrm{softmax}(\ell_{b,t})_v
 $$
 
-设正确的下一 token 标签为 $y_{b,t}^{*}$，单个位置的交叉熵（Cross Entropy，CE）为：
+设正确的下一 token 标签为 $y_{b,t}^{\star}$，单个位置的交叉熵（Cross Entropy，CE）为：
 
 $$
-\operatorname{CE}(\ell_{b,t},y_{b,t}^{*})
-=-\log p_{b,t}(y_{b,t}^{*})
+\mathrm{CE}(\ell_{b,t},y_{b,t}^{\star})
+=-\log p_{b,t}(y_{b,t}^{\star})
 $$
 
 经过 mask 和归一化后的 next-token loss 为：
@@ -455,13 +455,13 @@ $$
 =
 \frac{1}{\sum_{b,t}m_{b,t}}
 \sum_{b=1}^{B}\sum_{t=1}^{T}
-m_{b,t}\operatorname{CE}(\ell_{b,t},y_{b,t}^{*})
+m_{b,t}\mathrm{CE}(\ell_{b,t},y_{b,t}^{\star})
 $$
 
 其条件概率可写为：
 
 $$
-p_\theta(y_{b,t}^{*}\mid y_{b,<t},Z_{b,t},U_{b,\le t},C_{b,t})
+p_\theta(y_{b,t}^{\star}\mid y_{b,1:t-1},Z_{b,t},U_{b,1:t},C_{b,t})
 $$
 
 这里 $C_{b,t}$ 是当前可见的局部 KV Cache。训练时通常使用 teacher forcing，即 self-token 通道输入真实的上一 token；后期应逐步混入模型实际生成的 token，以减轻训练和推理之间的分布偏移。
@@ -485,7 +485,7 @@ next-token loss 主要奖励局部预测能力，latent memory 可能因此只�
 先将多个 memory slots 汇聚为辅助预测所需的状态：
 
 $$
-r_{b,t}=\operatorname{AttnPool}(Z_{b,t})
+r_{b,t}=\mathrm{AttnPool}(Z_{b,t})
 \in\mathbb R^{d_z}
 $$
 
@@ -503,7 +503,7 @@ $$
 \frac{1}{N_f}
 \sum_{b,t}\sum_{k\in\mathcal K}
 m_{b,t,k}\,\beta_k\,
-\operatorname{CE}(q_{b,t,k},y_{b,t+k}^{*})
+\mathrm{CE}(q_{b,t,k},y_{b,t+k}^{\star})
 $$
 
 其中：
@@ -512,7 +512,7 @@ $$
 - $m_{b,t,k}$ 表示位置 $t+k$ 存在且允许参与训练；
 - $\beta_k$ 控制不同距离的权重，通常距离越远，权重越小；
 - $N_f=\sum_{b,t,k}m_{b,t,k}$ 是有效未来标签数量；
-- $y_{b,t+k}^{*}$ 只作为训练标签，绝不能进入 $Z_{b,t}$ 的前向计算，否则会产生未来信息泄漏。
+- $y_{b,t+k}^{\star}$ 只作为训练标签，绝不能进入 $Z_{b,t}$ 的前向计算，否则会产生未来信息泄漏。
 
 该目标沿用原方案：所有距离都直接预测未来的正确 token。远距离 token 的不确定性通过较小的 $\beta_k$、有限的距离集合以及消融实验控制。初始可取 $\mathcal K=\{4,16,64\}$，并比较不同距离组合对长期记忆能力和语言建模质量的影响。
 
@@ -534,7 +534,7 @@ $$
 \frac{1}{N_q}
 \sum_{b=1}^{B}
 \sum_{t\in\mathcal Q_b}
-\operatorname{CE}(\ell_{b,t},y_{b,t}^{*})
+\mathrm{CE}(\ell_{b,t},y_{b,t}^{\star})
 $$
 
 其中 $N_q=\sum_b|\mathcal Q_b|$。它与普通 NTP 使用相同的 token 标签，但只对那些被标注为“必须依赖窗口外信息”的答案位置额外加权。
@@ -545,14 +545,14 @@ $$
 \widehat m_{b,j}=R_j(Z_{b,t_q},q_{b,j})
 $$
 
-其中 $q_{b,j}$ 是第 $j$ 个记忆查询，$m_{b,j}^{*}$ 是正确的类别、token span 或目标 embedding。分类型记忆可以使用：
+其中 $q_{b,j}$ 是第 $j$ 个记忆查询，$m_{b,j}^{\star}$ 是正确的类别、token span 或目标 embedding。分类型记忆可以使用：
 
 $$
 \mathcal L_{\text{recall-cls}}
 =
 \frac{1}{N_m}
 \sum_{b,j}
-\operatorname{CE}(\widehat m_{b,j},m_{b,j}^{*})
+\mathrm{CE}(\widehat m_{b,j},m_{b,j}^{\star})
 $$
 
 开放文本或语义型记忆可以使用对比损失。设正确记忆表示为 $e_{b,j}^{+}$，同 batch 的其他记忆为负样本：
@@ -564,9 +564,9 @@ $$
 \sum_{b,j}
 \log
 \frac{
-\exp(\operatorname{sim}(\widehat m_{b,j},e_{b,j}^{+})/\tau)
+\exp(\mathrm{sim}(\widehat m_{b,j},e_{b,j}^{+})/\tau)
 }{
-\sum_n\exp(\operatorname{sim}(\widehat m_{b,j},e_n)/\tau)
+\sum_n\exp(\mathrm{sim}(\widehat m_{b,j},e_n)/\tau)
 }
 $$
 
@@ -587,18 +587,18 @@ $$
 动作控制器输出三个动作的 logits：
 
 $$
-c_{b,t}=W_a[h_{b,t};\operatorname{Pool}(Z_{b,t})]+b_a
+c_{b,t}=W_a[h_{b,t};\mathrm{Pool}(Z_{b,t})]+b_a
 \in\mathbb R^3
 $$
 
-动作集合为 $\{\text{THINK},\text{SPEAK},\text{STOP}\}$。若存在人工标注、规则合成或教师蒸馏得到的正确动作 $a_{b,t}^{*}$，监督损失为：
+动作集合为 $\{\text{THINK},\text{SPEAK},\text{STOP}\}$。若存在人工标注、规则合成或教师蒸馏得到的正确动作 $a_{b,t}^{\star}$，监督损失为：
 
 $$
 \mathcal L_{\text{action}}
 =
 \frac{1}{N_a}
 \sum_{b,t}m_{b,t}^{a}
-\operatorname{CE}(c_{b,t},a_{b,t}^{*})
+\mathrm{CE}(c_{b,t},a_{b,t}^{\star})
 $$
 
 其中 $m_{b,t}^{a}$ 表示该位置存在可信动作标签，$N_a$ 是有效动作标签数量。普通文本预训练数据通常只能可靠提供 `SPEAK` 和回答末尾的 `STOP`，不能把所有隐藏位置武断标为 `THINK`。THINK 标签应来自可验证任务、教师轨迹或后续策略优化。
@@ -610,8 +610,8 @@ R
 =R_{\text{task}}
 +\lambda_qR_{\text{quality}}
 -\lambda_cN_{\text{THINK}}
--\lambda_l\operatorname{Latency}
--\lambda_e\mathbb 1[\text{invalid termination}]
+-\lambda_l\mathrm{Latency}
+-\lambda_e\mathbf{1}_{\text{invalid termination}}
 $$
 
 其中 $R_{\text{task}}$ 衡量答案或动作是否正确，$R_{\text{quality}}$ 衡量约束满足和回答质量，$N_{\text{THINK}}$ 是静默步骤数，最后一项惩罚过早停止或超过预算。策略优化的目标是最大化期望奖励：
