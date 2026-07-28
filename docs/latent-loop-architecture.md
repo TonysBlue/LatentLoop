@@ -421,32 +421,104 @@ sequenceDiagram
 
 ## 9. 训练目标
 
+训练目标需要同时回答五个问题：模型能否正常生成语言、latent state 是否包含较远未来的信息、长期记忆是否真的可被调用、动作控制器是否知道何时思考或停止，以及 memory 是否能够稳定且有选择地写入。
+
+以下公式默认 batch size 为 $B$、序列长度为 $T$、词表大小为 $V$、latent slots 数为 $M$。$m_{b,t}\in\{0,1\}$ 是有效位置 mask，用来排除 padding、越界未来位置以及不参与当前损失的 token。所有损失在实现中都应按有效位置数量归一化，而不是直接随序列长度求和。
+
 ### 9.1 标准 next-token loss
 
-主任务仍为因果语言建模：
+主任务仍为因果语言建模。当前位置最后层状态经过 LM Head 得到词表 logits：
+
+$$
+\ell_{b,t}=W_{\text{vocab}}h_{b,t}+b_{\text{vocab}}
+\in\mathbb R^V
+$$
+
+词表概率为：
+
+$$
+p_{b,t}(v)
+=\operatorname{softmax}(\ell_{b,t})_v
+$$
+
+设正确的下一 token 标签为 $y_{b,t}^{*}$，单个位置的交叉熵（Cross Entropy，CE）为：
+
+$$
+\operatorname{CE}(\ell_{b,t},y_{b,t}^{*})
+=-\log p_{b,t}(y_{b,t}^{*})
+$$
+
+经过 mask 和归一化后的 next-token loss 为：
 
 $$
 \mathcal L_{\text{NTP}}
-=-\sum_t\log p_\theta(y_t^*\mid y_{<t},Z_t,U_{\le t})
+=
+\frac{1}{\sum_{b,t}m_{b,t}}
+\sum_{b=1}^{B}\sum_{t=1}^{T}
+m_{b,t}\operatorname{CE}(\ell_{b,t},y_{b,t}^{*})
 $$
 
-这一路损失同时训练主干和 latent 更新器，因为未来 token 的梯度会沿着递归状态传播。
+其条件概率可写为：
+
+$$
+p_\theta(y_{b,t}^{*}\mid y_{b,<t},Z_{b,t},U_{b,\le t},C_{b,t})
+$$
+
+这里 $C_{b,t}$ 是当前可见的局部 KV Cache。训练时通常使用 teacher forcing，即 self-token 通道输入真实的上一 token；后期应逐步混入模型实际生成的 token，以减轻训练和推理之间的分布偏移。
+
+这一路损失不仅训练 LM Head 和主干，也会训练 latent 更新器。因为未来位置依赖更新后的 memory，梯度可以沿下列连续路径反向传播：
+
+```text
+future token loss
+  -> future hidden state
+  -> future latent memory
+  -> latent updater G
+  -> earlier hidden state / earlier memory
+```
+
+对于长序列，完整跨序列反向传播成本很高，可以使用分块训练或 truncated BPTT；但截断长度必须大于需要验证的记忆跨度，否则远期梯度无法训练早期写入。
 
 ### 9.2 多时间尺度未来预测
 
-只预测紧邻 token 容易让 latent memory 复制局部语言特征。为促使其保存较远信息，从 $Z_t$ 增加多个轻量预测头：
+next-token loss 主要奖励局部预测能力，latent memory 可能因此只复制近期 token。为促使 $Z_t$ 保存主题、计划和未完成约束，可增加多跨度辅助预测。
+
+先将多个 memory slots 汇聚为辅助预测所需的状态：
+
+$$
+r_{b,t}=\operatorname{AttnPool}(Z_{b,t})
+\in\mathbb R^{d_z}
+$$
+
+对每个预测距离 $k$ 配置一个轻量预测头：
+
+$$
+q_{b,t,k}=Q_k(r_{b,t})\in\mathbb R^V
+$$
+
+其中 $q_{b,t,k}$ 是对位置 $t+k$ 的词表 logits。设预测距离集合为 $\mathcal K$，例如 $\{4,16,64\}$，则 token 级未来预测损失为：
 
 $$
 \mathcal L_{\text{future}}
-=\sum_t\sum_{k\in\mathcal K}\beta_k
-\operatorname{CE}\!\left(Q_k(Z_t),y_{t+k}^*\right)
+=
+\frac{1}{N_f}
+\sum_{b,t}\sum_{k\in\mathcal K}
+m_{b,t,k}\,\beta_k\,
+\operatorname{CE}(q_{b,t,k},y_{b,t+k}^{*})
 $$
 
-初始可取 $\mathcal K=\{4,16,64\}$。该损失只使用训练时可获得的未来标签作为监督，不允许这些标签进入前向输入。
+其中：
+
+- $Q_k$ 是距离 $k$ 对应的辅助预测头；多个距离可以使用独立 head，也可以共享主体并加入 distance embedding；
+- $m_{b,t,k}$ 表示位置 $t+k$ 存在且允许参与训练；
+- $\beta_k$ 控制不同距离的权重，通常距离越远，权重越小；
+- $N_f=\sum_{b,t,k}m_{b,t,k}$ 是有效未来标签数量；
+- $y_{b,t+k}^{*}$ 只作为训练标签，绝不能进入 $Z_{b,t}$ 的前向计算，否则会产生未来信息泄漏。
+
+该目标沿用原方案：所有距离都直接预测未来的正确 token。远距离 token 的不确定性通过较小的 $\beta_k$、有限的距离集合以及消融实验控制。初始可取 $\mathcal K=\{4,16,64\}$，并比较不同距离组合对长期记忆能力和语言建模质量的影响。
 
 ### 9.3 跨轮记忆任务
 
-构造或采样需要跨较长距离才能回答的训练片段，例如：
+未来预测并不直接保证某条重要事实可以在很久以后被正确调用，因此还需要构造必须依赖历史记忆才能完成的 delayed-query 或跨轮任务，例如：
 
 - 用户早期给出的偏好或约束；
 - 中间插入大量干扰内容后的事实回忆；
@@ -454,34 +526,187 @@ $$
 - 工具结果在后续轮次的正确引用；
 - 早期承诺与后期输出的一致性。
 
-对应损失记为 $\mathcal L_{\text{memory}}$。训练时逐步裁剪旧 KV，使模型必须将关键信息写入 $Z_t$。
+对每个样本定义一组需要远期记忆的答案位置 $\mathcal Q_b$。答案生成损失为：
+
+$$
+\mathcal L_{\text{memory-answer}}
+=
+\frac{1}{N_q}
+\sum_{b=1}^{B}
+\sum_{t\in\mathcal Q_b}
+\operatorname{CE}(\ell_{b,t},y_{b,t}^{*})
+$$
+
+其中 $N_q=\sum_b|\mathcal Q_b|$。它与普通 NTP 使用相同的 token 标签，但只对那些被标注为“必须依赖窗口外信息”的答案位置额外加权。
+
+如果训练数据带有结构化记忆标签，例如用户偏好、实体属性、任务状态或工具结果，还可以增加 recall head：
+
+$$
+\widehat m_{b,j}=R_j(Z_{b,t_q},q_{b,j})
+$$
+
+其中 $q_{b,j}$ 是第 $j$ 个记忆查询，$m_{b,j}^{*}$ 是正确的类别、token span 或目标 embedding。分类型记忆可以使用：
+
+$$
+\mathcal L_{\text{recall-cls}}
+=
+\frac{1}{N_m}
+\sum_{b,j}
+\operatorname{CE}(\widehat m_{b,j},m_{b,j}^{*})
+$$
+
+开放文本或语义型记忆可以使用对比损失。设正确记忆表示为 $e_{b,j}^{+}$，同 batch 的其他记忆为负样本：
+
+$$
+\mathcal L_{\text{recall-ctr}}
+=-
+\frac{1}{N_m}
+\sum_{b,j}
+\log
+\frac{
+\exp(\operatorname{sim}(\widehat m_{b,j},e_{b,j}^{+})/\tau)
+}{
+\sum_n\exp(\operatorname{sim}(\widehat m_{b,j},e_n)/\tau)
+}
+$$
+
+综合记忆损失为：
+
+$$
+\mathcal L_{\text{memory}}
+=
+\mathcal L_{\text{memory-answer}}
++\lambda_{mc}\mathcal L_{\text{recall-cls}}
++\lambda_{mt}\mathcal L_{\text{recall-ctr}}
+$$
+
+不具备相应标签时，对应项置零即可。最重要的训练条件是将关键信息放在局部 KV 窗口之外，并裁剪旧 KV；否则模型可以直接从 attention history 找答案，无法证明 $Z_t$ 被使用。还应构造事实更新样本，例如“旧地址被新地址覆盖”，以训练冲突消解，而不仅是简单累积事实。
 
 ### 9.4 动作策略目标
 
-动作控制器可先通过有标注或规则合成的轨迹进行监督：
+动作控制器输出三个动作的 logits：
+
+$$
+c_{b,t}=W_a[h_{b,t};\operatorname{Pool}(Z_{b,t})]+b_a
+\in\mathbb R^3
+$$
+
+动作集合为 $\{\text{THINK},\text{SPEAK},\text{STOP}\}$。若存在人工标注、规则合成或教师蒸馏得到的正确动作 $a_{b,t}^{*}$，监督损失为：
 
 $$
 \mathcal L_{\text{action}}
-=-\sum_t\log p(a_t^*\mid h_t,Z_t)
+=
+\frac{1}{N_a}
+\sum_{b,t}m_{b,t}^{a}
+\operatorname{CE}(c_{b,t},a_{b,t}^{*})
 $$
 
-后续再用强化学习或偏好优化，在质量与计算成本之间权衡：
+其中 $m_{b,t}^{a}$ 表示该位置存在可信动作标签，$N_a$ 是有效动作标签数量。普通文本预训练数据通常只能可靠提供 `SPEAK` 和回答末尾的 `STOP`，不能把所有隐藏位置武断标为 `THINK`。THINK 标签应来自可验证任务、教师轨迹或后续策略优化。
+
+后续可使用强化学习或偏好优化，在输出质量与计算成本之间权衡。单条轨迹的奖励可以定义为：
 
 $$
-R=R_{\text{quality}}-\lambda_c N_{\text{THINK}}-\lambda_l\operatorname{Latency}
+R
+=R_{\text{task}}
++\lambda_qR_{\text{quality}}
+-\lambda_cN_{\text{THINK}}
+-\lambda_l\operatorname{Latency}
+-\lambda_e\mathbb 1[\text{invalid termination}]
 $$
+
+其中 $R_{\text{task}}$ 衡量答案或动作是否正确，$R_{\text{quality}}$ 衡量约束满足和回答质量，$N_{\text{THINK}}$ 是静默步骤数，最后一项惩罚过早停止或超过预算。策略优化的目标是最大化期望奖励：
+
+$$
+\mathcal J_{\text{policy}}
+=\mathbb E_{a_{1:T}\sim\pi_\psi}[R]
+$$
+
+动作监督和策略奖励不必同时从训练第一阶段启用。建议先训练稳定的 `SPEAK/STOP`，再加入受预算约束的 THINK。
 
 ### 9.5 门控与容量正则
 
-为避免每个 token 都重写全部 slots，可使用：
+设逐 slot 写入门为：
 
 $$
-\mathcal L_{\text{write}}=\lambda_w\sum_t\|\alpha_t\|_1
+\alpha_{b,t}\in[0,1]^M
 $$
 
-但不应过强，否则 memory 无法更新。还可以对不同 slots 加入轻量多样性正则，降低所有 slots 学成相同向量的风险。
+最简单的 L1 写入惩罚为：
+
+$$
+\mathcal L_{\text{sparse}}
+=
+\frac{1}{BTM}
+\sum_{b,t,i}\alpha_{b,t}^{(i)}
+$$
+
+它鼓励少写入，但权重过大会导致所有门关闭。更稳健的方法是设置目标平均写入率 $\rho$：
+
+$$
+\mathcal L_{\text{budget}}
+=
+\left(
+\frac{1}{BTM}\sum_{b,t,i}\alpha_{b,t}^{(i)}
+-\rho
+\right)^2
+$$
+
+例如 $\rho=0.05$ 表示平均每一步只允许约 5% 的 slot 写入强度。若希望写入集中在少数 slots，还可以对每步门分布施加熵惩罚：
+
+$$
+\bar\alpha_{b,t}^{(i)}
+=
+\frac{\alpha_{b,t}^{(i)}}
+{\sum_j\alpha_{b,t}^{(j)}+\epsilon}
+$$
+
+$$
+\mathcal L_{\text{gate-entropy}}
+=
+-\frac{1}{BT}
+\sum_{b,t}\sum_i
+\bar\alpha_{b,t}^{(i)}
+\log(\bar\alpha_{b,t}^{(i)}+\epsilon)
+$$
+
+最小化该项会鼓励一次写入集中到少数 slots，但必须与写入预算和记忆任务配合，避免始终只使用同一个 slot。
+
+为降低所有 latent slots 学成相同向量的风险，可对归一化后的 slots 使用多样性正则。令：
+
+$$
+\widetilde Z_{b,t}^{(i)}
+=\frac{Z_{b,t}^{(i)}}{\|Z_{b,t}^{(i)}\|_2+\epsilon}
+$$
+
+则：
+
+$$
+\mathcal L_{\text{div}}
+=
+\frac{1}{BTM(M-1)}
+\sum_{b,t}\sum_{i\ne j}
+\left(
+\widetilde Z_{b,t}^{(i)\top}
+\widetilde Z_{b,t}^{(j)}
+\right)^2
+$$
+
+该项降低不同 slots 的方向相似度，但不应强迫所有 slots 完全正交，因为相关事实可能天然需要共享表示。综合门控与容量正则定义为：
+
+$$
+\mathcal L_{\text{write}}
+=
+\lambda_s\mathcal L_{\text{sparse}}
++\lambda_b\mathcal L_{\text{budget}}
++\lambda_h\mathcal L_{\text{gate-entropy}}
++\lambda_d\mathcal L_{\text{div}}
+$$
+
+实际实验不必同时启用全部项。建议从目标写入率加轻量多样性正则开始，并监控不同事件类型的门值、有效 slot 数和 latent on/off 性能差。
 
 ### 9.6 总损失
+
+统一训练目标为：
 
 $$
 \mathcal L=
@@ -492,7 +717,31 @@ $$
 +\lambda_w\mathcal L_{\text{write}}
 $$
 
-第一阶段应让 $\mathcal L_{\text{NTP}}$ 占主导，其余权重通过小规模消融确定。
+这里外层系数用于控制不同任务族之间的比例；$\mathcal L_{\text{write}}$ 内部的系数用于控制不同正则项之间的比例。为避免混淆，实现中也可以令外层 $\lambda_w=1$，只调内部正则权重。
+
+并非每个 batch 都具备所有标签。推荐使用 task mask，将不存在标签的损失项置零，再按该项自己的有效样本数归一化。一个 batch 的组合可表示为：
+
+```text
+普通语言 batch：NTP + future
+延迟回忆 batch：NTP + future + memory
+动作轨迹 batch：NTP + action
+所有 batch：按需加入 write regularization
+```
+
+### 9.7 推荐启用顺序与诊断指标
+
+第一阶段只以 $\mathcal L_{\text{NTP}}$ 为主，验证新增模块不会破坏基本语言能力。第二阶段加入 $\mathcal L_{\text{future}}$ 和 $\mathcal L_{\text{memory}}$，同时逐步缩短 KV 窗口。第三阶段再加入温和的 $\mathcal L_{\text{write}}$，最后训练动作控制器和 THINK 策略。
+
+损失下降本身不能证明长期记忆有效，至少应同步监控：
+
+- 关闭 $Z_t$ 后，长距离任务性能下降多少；
+- KV 窗口从长到短时，LatentLoop 相对普通 Transformer 的退化曲线；
+- 不同事件类型对应的平均写入门和活跃 slot 数；
+- $Z_t$ 对远期主题、事实和计划的 probe 准确率；
+- 相同显存、参数量和 FLOPs 下，相比更长 KV、RMT 和 Block-Recurrent Transformer 的收益；
+- THINK 步数增加是否带来可验证的任务质量提升。
+
+建议从小权重开始，并通过消融逐项加入。若某个辅助损失不能改善对应的行为指标，应删除该项，而不是仅因为训练 loss 更低就保留。
 
 ## 10. 训练课程
 
