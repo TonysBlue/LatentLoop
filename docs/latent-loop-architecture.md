@@ -58,15 +58,11 @@ LatentLoop 将模型的内部状态分为两种时间尺度：
 
 $h_t$ 是第 $t$ 个生成位置经过主干 Transformer 最后一层后得到的表示。单个样本在 decode 阶段通常为：
 
-$$
-h_t\in\mathbb R^{d_{\text{model}}}
-$$
+$$h_t\in\mathbb R^{d_{\text{model}}}$$
 
 加入 batch 维后为：
 
-$$
-h_t\in\mathbb R^{B\times d_{\text{model}}}
-$$
+$$h_t\in\mathbb R^{B\times d_{\text{model}}}$$
 
 例如 $B=2$、$d_{\text{model}}=4096$ 时，`h_t.shape = [2, 4096]`。实现中也可能保留长度为 1 的序列维，写成 `[B, 1, d_model]`。
 
@@ -81,15 +77,11 @@ Prefill 阶段一次处理 $S$ 个位置，最后层输出为 $H\in\mathbb R^{B\
 
 ### 3.2 $Z_t$：固定容量的 latent memory
 
-$$
-Z_t\in\mathbb R^{M\times d_z}
-$$
+$$Z_t\in\mathbb R^{M\times d_z}$$
 
 表示单个样本包含 $M$ 个 memory slots，每个 slot 是一个 $d_z$ 维连续向量。加入 batch 维后，实际张量通常为：
 
-$$
-Z_t\in\mathbb R^{B\times M\times d_z}
-$$
+$$Z_t\in\mathbb R^{B\times M\times d_z}$$
 
 例如 $B=2$、$M=16$、$d_z=2048$ 时，`Z_t.shape = [2, 16, 2048]`。可以将其理解为：
 
@@ -105,10 +97,7 @@ $Z_t$ 的容量不随序列长度增长。它保存的是经过学习压缩的�
 
 对于第 $l$ 层，Key 和 Value cache 的典型形状分别为：
 
-$$
-K_t^{(l)},V_t^{(l)}\in
-\mathbb R^{B\times H_{kv}\times S\times D}
-$$
+$$K_t^{(l)},V_t^{(l)}\in\mathbb R^{B\times H_{kv}\times S\times D}$$
 
 其中 $H_{kv}$ 是 KV head 数，$S$ 是已缓存的序列长度，$D$ 是每个 head 的维度。例如：
 
@@ -186,27 +175,19 @@ flowchart LR
 
 主干模型接收上一实际输出 token、外部新增输入、latent memory 和局部缓存：
 
-$$
-h_t = F_\theta\!\left(e_{t-1}, U_t, Z_t, C_t\right)
-$$
+$$h_t = F_\theta\!\left(e_{t-1}, U_t, Z_t, C_t\right)$$
 
 词表分布为：
 
-$$
-p_t = \mathrm{softmax}(W_{\text{vocab}}h_t)
-$$
+$$p_t = \mathrm{softmax}(W_{\text{vocab}}h_t)$$
 
 当动作是 `SPEAK` 时，从 $p_t$ 中选择实际输出：
 
-$$
-y_t \sim \mathrm{Decode}(p_t)
-$$
+$$y_t \sim \mathrm{Decode}(p_t)$$
 
 实际的 $y_t$ 会在下一步重新进入 self-token 通道，从而保持：
 
-$$
-p(y_{t+1}\mid y_{\leq t},Z_t,U_{\leq t})
-$$
+$$p(y_{t+1}\mid y_{\leq t},Z_t,U_{\leq t})$$
 
 而不是让未来与本次实际采样结果条件独立。
 
@@ -218,10 +199,7 @@ $$
 
 候选状态由独立的更新网络产生：
 
-$$
-\widehat Z_{t+1}
-=G_\phi\!\left(Z_t,h_t,A_t,U_t\right)
-$$
+$$\widehat Z_{t+1}=G_\phi\!\left(Z_t,h_t,A_t,U_t\right)$$
 
 各输入的职责如下：
 
@@ -239,14 +217,7 @@ $$
 
 其中 $A_t$ 是当前动作的确认信息：
 
-$$
-A_t=
-\begin{cases}
-E(y_t)+E_{\text{SPEAK}}, & a_t=\text{SPEAK}\\
-E_{\text{SILENT}}, & a_t=\text{THINK}\\
-E_{\text{STOP}}, & a_t=\text{STOP}
-\end{cases}
-$$
+$$A_t=\begin{cases}E(y_t)+E_{\text{SPEAK}}, & a_t=\text{SPEAK}\\ E_{\text{SILENT}}, & a_t=\text{THINK}\\ E_{\text{STOP}}, & a_t=\text{STOP}\end{cases}$$
 
 - `SPEAK`：$E(y_t)$ 告诉更新器实际采样并公开输出了哪个 token，$E_{\text{SPEAK}}$ 标记这是外显输出。这样内部状态不会在模型说出“狗”后仍沿着“猫”的分支推进。
 - `THINK`：没有用户可见 token，但 `SILENT` 事件告诉更新器发生了一次内部状态推进。
@@ -256,13 +227,9 @@ $$
 
 通过写入门控制更新速度：
 
-$$
-\alpha_t=\sigma\!\left(W_\alpha[h_t;\mathrm{Pool}(Z_t);A_t;\mathrm{Pool}(U_t)]\right)
-$$
+$$\alpha_t=\sigma\!\left(W_\alpha[h_t;\mathrm{Pool}(Z_t);A_t;\mathrm{Pool}(U_t)]\right)$$
 
-$$
-Z_{t+1}=\mathrm{Norm}\!\left((1-\alpha_t)\odot Z_t+\alpha_t\odot\widehat Z_{t+1}\right)
-$$
+$$Z_{t+1}=\mathrm{Norm}\!\left((1-\alpha_t)\odot Z_t+\alpha_t\odot\widehat Z_{t+1}\right)$$
 
 $\sigma$ 将写入强度限制到 0 到 1。忽略 `Norm` 时，更新公式就是：
 
@@ -278,19 +245,11 @@ $\sigma$ 将写入强度限制到 0 到 1。忽略 `Norm` 时，更新公式就�
 
 $\alpha_t$ 可以是全局标量、逐 slot 门或逐维门。首个实现建议采用逐 slot 标量门：
 
-$$
-\alpha_t\in[0,1]^{B\times M}
-$$
+$$\alpha_t\in[0,1]^{B\times M}$$
 
 第 $i$ 个 slot 独立更新：
 
-$$
-Z_{t+1}^{(i)}=
-\mathrm{Norm}\!\left(
-(1-\alpha_t^{(i)})Z_t^{(i)}
-+\alpha_t^{(i)}\widehat Z_{t+1}^{(i)}
-\right)
-$$
+$$Z_{t+1}^{(i)}=\mathrm{Norm}\!\left((1-\alpha_t^{(i)})Z_t^{(i)}+\alpha_t^{(i)}\widehat Z_{t+1}^{(i)}\right)$$
 
 例如工具返回关键事实时，事实相关 slot 的门值可能接近 1，而用户语言偏好相关 slot 的门值接近 0。普通功能词通常只触发很小的长期写入；用户新增约束、任务目标改变或关键工具结果则应触发较强写入。
 
@@ -315,9 +274,7 @@ $$
 
 随后，$Z_{t+1}$ 与实际输出 token 的 embedding、下一步外部输入和更新后的局部 KV 一起供主干模型使用：
 
-$$
-h_{t+1}=F_\theta\!\left(E(y_t),U_{t+1},Z_{t+1},C_{t+1}\right)
-$$
+$$h_{t+1}=F_\theta\!\left(E(y_t),U_{t+1},Z_{t+1},C_{t+1}\right)$$
 
 因此系统存在两条互补反馈路径：实际 token 路径保证模型知道自己真正说了什么；latent 路径保留未被单个 token 完整表达的高维长期信息。
 
@@ -429,40 +386,23 @@ sequenceDiagram
 
 主任务仍为因果语言建模。当前位置最后层状态经过 LM Head 得到词表 logits：
 
-$$
-\ell_{b,t}=W_{\text{vocab}}h_{b,t}+b_{\text{vocab}}
-\in\mathbb R^V
-$$
+$$\ell_{b,t}=W_{\text{vocab}}h_{b,t}+b_{\text{vocab}}\in\mathbb R^V$$
 
 词表概率为：
 
-$$
-p_{b,t}(v)
-=\mathrm{softmax}(\ell_{b,t})_v
-$$
+$$p_{b,t}(v)=\mathrm{softmax}(\ell_{b,t})_v$$
 
 设正确的下一 token 标签为 $y_{b,t}^{\star}$，单个位置的交叉熵（Cross Entropy，CE）为：
 
-$$
-\mathrm{CE}(\ell_{b,t},y_{b,t}^{\star})
-=-\log p_{b,t}(y_{b,t}^{\star})
-$$
+$$\mathrm{CE}(\ell_{b,t},y_{b,t}^{\star})=-\log p_{b,t}(y_{b,t}^{\star})$$
 
 经过 mask 和归一化后的 next-token loss 为：
 
-$$
-\mathcal L_{\text{NTP}}
-=
-\frac{1}{\sum_{b,t}m_{b,t}}
-\sum_{b=1}^{B}\sum_{t=1}^{T}
-m_{b,t}\mathrm{CE}(\ell_{b,t},y_{b,t}^{\star})
-$$
+$$\mathcal L_{\text{NTP}}=\frac{1}{\sum_{b,t}m_{b,t}}\sum_{b=1}^{B}\sum_{t=1}^{T}m_{b,t}\mathrm{CE}(\ell_{b,t},y_{b,t}^{\star})$$
 
 其条件概率可写为：
 
-$$
-p_\theta(y_{b,t}^{\star}\mid y_{b,1:t-1},Z_{b,t},U_{b,1:t},C_{b,t})
-$$
+$$p_\theta(y_{b,t}^{\star}\mid y_{b,1:t-1},Z_{b,t},U_{b,1:t},C_{b,t})$$
 
 这里 $C_{b,t}$ 是当前可见的局部 KV Cache。训练时通常使用 teacher forcing，即 self-token 通道输入真实的上一 token；后期应逐步混入模型实际生成的 token，以减轻训练和推理之间的分布偏移。
 
@@ -484,27 +424,15 @@ next-token loss 主要奖励局部预测能力，latent memory 可能因此只�
 
 先将多个 memory slots 汇聚为辅助预测所需的状态：
 
-$$
-r_{b,t}=\mathrm{AttnPool}(Z_{b,t})
-\in\mathbb R^{d_z}
-$$
+$$r_{b,t}=\mathrm{AttnPool}(Z_{b,t})\in\mathbb R^{d_z}$$
 
 对每个预测距离 $k$ 配置一个轻量预测头：
 
-$$
-q_{b,t,k}=Q_k(r_{b,t})\in\mathbb R^V
-$$
+$$q_{b,t,k}=Q_k(r_{b,t})\in\mathbb R^V$$
 
 其中 $q_{b,t,k}$ 是对位置 $t+k$ 的词表 logits。设预测距离集合为 $\mathcal K$，例如 $\{4,16,64\}$，则 token 级未来预测损失为：
 
-$$
-\mathcal L_{\text{future}}
-=
-\frac{1}{N_f}
-\sum_{b,t}\sum_{k\in\mathcal K}
-m_{b,t,k}\,\beta_k\,
-\mathrm{CE}(q_{b,t,k},y_{b,t+k}^{\star})
-$$
+$$\mathcal L_{\text{future}}=\frac{1}{N_f}\sum_{b,t}\sum_{k\in\mathcal K}m_{b,t,k}\,\beta_k\,\mathrm{CE}(q_{b,t,k},y_{b,t+k}^{\star})$$
 
 其中：
 
@@ -528,57 +456,25 @@ $$
 
 对每个样本定义一组需要远期记忆的答案位置 $\mathcal Q_b$。答案生成损失为：
 
-$$
-\mathcal L_{\text{memory-answer}}
-=
-\frac{1}{N_q}
-\sum_{b=1}^{B}
-\sum_{t\in\mathcal Q_b}
-\mathrm{CE}(\ell_{b,t},y_{b,t}^{\star})
-$$
+$$\mathcal L_{\text{memory-answer}}=\frac{1}{N_q}\sum_{b=1}^{B}\sum_{t\in\mathcal Q_b}\mathrm{CE}(\ell_{b,t},y_{b,t}^{\star})$$
 
 其中 $N_q=\sum_b|\mathcal Q_b|$。它与普通 NTP 使用相同的 token 标签，但只对那些被标注为“必须依赖窗口外信息”的答案位置额外加权。
 
 如果训练数据带有结构化记忆标签，例如用户偏好、实体属性、任务状态或工具结果，还可以增加 recall head：
 
-$$
-\widehat m_{b,j}=R_j(Z_{b,t_q},q_{b,j})
-$$
+$$\widehat m_{b,j}=R_j(Z_{b,t_q},q_{b,j})$$
 
 其中 $q_{b,j}$ 是第 $j$ 个记忆查询，$m_{b,j}^{\star}$ 是正确的类别、token span 或目标 embedding。分类型记忆可以使用：
 
-$$
-\mathcal L_{\text{recall-cls}}
-=
-\frac{1}{N_m}
-\sum_{b,j}
-\mathrm{CE}(\widehat m_{b,j},m_{b,j}^{\star})
-$$
+$$\mathcal L_{\text{recall-cls}}=\frac{1}{N_m}\sum_{b,j}\mathrm{CE}(\widehat m_{b,j},m_{b,j}^{\star})$$
 
 开放文本或语义型记忆可以使用对比损失。设正确记忆表示为 $e_{b,j}^{+}$，同 batch 的其他记忆为负样本：
 
-$$
-\mathcal L_{\text{recall-ctr}}
-=-
-\frac{1}{N_m}
-\sum_{b,j}
-\log
-\frac{
-\exp(\mathrm{sim}(\widehat m_{b,j},e_{b,j}^{+})/\tau)
-}{
-\sum_n\exp(\mathrm{sim}(\widehat m_{b,j},e_n)/\tau)
-}
-$$
+$$\mathcal L_{\text{recall-ctr}}=-\frac{1}{N_m}\sum_{b,j}\log\frac{\exp(\mathrm{sim}(\widehat m_{b,j},e_{b,j}^{+})/\tau)}{\sum_n\exp(\mathrm{sim}(\widehat m_{b,j},e_n)/\tau)}$$
 
 综合记忆损失为：
 
-$$
-\mathcal L_{\text{memory}}
-=
-\mathcal L_{\text{memory-answer}}
-+\lambda_{mc}\mathcal L_{\text{recall-cls}}
-+\lambda_{mt}\mathcal L_{\text{recall-ctr}}
-$$
+$$\mathcal L_{\text{memory}}=\mathcal L_{\text{memory-answer}}+\lambda_{mc}\mathcal L_{\text{recall-cls}}+\lambda_{mt}\mathcal L_{\text{recall-ctr}}$$
 
 不具备相应标签时，对应项置零即可。最重要的训练条件是将关键信息放在局部 KV 窗口之外，并裁剪旧 KV；否则模型可以直接从 attention history 找答案，无法证明 $Z_t$ 被使用。还应构造事实更新样本，例如“旧地址被新地址覆盖”，以训练冲突消解，而不仅是简单累积事实。
 
@@ -586,40 +482,21 @@ $$
 
 动作控制器输出三个动作的 logits：
 
-$$
-c_{b,t}=W_a[h_{b,t};\mathrm{Pool}(Z_{b,t})]+b_a
-\in\mathbb R^3
-$$
+$$c_{b,t}=W_a[h_{b,t};\mathrm{Pool}(Z_{b,t})]+b_a\in\mathbb R^3$$
 
 动作集合为 $\{\text{THINK},\text{SPEAK},\text{STOP}\}$。若存在人工标注、规则合成或教师蒸馏得到的正确动作 $a_{b,t}^{\star}$，监督损失为：
 
-$$
-\mathcal L_{\text{action}}
-=
-\frac{1}{N_a}
-\sum_{b,t}m_{b,t}^{a}
-\mathrm{CE}(c_{b,t},a_{b,t}^{\star})
-$$
+$$\mathcal L_{\text{action}}=\frac{1}{N_a}\sum_{b,t}m_{b,t}^{a}\mathrm{CE}(c_{b,t},a_{b,t}^{\star})$$
 
 其中 $m_{b,t}^{a}$ 表示该位置存在可信动作标签，$N_a$ 是有效动作标签数量。普通文本预训练数据通常只能可靠提供 `SPEAK` 和回答末尾的 `STOP`，不能把所有隐藏位置武断标为 `THINK`。THINK 标签应来自可验证任务、教师轨迹或后续策略优化。
 
 后续可使用强化学习或偏好优化，在输出质量与计算成本之间权衡。单条轨迹的奖励可以定义为：
 
-$$
-R
-=R_{\text{task}}
-+\lambda_qR_{\text{quality}}
--\lambda_cN_{\text{THINK}}
--\lambda_l\mathrm{Latency}
--\lambda_e\mathbf{1}_{\text{invalid termination}}
-$$
+$$R=R_{\text{task}}+\lambda_qR_{\text{quality}}-\lambda_cN_{\text{THINK}}-\lambda_l\mathrm{Latency}-\lambda_e\mathbf{1}_{\text{invalid termination}}$$
 
 其中 $R_{\text{task}}$ 衡量答案或动作是否正确，$R_{\text{quality}}$ 衡量约束满足和回答质量，$N_{\text{THINK}}$ 是静默步骤数，最后一项惩罚过早停止或超过预算。策略优化的目标是最大化期望奖励：
 
-$$
-\mathcal J_{\text{policy}}
-=\mathbb E_{a_{1:T}\sim\pi_\psi}[R]
-$$
+$$\mathcal J_{\text{policy}}=\mathbb E_{a_{1:T}\sim\pi_\psi}[R]$$
 
 动作监督和策略奖励不必同时从训练第一阶段启用。建议先训练稳定的 `SPEAK/STOP`，再加入受预算约束的 THINK。
 
@@ -627,80 +504,35 @@ $$
 
 设逐 slot 写入门为：
 
-$$
-\alpha_{b,t}\in[0,1]^M
-$$
+$$\alpha_{b,t}\in[0,1]^M$$
 
 最简单的 L1 写入惩罚为：
 
-$$
-\mathcal L_{\text{sparse}}
-=
-\frac{1}{BTM}
-\sum_{b,t,i}\alpha_{b,t}^{(i)}
-$$
+$$\mathcal L_{\text{sparse}}=\frac{1}{BTM}\sum_{b,t,i}\alpha_{b,t}^{(i)}$$
 
 它鼓励少写入，但权重过大会导致所有门关闭。更稳健的方法是设置目标平均写入率 $\rho$：
 
-$$
-\mathcal L_{\text{budget}}
-=
-\left(
-\frac{1}{BTM}\sum_{b,t,i}\alpha_{b,t}^{(i)}
--\rho
-\right)^2
-$$
+$$\mathcal L_{\text{budget}}=\left(\frac{1}{BTM}\sum_{b,t,i}\alpha_{b,t}^{(i)}-\rho\right)^2$$
 
 例如 $\rho=0.05$ 表示平均每一步只允许约 5% 的 slot 写入强度。若希望写入集中在少数 slots，还可以对每步门分布施加熵惩罚：
 
-$$
-\bar\alpha_{b,t}^{(i)}
-=
-\frac{\alpha_{b,t}^{(i)}}
-{\sum_j\alpha_{b,t}^{(j)}+\epsilon}
-$$
+$$\bar\alpha_{b,t}^{(i)}=\frac{\alpha_{b,t}^{(i)}}{\sum_j\alpha_{b,t}^{(j)}+\epsilon}$$
 
-$$
-\mathcal L_{\text{gate-entropy}}
-=
--\frac{1}{BT}
-\sum_{b,t}\sum_i
-\bar\alpha_{b,t}^{(i)}
-\log(\bar\alpha_{b,t}^{(i)}+\epsilon)
-$$
+$$\mathcal L_{\text{gate-entropy}}=-\frac{1}{BT}\sum_{b,t}\sum_i\bar\alpha_{b,t}^{(i)}\log(\bar\alpha_{b,t}^{(i)}+\epsilon)$$
 
 最小化该项会鼓励一次写入集中到少数 slots，但必须与写入预算和记忆任务配合，避免始终只使用同一个 slot。
 
 为降低所有 latent slots 学成相同向量的风险，可对归一化后的 slots 使用多样性正则。令：
 
-$$
-\widetilde Z_{b,t}^{(i)}
-=\frac{Z_{b,t}^{(i)}}{\|Z_{b,t}^{(i)}\|_2+\epsilon}
-$$
+$$\widetilde Z_{b,t}^{(i)}=\frac{Z_{b,t}^{(i)}}{\|Z_{b,t}^{(i)}\|_2+\epsilon}$$
 
 则：
 
-$$
-\mathcal L_{\text{div}}
-=
-\frac{1}{BTM(M-1)}
-\sum_{b,t}\sum_{i\ne j}
-\left(
-\widetilde Z_{b,t}^{(i)\top}
-\widetilde Z_{b,t}^{(j)}
-\right)^2
-$$
+$$\mathcal L_{\text{div}}=\frac{1}{BTM(M-1)}\sum_{b,t}\sum_{i\ne j}\left(\widetilde Z_{b,t}^{(i)\top}\widetilde Z_{b,t}^{(j)}\right)^2$$
 
 该项降低不同 slots 的方向相似度，但不应强迫所有 slots 完全正交，因为相关事实可能天然需要共享表示。综合门控与容量正则定义为：
 
-$$
-\mathcal L_{\text{write}}
-=
-\lambda_s\mathcal L_{\text{sparse}}
-+\lambda_b\mathcal L_{\text{budget}}
-+\lambda_h\mathcal L_{\text{gate-entropy}}
-+\lambda_d\mathcal L_{\text{div}}
-$$
+$$\mathcal L_{\text{write}}=\lambda_s\mathcal L_{\text{sparse}}+\lambda_b\mathcal L_{\text{budget}}+\lambda_h\mathcal L_{\text{gate-entropy}}+\lambda_d\mathcal L_{\text{div}}$$
 
 实际实验不必同时启用全部项。建议从目标写入率加轻量多样性正则开始，并监控不同事件类型的门值、有效 slot 数和 latent on/off 性能差。
 
@@ -708,14 +540,7 @@ $$
 
 统一训练目标为：
 
-$$
-\mathcal L=
-\mathcal L_{\text{NTP}}
-+\lambda_f\mathcal L_{\text{future}}
-+\lambda_m\mathcal L_{\text{memory}}
-+\lambda_a\mathcal L_{\text{action}}
-+\lambda_w\mathcal L_{\text{write}}
-$$
+$$\mathcal L=\mathcal L_{\text{NTP}}+\lambda_f\mathcal L_{\text{future}}+\lambda_m\mathcal L_{\text{memory}}+\lambda_a\mathcal L_{\text{action}}+\lambda_w\mathcal L_{\text{write}}$$
 
 这里外层系数用于控制不同任务族之间的比例；$\mathcal L_{\text{write}}$ 内部的系数用于控制不同正则项之间的比例。为避免混淆，实现中也可以令外层 $\lambda_w=1$，只调内部正则权重。
 
