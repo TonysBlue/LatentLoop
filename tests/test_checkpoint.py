@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import torch
+
+from latentloop.checkpoint import (
+    CheckpointManager,
+    CheckpointMetadata,
+    DataCursor,
+    file_sha256,
+)
+from latentloop.config import ProjectConfig
+from latentloop.data import SyntheticEpisodeDataset
+from latentloop.losses import compute_losses
+from latentloop.model import StreamingLatentLoop
+
+
+def test_checkpoint_restores_full_recurrent_step(
+    tmp_path: Path, smoke_config: ProjectConfig
+) -> None:
+    model = StreamingLatentLoop(smoke_config.model)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _: 1.0)
+    episode = SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(0)
+    first = model(episode.units[0], model.initial_state(1, "cpu"))
+    loss = compute_losses(first, episode.units[0])["total"]
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+
+    manager = CheckpointManager(tmp_path)
+    path, digest = manager.save(
+        "state",
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        scaler=None,
+        recurrent_state=first.state.detach(),
+        train_state={"update": 1, "episode": 1, "unit": 1},
+        data_cursor=DataCursor(epoch=0, episode=0, unit=1),
+        metadata=CheckpointMetadata(
+            data_identity="test-data",
+            codec_id=smoke_config.data.codec_id,
+            codec_weight_hash=smoke_config.data.codec_weight_hash,
+            git_commit="test",
+        ),
+        config=smoke_config.as_dict(),
+    )
+    expected = model(episode.units[1], first.state.detach()).speech_logits.detach()
+
+    restored_model = StreamingLatentLoop(smoke_config.model)
+    restored_optimizer = torch.optim.AdamW(restored_model.parameters(), lr=1e-3)
+    restored_scheduler = torch.optim.lr_scheduler.LambdaLR(restored_optimizer, lambda _: 1.0)
+    train_state, cursor, recurrent, metadata = manager.load(
+        path,
+        model=restored_model,
+        optimizer=restored_optimizer,
+        scheduler=restored_scheduler,
+        scaler=None,
+        device=torch.device("cpu"),
+        config=smoke_config.as_dict(),
+        expected_metadata=CheckpointMetadata(
+            data_identity="test-data",
+            codec_id=smoke_config.data.codec_id,
+            codec_weight_hash=smoke_config.data.codec_weight_hash,
+            git_commit="different-commit-is-allowed",
+        ),
+    )
+    assert recurrent is not None
+    actual = restored_model(episode.units[1], recurrent).speech_logits.detach()
+    assert train_state["update"] == 1
+    assert cursor.unit == 1
+    assert metadata.codec_id == smoke_config.data.codec_id
+    assert digest == file_sha256(path)
+    assert torch.equal(actual, expected)
+    assert (tmp_path / "manifest.json").exists()
+
+
+def test_checkpoint_rejects_codec_mismatch(tmp_path: Path, smoke_config: ProjectConfig) -> None:
+    model = StreamingLatentLoop(smoke_config.model)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    manager = CheckpointManager(tmp_path)
+    path, _ = manager.save(
+        "codec",
+        model=model,
+        optimizer=optimizer,
+        scheduler=None,
+        scaler=None,
+        recurrent_state=None,
+        train_state={"update": 0},
+        data_cursor=DataCursor(),
+        metadata=CheckpointMetadata("data", "codec-a", "hash-a", "test"),
+        config=smoke_config.as_dict(),
+    )
+    try:
+        manager.load(
+            path,
+            model=model,
+            optimizer=optimizer,
+            scheduler=None,
+            scaler=None,
+            device=torch.device("cpu"),
+            config=smoke_config.as_dict(),
+            expected_metadata=CheckpointMetadata("data", "codec-b", "hash-a", "test"),
+        )
+    except ValueError as error:
+        assert "codec_id" in str(error)
+    else:
+        raise AssertionError("codec mismatch must be rejected")

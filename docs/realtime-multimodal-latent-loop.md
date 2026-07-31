@@ -950,12 +950,8 @@ $$
 
 ```python
 def realtime_step(state, mic_chunk, screen_event, now):
-    audio, state.audio_cache = audio_encoder.step(
-        mic_chunk, state.audio_cache
-    )
-    vision, state.vision_cache = vision_encoder.step(
-        screen_event, state.vision_cache
-    )
+    audio, state.audio_cache = audio_encoder.step(mic_chunk, state.audio_cache)
+    vision, state.vision_cache = vision_encoder.step(screen_event, state.vision_cache)
 
     unit = pack_unit(
         audio=audio,
@@ -994,9 +990,7 @@ def realtime_step(state, mic_chunk, screen_event, now):
     if action.type != "NOOP":
         ui_tars_operator.submit(action)
 
-    state.latent = compact_expiring_units(
-        state.latent, state.local_kv
-    )
+    state.latent = compact_expiring_units(state.latent, state.local_kv)
     state.local_kv = evict_complete_old_units(state.local_kv)
     state.last_tick = now
     return state

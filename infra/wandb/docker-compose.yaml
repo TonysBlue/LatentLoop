@@ -1,0 +1,23 @@
+name: latentloop-observability
+
+services:
+  wandb:
+    image: wandb/local:0.83.0@sha256:b234c9d084b65164598da6fa5f17d38ec71137b037c059b46889c1495b008c52
+    container_name: latentloop-wandb
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - latentloop-wandb:/vol
+    cpus: 2
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+
+volumes:
+  latentloop-wandb:
+    name: latentloop-wandb

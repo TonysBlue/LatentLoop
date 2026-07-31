@@ -1,0 +1,56 @@
+model:
+  model_dim: 512
+  latent_dim: 512
+  num_layers: 8
+  num_heads: 8
+  ffn_dim: 2048
+  cross_attention_every: 2
+  audio_tokens: 4
+  audio_kernel: 400
+  audio_stride: 160
+  latent_slots: 8
+  kv_units: 16
+  speech_frames_per_unit: 38
+  speech_codebooks: 4
+  speech_codebook_size: 1024
+  action_text_tokens: 16
+  action_text_vocab_size: 256
+  action_key_vocab_size: 32
+  max_action_duration_ms: 10000
+  memory_classes: 64
+  dropout: 0.1
+  activation_checkpointing: false
+data:
+  source: synthetic
+  schema_version: 1
+  audio_sample_rate: 24000
+  codec_frame_rate: 75
+  codec_id: synthetic-codec-v1
+  codec_weight_hash: synthetic
+  unit_ms: 500
+  unit_audio_samples: 12000
+  screen_height: 224
+  screen_width: 224
+  episode_units: 32
+  train_episodes: 1000
+  seed: 17
+training:
+  max_updates: 10000
+  learning_rate: 0.0003
+  weight_decay: 0.1
+  gradient_accumulation_steps: 16
+  tbptt_units: 4
+  mixed_precision: fp16
+  max_grad_norm: 1.0
+  checkpoint_every: 500
+  log_every: 10
+tracking:
+  enabled: true
+  project: latentloop
+  mode: online
+  base_url: http://127.0.0.1:8080
+  media_samples_per_run: 4
+  media_warning_gb: 40
+  media_stop_gb: 50
+runtime:
+  data_root: ~/latentloop-data

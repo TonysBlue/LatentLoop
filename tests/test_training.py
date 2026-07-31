@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+from latentloop.config import ProjectConfig
+from latentloop.data import SyntheticEpisodeDataset, write_episode_shards
+from latentloop.training import train
+
+
+def test_smoke_training_and_atomic_checkpoint(smoke_config: ProjectConfig) -> None:
+    result = train(smoke_config)
+    checkpoint_dir = smoke_config.runtime.root_path() / "checkpoints"
+    checkpoints = sorted(checkpoint_dir.glob("step-*.pt"))
+    assert result["train_state"]["update"] == smoke_config.training.max_updates
+    assert "train/loss_total" in result["metrics"]
+    assert result["metrics"]["runtime/elapsed_seconds"] > 0
+    assert result["metrics"]["runtime/units_per_second"] > 0
+    assert checkpoints
+    assert not list(checkpoint_dir.glob("*.tmp.pt"))
+
+
+def test_interrupted_training_matches_continuous_training(
+    smoke_config: ProjectConfig,
+) -> None:
+    continuous = train(smoke_config)
+    continuous_model = continuous["model"]
+    continuous_state = {
+        name: value.detach().clone() for name, value in continuous_model.state_dict().items()
+    }
+
+    interrupted = train(smoke_config, stop_after_updates=2)
+    assert interrupted["train_state"]["update"] == 2
+    checkpoint = smoke_config.runtime.root_path() / "checkpoints" / "step-00000002.pt"
+    resumed = train(smoke_config, resume=str(checkpoint))
+    assert resumed["train_state"]["update"] == smoke_config.training.max_updates
+    for name, value in resumed["model"].state_dict().items():
+        assert value.equal(continuous_state[name]), name
+
+
+def test_gradient_accumulation_tracks_all_consumed_units(
+    smoke_config: ProjectConfig,
+) -> None:
+    smoke_config.training.gradient_accumulation_steps = 2
+    smoke_config.training.max_updates = 2
+    smoke_config.training.checkpoint_every = 1
+
+    result = train(smoke_config)
+
+    assert result["train_state"]["update"] == 2
+    assert result["train_state"]["consumed_units"] == (
+        2 * smoke_config.training.gradient_accumulation_steps * smoke_config.training.tbptt_units
+    )
+
+
+def test_gradient_accumulation_resume_matches_continuous_training(
+    smoke_config: ProjectConfig,
+) -> None:
+    smoke_config.training.gradient_accumulation_steps = 2
+    smoke_config.training.max_updates = 2
+    smoke_config.training.checkpoint_every = 1
+    continuous = train(smoke_config)
+    continuous_state = {
+        name: value.detach().clone() for name, value in continuous["model"].state_dict().items()
+    }
+
+    interrupted = train(smoke_config, stop_after_updates=1)
+    assert interrupted["train_state"]["consumed_units"] == 4
+    checkpoint = smoke_config.runtime.root_path() / "checkpoints" / "step-00000001.pt"
+    resumed = train(smoke_config, resume=str(checkpoint))
+
+    assert resumed["train_state"]["consumed_units"] == 8
+    for name, value in resumed["model"].state_dict().items():
+        assert value.equal(continuous_state[name]), name
+
+
+def test_webdataset_resume_across_shards_matches_continuous_training(
+    smoke_config: ProjectConfig,
+) -> None:
+    smoke_config.data.episode_units = 4
+    smoke_config.data.train_episodes = 2
+    episodes = list(SyntheticEpisodeDataset(smoke_config.data, smoke_config.model))
+    data_dir = smoke_config.runtime.root_path() / "processed"
+    write_episode_shards(episodes, data_dir / "train-%06d.tar", max_size=1)
+    smoke_config.data.source = "webdataset"
+    smoke_config.data.shards = str(data_dir / "train-*.tar")
+    smoke_config.data.manifest = str(data_dir / "train-manifest.jsonl")
+    smoke_config.training.max_updates = 4
+    smoke_config.training.checkpoint_every = 2
+
+    continuous = train(smoke_config)
+    continuous_state = {
+        name: value.detach().clone() for name, value in continuous["model"].state_dict().items()
+    }
+    interrupted = train(smoke_config, stop_after_updates=2)
+    cursor = interrupted["data_cursor"]
+    assert (cursor.ordered_shard_index, cursor.sample_index_in_shard) == (0, 1)
+
+    checkpoint = smoke_config.runtime.root_path() / "checkpoints" / "step-00000002.pt"
+    resumed = train(smoke_config, resume=str(checkpoint))
+
+    assert resumed["train_state"]["update"] == 4
+    for name, value in resumed["model"].state_dict().items():
+        assert value.equal(continuous_state[name]), name
