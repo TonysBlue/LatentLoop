@@ -85,6 +85,11 @@ class StreamUnit:
     screen_revision: Tensor
     speech_codes: Tensor
     speech_mask: Tensor
+    action_mask: Tensor
+    speech_control_mask: Tensor
+    action_control_mask: Tensor
+    cognitive_control_mask: Tensor
+    memory_mask: Tensor
     action_target: ActionTarget
     control_target: ControlTarget
     memory_target: Tensor
@@ -103,6 +108,11 @@ class StreamUnit:
             screen_revision=self.screen_revision.to(device),
             speech_codes=self.speech_codes.to(device),
             speech_mask=self.speech_mask.to(device),
+            action_mask=self.action_mask.to(device),
+            speech_control_mask=self.speech_control_mask.to(device),
+            action_control_mask=self.action_control_mask.to(device),
+            cognitive_control_mask=self.cognitive_control_mask.to(device),
+            memory_mask=self.memory_mask.to(device),
             action_target=self.action_target.to(device),
             control_target=self.control_target.to(device),
             memory_target=self.memory_target.to(device),
@@ -114,6 +124,7 @@ class StreamUnit:
         audio_samples: int,
         speech_frames: int,
         speech_codebooks: int,
+        speech_codebook_size: int = 2**16,
     ) -> None:
         batch = self.batch_size
         if self.mic_audio.shape != (batch, audio_samples):
@@ -122,6 +133,22 @@ class StreamUnit:
             raise ValueError("screen must have shape [B, 3, H, W]")
         if self.speech_codes.shape != (batch, speech_frames, speech_codebooks):
             raise ValueError("speech_codes has an incompatible shape")
+        if self.speech_mask.shape != (batch, speech_frames):
+            raise ValueError("speech_mask has an incompatible shape")
+        valid_codes = self.speech_codes[self.speech_mask]
+        if valid_codes.numel() and (
+            valid_codes.min() < 0 or valid_codes.max() >= speech_codebook_size
+        ):
+            raise ValueError("speech code is outside the configured codebook")
+        for name, mask in (
+            ("action_mask", self.action_mask),
+            ("speech_control_mask", self.speech_control_mask),
+            ("action_control_mask", self.action_control_mask),
+            ("cognitive_control_mask", self.cognitive_control_mask),
+            ("memory_mask", self.memory_mask),
+        ):
+            if mask.shape != (batch,):
+                raise ValueError(f"{name} must have shape [B]")
         action = self.action_target
         if action.coordinates.shape != (batch, 4):
             raise ValueError("action coordinates must have shape [B, 4]")
@@ -166,10 +193,13 @@ class Episode:
     episode_id: str
     units: list[StreamUnit]
     metadata: dict[str, Any]
+    target_speech: Tensor | None = None
     ordered_shard_index: int = 0
     sample_index_in_shard: int = 0
 
     def validate(self, **unit_shape: int) -> None:
+        if not self.units:
+            raise ValueError("episode must contain at least one stream unit")
         previous = -1
         for unit in self.units:
             unit.validate(**unit_shape)
@@ -177,6 +207,10 @@ class Episode:
             if timestamp <= previous:
                 raise ValueError("episode timestamps must be strictly increasing")
             previous = timestamp
+        if self.target_speech is not None:
+            expected = len(self.units) * unit_shape["audio_samples"]
+            if self.target_speech.numel() != expected:
+                raise ValueError("target_speech must exactly cover the episode timeline")
 
 
 @dataclass(slots=True)
@@ -189,11 +223,27 @@ class LayerKV:
 
 
 @dataclass(slots=True)
+class SpeechLocalState:
+    temporal: Tensor
+    previous_codes: Tensor
+    control: Tensor
+    utterance_active: Tensor
+
+    def detach(self) -> SpeechLocalState:
+        return SpeechLocalState(
+            temporal=self.temporal.detach(),
+            previous_codes=self.previous_codes.detach(),
+            control=self.control.detach(),
+            utterance_active=self.utterance_active.detach(),
+        )
+
+
+@dataclass(slots=True)
 class RecurrentState:
     layer_kv: tuple[LayerKV, ...]
     latent: Tensor
     audio_cache: Tensor
-    speech_local: Tensor
+    speech_local: SpeechLocalState
     unit_index: Tensor
 
     def detach(self) -> RecurrentState:
@@ -234,3 +284,17 @@ class StepOutput:
     memory_logits: Tensor
     latent_gate: Tensor
     query: Tensor
+
+
+@dataclass(frozen=True, slots=True)
+class SpeechSamplingConfig:
+    temperature: float = 0.8
+    top_k: int = 250
+    greedy: bool = False
+
+
+@dataclass(slots=True)
+class GenerationOutput:
+    output: StepOutput
+    speech_codes: Tensor
+    speech_control: Tensor

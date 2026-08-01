@@ -44,6 +44,7 @@ def test_checkpoint_restores_full_recurrent_step(
             codec_id=smoke_config.data.codec_id,
             codec_weight_hash=smoke_config.data.codec_weight_hash,
             git_commit="test",
+            codec_revision=smoke_config.data.codec_revision,
         ),
         config=smoke_config.as_dict(),
     )
@@ -65,6 +66,7 @@ def test_checkpoint_restores_full_recurrent_step(
             codec_id=smoke_config.data.codec_id,
             codec_weight_hash=smoke_config.data.codec_weight_hash,
             git_commit="different-commit-is-allowed",
+            codec_revision=smoke_config.data.codec_revision,
         ),
     )
     assert recurrent is not None
@@ -90,7 +92,7 @@ def test_checkpoint_rejects_codec_mismatch(tmp_path: Path, smoke_config: Project
         recurrent_state=None,
         train_state={"update": 0},
         data_cursor=DataCursor(),
-        metadata=CheckpointMetadata("data", "codec-a", "hash-a", "test"),
+        metadata=CheckpointMetadata("data", "codec-a", "hash-a", "test", "revision"),
         config=smoke_config.as_dict(),
     )
     try:
@@ -102,7 +104,9 @@ def test_checkpoint_rejects_codec_mismatch(tmp_path: Path, smoke_config: Project
             scaler=None,
             device=torch.device("cpu"),
             config=smoke_config.as_dict(),
-            expected_metadata=CheckpointMetadata("data", "codec-b", "hash-a", "test"),
+            expected_metadata=CheckpointMetadata(
+                "data", "codec-b", "hash-a", "test", "revision"
+            ),
         )
     except ValueError as error:
         assert "codec_id" in str(error)

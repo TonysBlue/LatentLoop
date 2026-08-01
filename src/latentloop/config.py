@@ -19,10 +19,14 @@ class ModelConfig:
     audio_kernel: int = 400
     audio_stride: int = 160
     latent_slots: int = 8
-    kv_units: int = 16
-    speech_frames_per_unit: int = 38
-    speech_codebooks: int = 4
-    speech_codebook_size: int = 1024
+    kv_units: int = 200
+    kv_window_ms: int = 16_000
+    speech_frames_per_unit: int = 1
+    speech_codebooks: int = 8
+    speech_codebook_size: int = 2048
+    speech_depth_layers: int = 2
+    speech_depth_heads: int = 4
+    speech_depth_ffn_dim: int = 1024
     action_text_tokens: int = 16
     action_text_vocab_size: int = 256
     action_key_vocab_size: int = 32
@@ -41,13 +45,18 @@ class DataConfig:
     source: str = "synthetic"
     shards: str | None = None
     manifest: str | None = None
-    schema_version: int = 1
+    schema_version: int = 2
     audio_sample_rate: int = 24_000
-    codec_frame_rate: int = 75
-    codec_id: str = "synthetic-codec-v1"
-    codec_weight_hash: str = "synthetic"
-    unit_ms: int = 500
-    unit_audio_samples: int = 12_000
+    codec_frame_rate: float = 12.5
+    codec_id: str = "mimi-24khz-8x2048"
+    codec_weight_hash: str = (
+        "09b782f0629851a271227fb9d36db65c041790365f11bbe5d3d59369cf863f50"
+    )
+    codec_revision: str = "a49141e28b3d9c947cf9aa5314431e1b11cbd2f5"
+    codec_codebooks: int = 8
+    codec_codebook_size: int = 2048
+    unit_ms: int = 80
+    unit_audio_samples: int = 1_920
     screen_height: int = 224
     screen_width: int = 224
     episode_units: int = 32
@@ -61,11 +70,17 @@ class TrainingConfig:
     learning_rate: float = 3e-4
     weight_decay: float = 0.1
     gradient_accumulation_steps: int = 16
-    tbptt_units: int = 4
+    tbptt_units: int = 16
     mixed_precision: str = "fp16"
     max_grad_norm: float = 1.0
     checkpoint_every: int = 500
     log_every: int = 10
+    head_learning_rate: float = 1e-4
+    backbone_learning_rate: float = 3e-5
+    warmup_ratio: float = 0.03
+    codec_scheduled_sampling: float = 0.0
+    codec_scheduled_sampling_start: float = 0.7
+    backbone_train_mode: str = "all"
 
 
 @dataclass(slots=True)
@@ -105,6 +120,9 @@ class ProjectConfig:
             raise ValueError("audio_kernel must be >= audio_stride")
         if self.model.kv_units < 1 or self.model.latent_slots < 1:
             raise ValueError("kv_units and latent_slots must be positive")
+        expected_kv_units = -(-self.model.kv_window_ms // self.data.unit_ms)
+        if self.model.kv_units != expected_kv_units:
+            raise ValueError("kv_units must exactly cover kv_window_ms at the configured unit_ms")
         if self.model.action_text_tokens < 1 or self.model.action_key_vocab_size < 1:
             raise ValueError("action text and key dimensions must be positive")
         if self.data.source not in {"synthetic", "webdataset"}:
@@ -113,11 +131,31 @@ class ProjectConfig:
             raise ValueError("data.shards is required for webdataset")
         if not self.data.codec_id or not self.data.codec_weight_hash:
             raise ValueError("codec identity and weight hash are required")
-        maximum_codec_frames = -(-(self.data.unit_ms * self.data.codec_frame_rate) // 1_000)
-        if self.model.speech_frames_per_unit < maximum_codec_frames:
-            raise ValueError("speech_frames_per_unit cannot hold the codec timeline")
+        if self.data.unit_audio_samples * 1_000 != self.data.audio_sample_rate * self.data.unit_ms:
+            raise ValueError("unit_audio_samples must exactly match the audio clock")
+        if self.data.codec_codebooks != self.model.speech_codebooks:
+            raise ValueError("data and model codec codebook counts must match")
+        if self.data.codec_codebook_size != self.model.speech_codebook_size:
+            raise ValueError("data and model codec vocabularies must match")
+        if self.data.unit_ms * self.data.codec_frame_rate != 1_000:
+            raise ValueError("E2 requires exactly one codec frame per stream unit")
+        if self.model.speech_frames_per_unit != 1:
+            raise ValueError("E2 requires exactly one speech frame per stream unit")
+        if (
+            self.model.speech_depth_heads < 1
+            or self.model.model_dim % self.model.speech_depth_heads
+        ):
+            raise ValueError("model_dim must be divisible by speech_depth_heads")
         if self.training.tbptt_units < 1:
             raise ValueError("tbptt_units must be positive")
+        if not 0 <= self.training.codec_scheduled_sampling <= 1:
+            raise ValueError("codec_scheduled_sampling must be in [0, 1]")
+        if not 0 <= self.training.codec_scheduled_sampling_start < 1:
+            raise ValueError("codec_scheduled_sampling_start must be in [0, 1)")
+        if self.training.backbone_train_mode not in {"frozen", "selective", "all"}:
+            raise ValueError("backbone_train_mode must be frozen, selective, or all")
+        if not 0 <= self.training.warmup_ratio < 1:
+            raise ValueError("warmup_ratio must be in [0, 1)")
         if self.training.mixed_precision not in {"no", "fp16"}:
             raise ValueError("RTX 2080 SUPER profiles support mixed_precision=no or fp16")
 

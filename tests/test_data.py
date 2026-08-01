@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import torch
 
+from latentloop.cli import main
 from latentloop.config import ProjectConfig
 from latentloop.data import (
     EpisodeShardReader,
@@ -31,6 +32,8 @@ def test_webdataset_episode_round_trip(tmp_path: Path, smoke_config: ProjectConf
     assert decoded.sample_index_in_shard == 0
     assert len(decoded.units) == len(original.units)
     assert torch.equal(decoded.units[0].speech_codes, original.units[0].speech_codes)
+    assert torch.equal(decoded.target_speech, original.target_speech)
+    assert torch.equal(decoded.units[0].speech_control_mask, torch.tensor([True]))
     assert torch.equal(
         decoded.units[-1].action_target.type,
         original.units[-1].action_target.type,
@@ -51,6 +54,21 @@ def test_validation_rejects_non_monotonic_timestamps(smoke_config: ProjectConfig
         assert "strictly increasing" in str(error)
     else:
         raise AssertionError("non-monotonic timestamps must be rejected")
+
+
+def test_validation_rejects_code_outside_codec_vocabulary(
+    smoke_config: ProjectConfig,
+) -> None:
+    episode = SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(0)
+    episode.units[0].speech_codes[0, 0, 0] = smoke_config.model.speech_codebook_size
+
+    with pytest.raises(ValueError, match="outside the configured codebook"):
+        episode.validate(
+            audio_samples=smoke_config.data.unit_audio_samples,
+            speech_frames=smoke_config.model.speech_frames_per_unit,
+            speech_codebooks=smoke_config.model.speech_codebooks,
+            speech_codebook_size=smoke_config.model.speech_codebook_size,
+        )
 
 
 def test_reader_rejects_manifest_content_mismatch(
@@ -84,3 +102,24 @@ def test_manifest_rejects_session_split_leak(tmp_path: Path, smoke_config: Proje
 
     with pytest.raises(ValueError, match="sessions cross dataset splits"):
         load_manifest(tmp_path / "train-manifest.jsonl")
+
+
+def test_validate_data_explicit_shards_override_configured_source(
+    tmp_path: Path, smoke_config: ProjectConfig
+) -> None:
+    episode = SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(0)
+    write_episode_shards([episode], tmp_path / "actual-%06d.tar")
+
+    assert main(
+        [
+            "validate-data",
+            "--config",
+            "configs/smoke.yaml",
+            "--set",
+            "data.source=webdataset",
+            "--set",
+            f"data.shards={tmp_path / 'missing-*.tar'}",
+            "--shards",
+            str(tmp_path / "actual-*.tar"),
+        ]
+    ) == 0

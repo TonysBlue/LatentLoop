@@ -7,11 +7,15 @@ from torch.utils.checkpoint import checkpoint
 from latentloop.config import ModelConfig
 from latentloop.model.attention import StreamingTransformerLayer
 from latentloop.model.encoders import StreamingAudioEncoder, TimeEncoder, VisionEncoder
+from latentloop.model.speech import FactorizedSpeechHead
 from latentloop.types import (
     ActionOutput,
     ControlOutput,
+    GenerationOutput,
     LayerKV,
     RecurrentState,
+    SpeechLocalState,
+    SpeechSamplingConfig,
     StepOutput,
     StreamUnit,
 )
@@ -69,11 +73,7 @@ class StreamingLatentLoop(nn.Module):
         self.final_norm = nn.LayerNorm(dim)
         self.latent_updater = LatentUpdater(dim, config.latent_dim, config.num_heads)
         head_input = dim + config.latent_dim
-        self.speech_state = nn.GRUCell(head_input, dim)
-        self.speech_frame_embedding = nn.Parameter(torch.zeros(config.speech_frames_per_unit, dim))
-        self.speech_heads = nn.ModuleList(
-            nn.Linear(dim, config.speech_codebook_size) for _ in range(config.speech_codebooks)
-        )
+        self.speech_head = FactorizedSpeechHead(config)
         self.action_type_head = nn.Linear(head_input, 10)
         self.action_coord_head = nn.Linear(head_input, 4)
         self.action_scroll_head = nn.Linear(head_input, 2)
@@ -90,7 +90,6 @@ class StreamingLatentLoop(nn.Module):
 
     def reset_parameters(self) -> None:
         nn.init.normal_(self.state_query, std=0.02)
-        nn.init.normal_(self.speech_frame_embedding, std=0.02)
         nn.init.normal_(self.action_text_position, std=0.02)
 
     def initial_state(self, batch_size: int, device: torch.device | str) -> RecurrentState:
@@ -124,7 +123,19 @@ class StreamingLatentLoop(nn.Module):
             audio_cache=torch.zeros(
                 batch_size, self.audio_encoder.cache_samples, device=device, dtype=dtype
             ),
-            speech_local=torch.zeros(batch_size, self.config.model_dim, device=device, dtype=dtype),
+            speech_local=SpeechLocalState(
+                temporal=torch.zeros(
+                    batch_size, self.config.model_dim, device=device, dtype=dtype
+                ),
+                previous_codes=torch.zeros(
+                    batch_size,
+                    self.config.speech_codebooks,
+                    device=device,
+                    dtype=torch.long,
+                ),
+                control=torch.zeros(batch_size, device=device, dtype=torch.long),
+                utterance_active=torch.zeros(batch_size, device=device, dtype=torch.bool),
+            ),
             unit_index=torch.zeros(batch_size, device=device, dtype=torch.long),
         )
 
@@ -137,7 +148,14 @@ class StreamingLatentLoop(nn.Module):
         query = query + self.type_embedding.weight[3]
         return torch.cat((time, audio, vision, query), dim=1)
 
-    def forward_step(self, unit: StreamUnit, state: RecurrentState) -> StepOutput:
+    def forward_step(
+        self,
+        unit: StreamUnit,
+        state: RecurrentState,
+        *,
+        speech_teacher_codes: Tensor | None = None,
+        sampling: SpeechSamplingConfig | None = None,
+    ) -> StepOutput:
         audio, audio_cache = self.audio_encoder(unit.mic_audio, state.audio_cache)
         vision = self.vision_encoder(unit.screen, unit.screen_valid)
         hidden = self._pack_unit(unit, audio, vision)
@@ -175,12 +193,20 @@ class StreamingLatentLoop(nn.Module):
         pooled_latent = updated_latent.mean(dim=1)
         head_input = torch.cat((query, pooled_latent), dim=-1)
 
-        speech_local = self.speech_state(head_input, state.speech_local)
-        speech_frames = speech_local[:, None] + self.speech_frame_embedding[None]
-        speech_logits = torch.stack(
-            [head(speech_frames) for head in self.speech_heads],
-            dim=2,
+        speech_temporal = self.speech_head.update_temporal(
+            query, pooled_latent, state.speech_local
         )
+        if speech_teacher_codes is not None:
+            speech_logits = self.speech_head.teacher_logits(
+                speech_temporal, speech_teacher_codes
+            )
+            next_codes = speech_teacher_codes[:, 0]
+        else:
+            speech_logits, generated = self.speech_head.generate(
+                speech_temporal,
+                sampling or SpeechSamplingConfig(greedy=True),
+            )
+            next_codes = generated[:, 0]
         action = ActionOutput(
             type_logits=self.action_type_head(head_input),
             coordinates=torch.sigmoid(self.action_coord_head(head_input)),
@@ -199,11 +225,25 @@ class StreamingLatentLoop(nn.Module):
             action_logits=self.action_control_head(head_input),
             cognitive_logits=self.cognitive_control_head(head_input),
         )
+        predicted_control = self._select_speech_control(
+            controls.speech_logits, state.speech_local.utterance_active
+        )
+        next_control = (
+            unit.control_target.speech
+            if speech_teacher_codes is not None
+            else predicted_control
+        )
+        utterance_active = (next_control != 0) & (next_control != 4)
         next_state = RecurrentState(
             layer_kv=tuple(new_caches),
             latent=updated_latent,
             audio_cache=audio_cache,
-            speech_local=speech_local,
+            speech_local=SpeechLocalState(
+                temporal=speech_temporal,
+                previous_codes=next_codes,
+                control=next_control,
+                utterance_active=utterance_active,
+            ),
             unit_index=state.unit_index + 1,
         )
         return StepOutput(
@@ -216,8 +256,40 @@ class StreamingLatentLoop(nn.Module):
             query=query,
         )
 
-    def forward(self, unit: StreamUnit, state: RecurrentState) -> StepOutput:
-        return self.forward_step(unit, state)
+    @staticmethod
+    def _select_speech_control(logits: Tensor, active: Tensor) -> Tensor:
+        allowed_inactive = torch.tensor(
+            [True, True, False, False, False], device=logits.device
+        )
+        allowed_active = torch.tensor(
+            [False, False, True, True, True], device=logits.device
+        )
+        allowed = torch.where(active[:, None], allowed_active, allowed_inactive)
+        return logits.masked_fill(~allowed, torch.finfo(logits.dtype).min).argmax(dim=-1)
+
+    def forward(
+        self,
+        unit: StreamUnit,
+        state: RecurrentState,
+        speech_teacher_codes: Tensor | None = None,
+    ) -> StepOutput:
+        return self.forward_step(
+            unit, state, speech_teacher_codes=speech_teacher_codes
+        )
+
+    @torch.no_grad()
+    def generate_step(
+        self,
+        unit: StreamUnit,
+        state: RecurrentState,
+        sampling: SpeechSamplingConfig | None = None,
+    ) -> GenerationOutput:
+        output = self.forward_step(unit, state, sampling=sampling)
+        return GenerationOutput(
+            output=output,
+            speech_codes=output.state.speech_local.previous_codes[:, None],
+            speech_control=output.state.speech_local.control,
+        )
 
     def parameter_count(self) -> int:
         return sum(parameter.numel() for parameter in self.parameters())

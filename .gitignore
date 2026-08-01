@@ -10,7 +10,7 @@ build/
 *.egg-info/
 
 # Runtime outputs stay outside Git.
-data/
+/data/
 checkpoints/
 runs/
 /wandb/

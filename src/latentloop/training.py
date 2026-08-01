@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 import subprocess
 import time
@@ -60,6 +61,7 @@ def _checkpoint_metadata(
         codec_id=config.data.codec_id,
         codec_weight_hash=config.data.codec_weight_hash,
         git_commit=_git_commit(),
+        codec_revision=config.data.codec_revision,
         parent_sha256=parent_sha256,
     )
 
@@ -77,28 +79,61 @@ def train(
     config: ProjectConfig,
     *,
     resume: str | None = None,
+    init_from: str | None = None,
     model: StreamingLatentLoop | None = None,
     stop_after_updates: int | None = None,
 ) -> dict[str, Any]:
+    if resume and init_from:
+        raise ValueError("resume and init_from are mutually exclusive")
     seed_everything(config.data.seed)
     accelerator = Accelerator(
         mixed_precision=config.training.mixed_precision,
         gradient_accumulation_steps=config.training.gradient_accumulation_steps,
     )
     model = model or StreamingLatentLoop(config.model)
+    if init_from:
+        initialize_compatible_weights(model, init_from)
+    configure_trainable_parameters(model, config)
+    head_parameters = []
+    backbone_parameters = []
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        if name.startswith(("speech_head.", "speech_control_head.")):
+            head_parameters.append(parameter)
+        else:
+            backbone_parameters.append(parameter)
+    parameter_groups: list[dict[str, Any]] = []
+    if head_parameters:
+        parameter_groups.append(
+            {"params": head_parameters, "lr": config.training.head_learning_rate}
+        )
+    if backbone_parameters:
+        parameter_groups.append(
+            {"params": backbone_parameters, "lr": config.training.backbone_learning_rate}
+        )
     optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config.training.learning_rate,
+        parameter_groups,
         weight_decay=config.training.weight_decay,
     )
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _: 1.0)
+    warmup_updates = int(config.training.max_updates * config.training.warmup_ratio)
+
+    def learning_rate_scale(step: int) -> float:
+        if warmup_updates and step < warmup_updates:
+            return (step + 1) / warmup_updates
+        progress = (step - warmup_updates) / max(
+            config.training.max_updates - warmup_updates, 1
+        )
+        return 0.5 * (1 + math.cos(math.pi * min(max(progress, 0.0), 1.0)))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, learning_rate_scale)
     model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
     root = config.runtime.root_path()
     checkpoint_manager = CheckpointManager(root / "checkpoints")
     unwrapped_model = accelerator.unwrap_model(model)
     tracker = Tracker(
         config,
-        stage="state",
+        stage="speech",
         model_name=f"{unwrapped_model.parameter_count()}p",
         parameter_count=unwrapped_model.parameter_count(),
         data_identity=_data_identity(config),
@@ -163,7 +198,19 @@ def train(
                         chunk_losses: dict[str, torch.Tensor] = {}
                         output = None
                         for unit in moved:
-                            output = model(unit, recurrent)
+                            sampling_probability = scheduled_sampling_probability(
+                                train_state["update"], config
+                            )
+                            use_teacher = (
+                                sampling_probability <= 0
+                                or random.random()
+                                >= sampling_probability
+                            )
+                            output = model(
+                                unit,
+                                recurrent,
+                                unit.speech_codes if use_teacher else None,
+                            )
                             recurrent = output.state
                             unit_losses = compute_losses(output, unit)
                             for name, value in unit_losses.items():
@@ -224,8 +271,20 @@ def train(
                             "data/episode": float(episode_index),
                             "data/unit": float(next_unit),
                             "train/learning_rate": float(scheduler.get_last_lr()[0]),
+                            "speech/scheduled_sampling": sampling_probability,
                         }
                     )
+                    predictions = output.speech_logits.detach().argmax(dim=-1)
+                    targets = moved[-1].speech_codes
+                    valid = moved[-1].speech_mask[:, :, None]
+                    for codebook in range(config.model.speech_codebooks):
+                        matches = predictions[:, :, codebook].eq(
+                            targets[:, :, codebook]
+                        )
+                        mask = valid[:, :, 0]
+                        last_metrics[f"speech/codec_accuracy_q{codebook}"] = float(
+                            (matches & mask).sum().float().div(mask.sum().clamp_min(1)).item()
+                        )
                     should_log = (
                         accelerator.is_main_process
                         and train_state["update"] % config.training.log_every == 0
@@ -287,3 +346,52 @@ def train(
         "metrics": last_metrics,
         "model": model,
     }
+
+
+def initialize_compatible_weights(model: StreamingLatentLoop, path: str | Path) -> list[str]:
+    payload = torch.load(Path(path), map_location="cpu", weights_only=False)
+    source = payload.get("model", payload)
+    if not isinstance(source, dict):
+        raise ValueError("initial checkpoint does not contain a model state")
+    current = model.state_dict()
+    compatible = {
+        name: value
+        for name, value in source.items()
+        if name in current and current[name].shape == value.shape
+    }
+    if not compatible:
+        raise ValueError("initial checkpoint has no compatible model weights")
+    model.load_state_dict(compatible, strict=False)
+    return sorted(compatible)
+
+
+def scheduled_sampling_probability(update: int, config: ProjectConfig) -> float:
+    target = config.training.codec_scheduled_sampling
+    start = config.training.codec_scheduled_sampling_start
+    progress = update / max(config.training.max_updates, 1)
+    if progress <= start:
+        return 0.0
+    return target * min((progress - start) / (1 - start), 1.0)
+
+
+def configure_trainable_parameters(
+    model: StreamingLatentLoop, config: ProjectConfig
+) -> None:
+    mode = config.training.backbone_train_mode
+    if mode == "all":
+        return
+    speech_prefixes = ("speech_head.", "speech_control_head.")
+    selective_prefixes = (
+        "audio_encoder.",
+        "latent_updater.",
+        "final_norm.",
+    )
+    first_top_layer = max(0, config.model.num_layers * 3 // 4)
+    for name, parameter in model.named_parameters():
+        trainable = name.startswith(speech_prefixes)
+        if mode == "selective":
+            trainable = trainable or name.startswith(selective_prefixes)
+            if name.startswith("layers."):
+                layer_index = int(name.split(".", 2)[1])
+                trainable = trainable or layer_index >= first_top_layer
+        parameter.requires_grad = trainable

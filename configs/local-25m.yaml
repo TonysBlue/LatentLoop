@@ -9,10 +9,14 @@ model:
   audio_kernel: 400
   audio_stride: 160
   latent_slots: 8
-  kv_units: 16
-  speech_frames_per_unit: 38
-  speech_codebooks: 4
-  speech_codebook_size: 1024
+  kv_units: 200
+  kv_window_ms: 16000
+  speech_frames_per_unit: 1
+  speech_codebooks: 8
+  speech_codebook_size: 2048
+  speech_depth_layers: 2
+  speech_depth_heads: 4
+  speech_depth_ffn_dim: 1024
   action_text_tokens: 16
   action_text_vocab_size: 256
   action_key_vocab_size: 32
@@ -22,13 +26,16 @@ model:
   activation_checkpointing: false
 data:
   source: synthetic
-  schema_version: 1
+  schema_version: 2
   audio_sample_rate: 24000
-  codec_frame_rate: 75
-  codec_id: synthetic-codec-v1
-  codec_weight_hash: synthetic
-  unit_ms: 500
-  unit_audio_samples: 12000
+  codec_frame_rate: 12.5
+  codec_id: mimi-24khz-8x2048
+  codec_weight_hash: 09b782f0629851a271227fb9d36db65c041790365f11bbe5d3d59369cf863f50
+  codec_revision: a49141e28b3d9c947cf9aa5314431e1b11cbd2f5
+  codec_codebooks: 8
+  codec_codebook_size: 2048
+  unit_ms: 80
+  unit_audio_samples: 1920
   screen_height: 224
   screen_width: 224
   episode_units: 32
@@ -39,11 +46,17 @@ training:
   learning_rate: 0.0003
   weight_decay: 0.1
   gradient_accumulation_steps: 16
-  tbptt_units: 4
+  tbptt_units: 16
   mixed_precision: fp16
   max_grad_norm: 1.0
   checkpoint_every: 500
   log_every: 10
+  head_learning_rate: 0.0001
+  backbone_learning_rate: 0.00003
+  warmup_ratio: 0.03
+  codec_scheduled_sampling: 0.25
+  codec_scheduled_sampling_start: 0.7
+  backbone_train_mode: frozen
 tracking:
   enabled: true
   project: latentloop

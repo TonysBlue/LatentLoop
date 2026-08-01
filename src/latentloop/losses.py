@@ -22,10 +22,17 @@ def compute_losses(output: StepOutput, target: StreamUnit) -> dict[str, Tensor]:
     speech_loss = _masked_mean(speech, speech_mask)
     action = target.action_target
     controls = target.control_target
-    action_type = F.cross_entropy(output.action.type_logits, action.type)
-    action_confidence = F.binary_cross_entropy(
-        output.action.confidence,
-        (action.type != 0).to(output.action.confidence.dtype),
+    action_type = _masked_mean(
+        F.cross_entropy(output.action.type_logits, action.type, reduction="none"),
+        target.action_mask,
+    )
+    action_confidence = _masked_mean(
+        F.binary_cross_entropy(
+            output.action.confidence,
+            (action.type != 0).to(output.action.confidence.dtype),
+            reduction="none",
+        ),
+        target.action_mask,
     )
     action_coord = _masked_mean(
         F.smooth_l1_loss(
@@ -33,7 +40,7 @@ def compute_losses(output: StepOutput, target: StreamUnit) -> dict[str, Tensor]:
             action.coordinates.to(output.action.coordinates.dtype),
             reduction="none",
         ),
-        action.coordinate_mask,
+        action.coordinate_mask & target.action_mask[:, None],
     )
     action_scroll = _masked_mean(
         F.smooth_l1_loss(
@@ -41,7 +48,9 @@ def compute_losses(output: StepOutput, target: StreamUnit) -> dict[str, Tensor]:
             action.scroll_delta.to(output.action.scroll_delta.dtype),
             reduction="none",
         ),
-        action.scroll_mask[:, None].expand_as(output.action.scroll_delta),
+        (action.scroll_mask & target.action_mask)[:, None].expand_as(
+            output.action.scroll_delta
+        ),
     )
     action_duration = _masked_mean(
         F.smooth_l1_loss(
@@ -49,7 +58,7 @@ def compute_losses(output: StepOutput, target: StreamUnit) -> dict[str, Tensor]:
             action.duration_ms.to(output.action.duration_ms.dtype) / 1_000.0,
             reduction="none",
         ),
-        action.duration_mask,
+        action.duration_mask & target.action_mask,
     )
     text_shape = output.action.text_logits.shape
     action_text_values = F.cross_entropy(
@@ -57,19 +66,35 @@ def compute_losses(output: StepOutput, target: StreamUnit) -> dict[str, Tensor]:
         action.text_tokens.reshape(-1),
         reduction="none",
     ).view_as(action.text_tokens)
-    action_text = _masked_mean(action_text_values, action.text_mask)
+    action_text = _masked_mean(
+        action_text_values, action.text_mask & target.action_mask[:, None]
+    )
     action_keys = _masked_mean(
         F.binary_cross_entropy_with_logits(
             output.action.key_logits,
             action.key_mask.to(output.action.key_logits.dtype),
             reduction="none",
         ),
-        (action.type == 7)[:, None].expand_as(output.action.key_logits),
+        ((action.type == 7) & target.action_mask)[:, None].expand_as(
+            output.action.key_logits
+        ),
     )
-    speech_control = F.cross_entropy(output.controls.speech_logits, controls.speech)
-    action_control = F.cross_entropy(output.controls.action_logits, controls.action)
-    cognitive_control = F.cross_entropy(output.controls.cognitive_logits, controls.cognitive)
-    memory = F.cross_entropy(output.memory_logits, target.memory_target)
+    speech_control = _masked_mean(
+        F.cross_entropy(output.controls.speech_logits, controls.speech, reduction="none"),
+        target.speech_control_mask,
+    )
+    action_control = _masked_mean(
+        F.cross_entropy(output.controls.action_logits, controls.action, reduction="none"),
+        target.action_control_mask,
+    )
+    cognitive_control = _masked_mean(
+        F.cross_entropy(output.controls.cognitive_logits, controls.cognitive, reduction="none"),
+        target.cognitive_control_mask,
+    )
+    memory = _masked_mean(
+        F.cross_entropy(output.memory_logits, target.memory_target, reduction="none"),
+        target.memory_mask,
+    )
     write_budget = output.latent_gate.mean()
     total = (
         speech_loss

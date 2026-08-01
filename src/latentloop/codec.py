@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from torch import Tensor
@@ -9,13 +10,27 @@ class FrozenNeuralCodec(Protocol):
     """Boundary for a separately versioned, frozen causal neural codec."""
 
     sample_rate: int
-    frame_rate: int
+    frame_rate: float
     codebooks: int
     codebook_size: int
 
-    def encode(self, waveform: Tensor) -> Tensor: ...
+    def reset(self, session_id: str) -> None: ...
 
-    def decode(self, codes: Tensor, state: Tensor | None = None) -> tuple[Tensor, Tensor]: ...
+    def encode_step(self, waveform: Tensor, session_id: str) -> Tensor: ...
+
+    def decode_step(self, codes: Tensor, session_id: str) -> Tensor: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CodecIdentity:
+    codec_id: str
+    weight_sha256: str
+    revision: str
+    sample_rate: int = 24_000
+    frame_rate: float = 12.5
+    frame_samples: int = 1_920
+    codebooks: int = 8
+    codebook_size: int = 2_048
 
 
 def validate_codec_codes(
@@ -31,15 +46,17 @@ def validate_codec_codes(
         raise ValueError("codec code is outside the configured codebook")
 
 
-def codec_frame_bounds(start_ms: int, delta_ms: int, frame_rate: int) -> tuple[int, int]:
+def codec_frame_bounds(start_ms: int, delta_ms: int, frame_rate: float) -> tuple[int, int]:
     if start_ms < 0 or delta_ms <= 0 or frame_rate <= 0:
         raise ValueError("codec frame timing values must be positive")
-    start = start_ms * frame_rate // 1_000
-    end = (start_ms + delta_ms) * frame_rate // 1_000
+    start = int(start_ms * frame_rate // 1_000)
+    end = int((start_ms + delta_ms) * frame_rate // 1_000)
     return start, end
 
 
-def codec_frame_mask(start_ms: int, delta_ms: int, frame_rate: int, maximum_frames: int) -> Tensor:
+def codec_frame_mask(
+    start_ms: int, delta_ms: int, frame_rate: float, maximum_frames: int
+) -> Tensor:
     import torch
 
     start, end = codec_frame_bounds(start_ms, delta_ms, frame_rate)

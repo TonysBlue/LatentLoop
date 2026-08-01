@@ -223,18 +223,18 @@ MVP 使用 4 个音频 token、1 个视觉 token、1 个时间 token和 1 个状
 直接语音 MVP 采用 24 kHz 单声道神经 codec：
 
 ```text
-frame rate       75 Hz
-codebooks        4
-codebook size    1024
-nominal bitrate  约 3 kbps
+frame rate       12.5 Hz
+codebooks        8
+codebook size    2048
+frame size       80 ms
 ```
 
-500 ms 对应 37.5 个 codec 帧。为避免长期时钟漂移，数据不强制每个 unit 固定拥有 38 个有效帧，而是：
+E2 起主模型 unit 与 Mimi codec 帧严格对齐，每个 80 ms unit 包含一个有效 codec 帧。因而：
 
-- 张量按最多 38 帧 padding；
-- 按全局 75 Hz 时间轴为相邻 unit 分配 37 或 38 个有效帧；
-- `speech_mask` 标记有效帧；
-- 任何对齐都根据绝对时间计算，不依靠累计四舍五入。
+- 每个 unit 输入 1920 个 24 kHz 麦克风采样；
+- `speech_codes` 形状固定为 `[B, 1, 8]`；
+- KV 窗口按 16 秒定义，对应 200 个 unit；
+- 音频和 codec 时间轴不存在累计四舍五入。
 
 神经 codec decoder 是声学解码器，不是 TTS。主干直接预测声学 codec 帧，中间不存在文本生成再转语音的链路。
 
@@ -385,7 +385,7 @@ $$
 
 ### 7.4 Direct Speech Head
 
-Speech Head 输入 `q_t`、pooled `Z_t` 和局部声学状态，按全局 codec 时间轴预测 37 或 38 帧。输出路径为：
+Speech Head 输入 `q_t`、pooled `Z_t` 和局部声学状态，每个 80 ms tick 预测一个 Mimi 帧。输出路径为：
 
 ```text
 q_t + Z_t + speech_local
@@ -555,7 +555,7 @@ content_sha256
 
 - 时间戳严格递增且音视频落入正确 unit；
 - 音频采样率、声道数和长度一致；
-- codec 帧数量符合全局 75 Hz 时间轴；
+- codec 帧数量符合全局 12.5 Hz 时间轴；
 - 坐标处于 `[0,1]`；
 - action 字段与 type mask 匹配；
 - screen revision 单调递增；

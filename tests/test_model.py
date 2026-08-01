@@ -19,7 +19,7 @@ def test_recurrent_state_is_bounded_and_heads_receive_gradients(
     total = torch.tensor(0.0)
     output = None
     for unit in episode.units:
-        output = model(unit, state)
+        output = model(unit, state, unit.speech_codes)
         state = output.state
         total = total + compute_losses(output, unit)["total"]
 
@@ -35,7 +35,7 @@ def test_recurrent_state_is_bounded_and_heads_receive_gradients(
     assert model.audio_encoder.conv.weight.grad is not None
     assert model.vision_encoder.encoder[0].weight.grad is not None
     assert model.latent_updater.gate.weight.grad is not None
-    assert model.speech_heads[0].weight.grad is not None
+    assert model.speech_head.depth_embeddings[0].weight.grad is not None
     assert model.action_type_head.weight.grad is not None
     assert model.action_coord_head.weight.grad is not None
     assert model.action_scroll_head.weight.grad is not None
@@ -61,7 +61,7 @@ def test_activation_checkpointing_supports_backward(smoke_config: ProjectConfig)
     smoke_config.model.activation_checkpointing = True
     model = StreamingLatentLoop(smoke_config.model)
     unit = SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(0).units[0]
-    output = model(unit, model.initial_state(1, "cpu"))
+    output = model(unit, model.initial_state(1, "cpu"), unit.speech_codes)
 
     compute_losses(output, unit)["total"].backward()
 
@@ -71,7 +71,7 @@ def test_activation_checkpointing_supports_backward(smoke_config: ProjectConfig)
 def test_speech_loss_averages_over_valid_codec_tokens(smoke_config: ProjectConfig) -> None:
     model = StreamingLatentLoop(smoke_config.model)
     unit = SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(0).units[0]
-    output = model(unit, model.initial_state(1, "cpu"))
+    output = model(unit, model.initial_state(1, "cpu"), unit.speech_codes)
     output.speech_logits = torch.zeros_like(output.speech_logits)
 
     speech_loss = compute_losses(output, unit)["speech"]

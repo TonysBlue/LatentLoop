@@ -5,7 +5,8 @@
 TBPTT、精确断点恢复、WebDataset、CPU-only Ray 任务和 W&B Local。
 
 完整架构见 `docs/realtime-multimodal-latent-loop.md`，本地训练设计见
-`docs/local-training-platform.md`。
+`docs/local-training-platform.md`。E2 直接流式语音的实现与运行命令见
+`docs/e2-direct-speech.md`。
 
 ## 环境初始化
 
@@ -24,7 +25,7 @@ uv run latentloop inspect-model --config configs/local-25m.yaml
 uv run latentloop inspect-model --config configs/research-0.2b.yaml
 ```
 
-当前档位参数量为 0.0002B、0.0384B 和 0.2119B。0.0384B 与 0.2119B 档位均已在
+当前档位参数量为 0.0003B、0.0496B 和 0.2391B。0.0496B 与 0.2391B 档位均已在
 RTX 2080 SUPER 8GB 上完成 FP16 反向和 AdamW 更新；实际长期训练仍应以运行时记录的
 `runtime/peak_memory_*` 指标为准。
 
@@ -88,3 +89,5 @@ scripts/backup-wandb.sh
 scripts/wandb-local.sh down
 scripts/restore-wandb.sh ~/latentloop-data/backups/wandb-local-<timestamp>.tar.gz
 ```
+E2 直接流式语音使用 80 ms 主时钟与 Mimi 24 kHz codec。实现和运行命令见
+[`docs/e2-direct-speech.md`](docs/e2-direct-speech.md)。

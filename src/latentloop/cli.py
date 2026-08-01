@@ -3,13 +3,24 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
+from dataclasses import asdict
 
 import torch
 
+from latentloop.codec import CodecIdentity
+from latentloop.codec_worker import CodecWorkerClient
 from latentloop.config import ProjectConfig, load_config
-from latentloop.data import EpisodeShardReader, SyntheticEpisodeDataset, write_episode_shards
+from latentloop.data import (
+    EpisodeShardReader,
+    SyntheticEpisodeDataset,
+    encode_target_speech,
+    import_speech_manifest,
+    write_episode_shards,
+)
 from latentloop.model import StreamingLatentLoop
 from latentloop.ray_jobs import generate_synthetic_with_ray, write_ray_report
+from latentloop.speech_metrics import benchmark_decoder
 from latentloop.training import train
 
 
@@ -26,6 +37,23 @@ def _config_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _load(args: argparse.Namespace) -> ProjectConfig:
     return load_config(args.config, args.overrides)
+
+
+def _codec_client(config: ProjectConfig, socket_path: str) -> CodecWorkerClient:
+    return CodecWorkerClient(
+        socket_path,
+        CodecIdentity(
+            codec_id=config.data.codec_id,
+            weight_sha256=config.data.codec_weight_hash,
+            revision=config.data.codec_revision,
+            sample_rate=config.data.audio_sample_rate,
+            frame_rate=config.data.codec_frame_rate,
+            frame_samples=config.data.unit_audio_samples,
+            codebooks=config.data.codec_codebooks,
+            codebook_size=config.data.codec_codebook_size,
+        ),
+        timeout_seconds=120.0,
+    )
 
 
 def inspect_model(args: argparse.Namespace) -> int:
@@ -103,7 +131,7 @@ def generate_data(args: argparse.Namespace) -> int:
 
 def validate_data(args: argparse.Namespace) -> int:
     config = _load(args)
-    source = config.data.shards if config.data.source == "webdataset" else args.shards
+    source = args.shards or config.data.shards
     if not source:
         raise ValueError("provide --shards or configure a webdataset source")
     episodes = 0
@@ -115,9 +143,100 @@ def validate_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def encode_speech(args: argparse.Namespace) -> int:
+    config = _load(args)
+    source = args.shards or config.data.shards
+    if not source:
+        raise ValueError("provide --shards or configure a WebDataset source")
+    episodes = EpisodeShardReader(
+        source,
+        config.data,
+        config.model,
+        require_encoded_speech=False,
+        validate_manifest=False,
+    )
+    client = _codec_client(config, args.socket)
+    client.health()
+    manifest = write_episode_shards(
+        encode_target_speech(episodes, client), args.output
+    )
+    print(json.dumps({"episodes": len(manifest), "output": args.output}, indent=2))
+    return 0
+
+
+def import_speech(args: argparse.Namespace) -> int:
+    config = _load(args)
+    episodes = import_speech_manifest(args.manifest, config.data, config.model)
+    manifest = write_episode_shards(episodes, args.output)
+    print(json.dumps({"episodes": len(manifest), "output": args.output}, indent=2))
+    return 0
+
+
+def benchmark_codec(args: argparse.Namespace) -> int:
+    config = _load(args)
+    client = _codec_client(config, args.socket)
+    health = client.health()
+    generator = torch.Generator().manual_seed(config.data.seed)
+    codes = torch.randint(
+        config.data.codec_codebook_size,
+        (args.frames, config.data.codec_codebooks, 1),
+        generator=generator,
+    )
+    result = benchmark_decoder(client, codes)
+    print(json.dumps({"health": health, "benchmark": asdict(result)}, indent=2))
+    return int(result.rtf >= 1 or result.p95_frame_ms >= config.data.unit_ms)
+
+
+def benchmark_stream(args: argparse.Namespace) -> int:
+    config = _load(args)
+    if not torch.cuda.is_available():
+        raise RuntimeError("stream benchmark requires CUDA")
+    device = torch.device("cuda:0")
+    client = _codec_client(config, args.socket)
+    client.health()
+    model = StreamingLatentLoop(config.model).to(device=device, dtype=torch.float16).eval()
+    episode = SyntheticEpisodeDataset(config.data, config.model).make_episode(0)
+    state = model.initial_state(1, device)
+    client.reset("stream-benchmark", replay=False)
+    latencies: list[float] = []
+    with torch.inference_mode():
+        for index in range(args.warmup + args.frames):
+            unit = episode.units[index % len(episode.units)].to(device)
+            unit.mic_audio = unit.mic_audio.half()
+            unit.screen = unit.screen.half()
+            started = time.perf_counter()
+            generated = model.generate_step(unit, state)
+            state = generated.output.state
+            client.decode_step(
+                generated.speech_codes.transpose(1, 2), "stream-benchmark"
+            )
+            if index >= args.warmup:
+                latencies.append(time.perf_counter() - started)
+    measured = torch.tensor(latencies)
+    elapsed = float(measured.sum().item())
+    health = client.health()
+    peak_model = torch.cuda.max_memory_allocated(device)
+    codec_allocated = int(health.get("memory_allocated_bytes", 0))
+    result = {
+        "frames": len(latencies),
+        "rtf": elapsed / (len(latencies) * config.data.unit_ms / 1_000),
+        "mean_frame_ms": float(measured.mean().item() * 1_000),
+        "p95_frame_ms": float(measured.quantile(0.95).item() * 1_000),
+        "model_peak_memory_bytes": peak_model,
+        "codec_memory_bytes": codec_allocated,
+        "combined_memory_bytes": peak_model + codec_allocated,
+        "kv_tokens": int(state.layer_kv[0].key.shape[2]),
+    }
+    print(json.dumps(result, indent=2))
+    return int(
+        result["p95_frame_ms"] >= config.data.unit_ms
+        or result["combined_memory_bytes"] >= int(7.5 * 1024**3)
+    )
+
+
 def train_command(args: argparse.Namespace) -> int:
     config = _load(args)
-    result = train(config, resume=args.resume)
+    result = train(config, resume=args.resume, init_from=args.init_from)
     print(
         json.dumps(
             {"train_state": result["train_state"], "metrics": result["metrics"]},
@@ -150,9 +269,36 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--shards", help="Glob for generated shards")
     validate_parser.set_defaults(handler=validate_data)
 
+    encode_parser = subparsers.add_parser("encode-speech")
+    _config_arguments(encode_parser)
+    encode_parser.add_argument("--shards", help="Input shard glob")
+    encode_parser.add_argument("--output", required=True, help="Output ShardWriter pattern")
+    encode_parser.add_argument("--socket", required=True, help="Mimi worker Unix socket")
+    encode_parser.set_defaults(handler=encode_speech)
+
+    import_parser = subparsers.add_parser("import-speech")
+    _config_arguments(import_parser)
+    import_parser.add_argument("--manifest", required=True, help="Speech source JSONL")
+    import_parser.add_argument("--output", required=True, help="Staging ShardWriter pattern")
+    import_parser.set_defaults(handler=import_speech)
+
+    codec_parser = subparsers.add_parser("benchmark-codec")
+    _config_arguments(codec_parser)
+    codec_parser.add_argument("--socket", required=True, help="Mimi worker Unix socket")
+    codec_parser.add_argument("--frames", type=int, default=250)
+    codec_parser.set_defaults(handler=benchmark_codec)
+
+    stream_parser = subparsers.add_parser("benchmark-stream")
+    _config_arguments(stream_parser)
+    stream_parser.add_argument("--socket", required=True, help="Mimi worker Unix socket")
+    stream_parser.add_argument("--frames", type=int, default=250)
+    stream_parser.add_argument("--warmup", type=int, default=10)
+    stream_parser.set_defaults(handler=benchmark_stream)
+
     train_parser = subparsers.add_parser("train")
     _config_arguments(train_parser)
     train_parser.add_argument("--resume", help="Checkpoint path")
+    train_parser.add_argument("--init-from", help="Warm-start compatible weights from E1")
     train_parser.set_defaults(handler=train_command)
     return parser
 

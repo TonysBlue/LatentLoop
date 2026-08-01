@@ -10,9 +10,13 @@ model:
   audio_stride: 16
   latent_slots: 4
   kv_units: 4
-  speech_frames_per_unit: 38
+  kv_window_ms: 320
+  speech_frames_per_unit: 1
   speech_codebooks: 2
   speech_codebook_size: 32
+  speech_depth_layers: 1
+  speech_depth_heads: 4
+  speech_depth_ffn_dim: 128
   action_text_tokens: 4
   action_text_vocab_size: 32
   action_key_vocab_size: 8
@@ -22,12 +26,15 @@ model:
   activation_checkpointing: false
 data:
   source: synthetic
-  schema_version: 1
-  audio_sample_rate: 24000
-  codec_frame_rate: 75
+  schema_version: 2
+  audio_sample_rate: 4000
+  codec_frame_rate: 12.5
   codec_id: synthetic-codec-v1
   codec_weight_hash: synthetic
-  unit_ms: 500
+  codec_revision: synthetic
+  codec_codebooks: 2
+  codec_codebook_size: 32
+  unit_ms: 80
   unit_audio_samples: 320
   screen_height: 32
   screen_width: 32
@@ -44,6 +51,12 @@ training:
   max_grad_norm: 1.0
   checkpoint_every: 2
   log_every: 1
+  head_learning_rate: 0.001
+  backbone_learning_rate: 0.001
+  warmup_ratio: 0.0
+  codec_scheduled_sampling: 0.0
+  codec_scheduled_sampling_start: 0.7
+  backbone_train_mode: all
 tracking:
   enabled: false
   project: latentloop

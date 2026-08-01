@@ -70,6 +70,7 @@ class Tracker:
                 "data_identity": data_identity,
                 "codec_id": config.data.codec_id,
                 "codec_weight_hash": config.data.codec_weight_hash,
+                "codec_revision": config.data.codec_revision,
                 "git_commit": _git_short_sha(),
                 "git_dirty": _git_dirty(),
                 "parameter_count": parameter_count,

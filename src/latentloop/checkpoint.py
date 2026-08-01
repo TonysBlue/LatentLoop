@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from latentloop.types import LayerKV, RecurrentState
+from latentloop.types import LayerKV, RecurrentState, SpeechLocalState
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +31,7 @@ class CheckpointMetadata:
     codec_id: str
     codec_weight_hash: str
     git_commit: str
+    codec_revision: str = "unknown"
     parent_sha256: str | None = None
 
 
@@ -54,7 +55,12 @@ def _serialize_state(state: RecurrentState | None) -> dict[str, Any] | None:
         "layer_kv": [(cache.key.cpu(), cache.value.cpu()) for cache in state.layer_kv],
         "latent": state.latent.cpu(),
         "audio_cache": state.audio_cache.cpu(),
-        "speech_local": state.speech_local.cpu(),
+        "speech_local": {
+            "temporal": state.speech_local.temporal.cpu(),
+            "previous_codes": state.speech_local.previous_codes.cpu(),
+            "control": state.speech_local.control.cpu(),
+            "utterance_active": state.speech_local.utterance_active.cpu(),
+        },
         "unit_index": state.unit_index.cpu(),
     }
 
@@ -71,7 +77,12 @@ def _deserialize_state(
         ),
         latent=payload["latent"].to(device),
         audio_cache=payload["audio_cache"].to(device),
-        speech_local=payload["speech_local"].to(device),
+        speech_local=SpeechLocalState(
+            temporal=payload["speech_local"]["temporal"].to(device),
+            previous_codes=payload["speech_local"]["previous_codes"].to(device),
+            control=payload["speech_local"]["control"].to(device),
+            utterance_active=payload["speech_local"]["utterance_active"].to(device),
+        ),
         unit_index=payload["unit_index"].to(device),
     )
 
@@ -97,7 +108,7 @@ class CheckpointManager:
     ) -> tuple[Path, str]:
         target = self.directory / f"{name}.pt"
         payload = {
-            "format_version": 2,
+            "format_version": 3,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
@@ -195,12 +206,17 @@ class CheckpointManager:
         expected_metadata: CheckpointMetadata,
     ) -> tuple[dict[str, Any], DataCursor, RecurrentState | None, CheckpointMetadata]:
         payload = torch.load(Path(path), map_location=device, weights_only=False)
-        if payload.get("format_version") != 2:
+        if payload.get("format_version") != 3:
             raise ValueError("unsupported checkpoint format")
         if payload["config_hash"] != config_hash(config):
             raise ValueError("checkpoint configuration does not match the current run")
         restored_metadata = CheckpointMetadata(**payload["metadata"])
-        for field_name in ("data_identity", "codec_id", "codec_weight_hash"):
+        for field_name in (
+            "data_identity",
+            "codec_id",
+            "codec_weight_hash",
+            "codec_revision",
+        ):
             if getattr(restored_metadata, field_name) != getattr(expected_metadata, field_name):
                 raise ValueError(f"checkpoint {field_name} does not match the current run")
         model.load_state_dict(payload["model"])
