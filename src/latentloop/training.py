@@ -99,7 +99,9 @@ def train(
     for name, parameter in model.named_parameters():
         if not parameter.requires_grad:
             continue
-        if name.startswith(("speech_head.", "speech_control_head.")):
+        if name.startswith(
+            ("speech_head.", "speech_active_embedding.", "speech_control_head.")
+        ):
             head_parameters.append(parameter)
         else:
             backbone_parameters.append(parameter)
@@ -156,6 +158,11 @@ def train(
         )
 
     optimizer.zero_grad(set_to_none=True)
+    speech_control_weights = torch.tensor(
+        config.training.speech_control_class_weights,
+        device=accelerator.device,
+        dtype=torch.float32,
+    )
     if accelerator.device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(accelerator.device)
     training_started = time.perf_counter()
@@ -196,6 +203,14 @@ def train(
                         )
                     with accelerator.accumulate(model):
                         chunk_losses: dict[str, torch.Tensor] = {}
+                        speech_correct = torch.zeros(
+                            config.model.speech_codebooks,
+                            device=accelerator.device,
+                            dtype=torch.long,
+                        )
+                        speech_valid = torch.zeros(
+                            (), device=accelerator.device, dtype=torch.long
+                        )
                         output = None
                         for unit in moved:
                             sampling_probability = scheduled_sampling_probability(
@@ -212,10 +227,21 @@ def train(
                                 unit.speech_codes if use_teacher else None,
                             )
                             recurrent = output.state
-                            unit_losses = compute_losses(output, unit)
+                            unit_losses = compute_losses(
+                                output,
+                                unit,
+                                speech_control_weights,
+                                config.training.speech_control_loss_weight,
+                            )
                             for name, value in unit_losses.items():
                                 accumulated = chunk_losses.get(name, torch.zeros_like(value))
                                 chunk_losses[name] = accumulated + value
+                            predictions = output.speech_logits.detach().argmax(dim=-1)
+                            valid = unit.speech_mask[:, :, None]
+                            speech_correct += (
+                                predictions.eq(unit.speech_codes) & valid
+                            ).sum(dim=(0, 1))
+                            speech_valid += unit.speech_mask.sum()
                         losses = {name: value / len(moved) for name, value in chunk_losses.items()}
                         accelerator.backward(losses["total"])
                         if accelerator.sync_gradients:
@@ -274,16 +300,12 @@ def train(
                             "speech/scheduled_sampling": sampling_probability,
                         }
                     )
-                    predictions = output.speech_logits.detach().argmax(dim=-1)
-                    targets = moved[-1].speech_codes
-                    valid = moved[-1].speech_mask[:, :, None]
                     for codebook in range(config.model.speech_codebooks):
-                        matches = predictions[:, :, codebook].eq(
-                            targets[:, :, codebook]
-                        )
-                        mask = valid[:, :, 0]
                         last_metrics[f"speech/codec_accuracy_q{codebook}"] = float(
-                            (matches & mask).sum().float().div(mask.sum().clamp_min(1)).item()
+                            speech_correct[codebook]
+                            .float()
+                            .div(speech_valid.clamp_min(1))
+                            .item()
                         )
                     should_log = (
                         accelerator.is_main_process
@@ -380,7 +402,11 @@ def configure_trainable_parameters(
     mode = config.training.backbone_train_mode
     if mode == "all":
         return
-    speech_prefixes = ("speech_head.", "speech_control_head.")
+    speech_prefixes = (
+        "speech_head.",
+        "speech_active_embedding.",
+        "speech_control_head.",
+    )
     selective_prefixes = (
         "audio_encoder.",
         "latent_updater.",

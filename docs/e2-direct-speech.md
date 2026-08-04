@@ -122,6 +122,46 @@ uv run latentloop validate-data \
 
 使用 `--init-from` 从 E1 checkpoint 加载形状兼容的主干权重；它与严格恢复训练的 `--resume` 互斥。Head LR 为 `1e-4`，解冻主干 LR 为 `3e-5`，3% warmup 后 cosine decay，gradient clipping 为 1.0。
 
+### 5.1 32 轨迹门禁
+
+`configs/e2-overfit.yaml` 生成 32 条确定性开发轨迹。每条轨迹有 16 个 80 ms
+tick：前三个 tick 是单路麦克风提示，第 5 至 12 个 tick 是程序化目标波形，第 13
+个 tick 是 STOP。它用于验证真实 Mimi target、WebDataset、时序状态、Speech Head 和
+SpeechControl 能否闭环，不代表自然语音或开放域对话能力。
+
+```bash
+uv run latentloop build-overfit-data \
+  --config configs/e2-overfit.yaml \
+  --output '~/latentloop-data/e2-overfit/staging/train-%06d.tar'
+
+scripts/codec-worker.sh
+
+uv run latentloop encode-speech \
+  --config configs/e2-overfit.yaml \
+  --shards '~/latentloop-data/e2-overfit/staging/train-*.tar' \
+  --output '~/latentloop-data/e2-overfit/processed/train-%06d.tar' \
+  --socket ~/latentloop-data/run/mimi.sock
+
+uv run latentloop validate-data --config configs/e2-overfit.yaml
+uv run latentloop train --config configs/e2-overfit.yaml
+
+uv run latentloop evaluate-overfit \
+  --config configs/e2-overfit.yaml \
+  --checkpoint '~/latentloop-data/e2-overfit-final/checkpoints/step-00000256.pt' \
+  --report '~/latentloop-data/e2-overfit-final/runs/evaluation.json'
+```
+
+本机实测 256 updates 用时 264.3 秒，训练峰值为 969 MB allocated、1000 MB
+reserved。全集包含 32 episodes 和 288 个有效语音帧，门禁结果为：
+
+- 8 个 teacher-forced codebook accuracy：95.8%、93.1%、100%、100%、100%、100%、100%、100%；
+- SpeechControl macro-F1 0.971，accuracy 0.986，START F1 0.901，STOP F1 1.0；
+- greedy autoregressive codebook accuracy 为 28.1% 至 37.2%。
+
+门禁按 teacher-forced codebook accuracy 和 SpeechControl F1 判定，当前已通过。较低的
+自由自回归 accuracy 说明 codec history 仍有 exposure bias；10 小时 pilot 前需增加
+scheduled sampling 或 sequence-level distillation，并把自由生成指标作为独立验收项。
+
 ## 6. 验收
 
 - 32 条固定轨迹上 8 个 codebook 分别超过 90% accuracy。

@@ -79,7 +79,8 @@ class MimiService:
         self.session_id: str | None = None
 
     def reset(self, session_id: str) -> None:
-        self.model.reset_streaming()
+        with torch.inference_mode():
+            self.model.reset_streaming()
         self.session_id = session_id
 
     def execute(

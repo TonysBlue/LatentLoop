@@ -43,7 +43,8 @@ def test_recurrent_state_is_bounded_and_heads_receive_gradients(
     assert model.action_text_head.weight.grad is not None
     assert model.action_key_head.weight.grad is not None
     assert model.action_confidence_head.weight.grad is not None
-    assert model.speech_control_head.weight.grad is not None
+    assert model.speech_control_head[-1].weight.grad is not None
+    assert model.speech_active_embedding.weight.grad is not None
     assert model.action_control_head.weight.grad is not None
     assert model.cognitive_control_head.weight.grad is not None
     assert model.memory_probe.weight.grad is not None
@@ -80,3 +81,15 @@ def test_speech_loss_averages_over_valid_codec_tokens(smoke_config: ProjectConfi
         speech_loss,
         torch.tensor(math.log(smoke_config.model.speech_codebook_size)),
     )
+
+
+def test_speech_control_weights_follow_model_dtype(smoke_config: ProjectConfig) -> None:
+    model = StreamingLatentLoop(smoke_config.model).half()
+    unit = SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(0).units[0]
+    unit.mic_audio = unit.mic_audio.half()
+    unit.screen = unit.screen.half()
+    output = model(unit, model.initial_state(1, "cpu"), unit.speech_codes)
+
+    losses = compute_losses(output, unit, torch.ones(5, dtype=torch.float32))
+
+    assert torch.isfinite(losses["control_speech"])

@@ -81,6 +81,10 @@ class TrainingConfig:
     codec_scheduled_sampling: float = 0.0
     codec_scheduled_sampling_start: float = 0.7
     backbone_train_mode: str = "all"
+    speech_control_class_weights: list[float] = field(
+        default_factory=lambda: [1.0] * 5
+    )
+    speech_control_loss_weight: float = 0.25
 
 
 @dataclass(slots=True)
@@ -154,6 +158,13 @@ class ProjectConfig:
             raise ValueError("codec_scheduled_sampling_start must be in [0, 1)")
         if self.training.backbone_train_mode not in {"frozen", "selective", "all"}:
             raise ValueError("backbone_train_mode must be frozen, selective, or all")
+        if (
+            len(self.training.speech_control_class_weights) != 5
+            or any(weight <= 0 for weight in self.training.speech_control_class_weights)
+        ):
+            raise ValueError("speech_control_class_weights must contain five positive values")
+        if self.training.speech_control_loss_weight <= 0:
+            raise ValueError("speech_control_loss_weight must be positive")
         if not 0 <= self.training.warmup_ratio < 1:
             raise ValueError("warmup_ratio must be in [0, 1)")
         if self.training.mixed_precision not in {"no", "fp16"}:

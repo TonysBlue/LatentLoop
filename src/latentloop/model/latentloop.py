@@ -82,7 +82,13 @@ class StreamingLatentLoop(nn.Module):
         self.action_text_head = nn.Linear(head_input, config.action_text_vocab_size)
         self.action_key_head = nn.Linear(head_input, config.action_key_vocab_size)
         self.action_confidence_head = nn.Linear(head_input, 1)
-        self.speech_control_head = nn.Linear(head_input, 5)
+        self.speech_active_embedding = nn.Embedding(2, dim)
+        self.speech_control_head = nn.Sequential(
+            nn.LayerNorm(head_input + 2 * dim),
+            nn.Linear(head_input + 2 * dim, dim),
+            nn.GELU(),
+            nn.Linear(dim, 5),
+        )
         self.action_control_head = nn.Linear(head_input, 4)
         self.cognitive_control_head = nn.Linear(head_input, 5)
         self.memory_probe = nn.Linear(head_input, config.memory_classes)
@@ -221,7 +227,18 @@ class StreamingLatentLoop(nn.Module):
             observed_screen_revision=unit.screen_revision,
         )
         controls = ControlOutput(
-            speech_logits=self.speech_control_head(head_input),
+            speech_logits=self.speech_control_head(
+                torch.cat(
+                    (
+                        head_input,
+                        speech_temporal,
+                        self.speech_active_embedding(
+                            state.speech_local.utterance_active.long()
+                        ),
+                    ),
+                    dim=-1,
+                )
+            ),
             action_logits=self.action_control_head(head_input),
             cognitive_logits=self.cognitive_control_head(head_input),
         )

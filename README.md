@@ -43,6 +43,9 @@ uv run latentloop validate-data \
   --shards "$HOME/latentloop-data/processed/train-*.tar"
 ```
 
+E2 的 32 轨迹真实 Mimi 过拟合门禁使用 `configs/e2-overfit.yaml`，完整命令和本机
+验收结果见 [`docs/e2-direct-speech.md`](docs/e2-direct-speech.md)。
+
 使用 Ray 的 CPU worker 生成数据：
 
 ```bash

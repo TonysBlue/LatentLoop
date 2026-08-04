@@ -11,7 +11,12 @@ def _masked_mean(values: Tensor, mask: Tensor) -> Tensor:
     return (values * mask).sum() / mask.sum().clamp_min(1)
 
 
-def compute_losses(output: StepOutput, target: StreamUnit) -> dict[str, Tensor]:
+def compute_losses(
+    output: StepOutput,
+    target: StreamUnit,
+    speech_control_weights: Tensor | None = None,
+    speech_control_loss_weight: float = 0.25,
+) -> dict[str, Tensor]:
     batch, frames, codebooks, codebook_size = output.speech_logits.shape
     speech = F.cross_entropy(
         output.speech_logits.reshape(batch * frames * codebooks, codebook_size),
@@ -80,7 +85,16 @@ def compute_losses(output: StepOutput, target: StreamUnit) -> dict[str, Tensor]:
         ),
     )
     speech_control = _masked_mean(
-        F.cross_entropy(output.controls.speech_logits, controls.speech, reduction="none"),
+        F.cross_entropy(
+            output.controls.speech_logits,
+            controls.speech,
+            weight=(
+                speech_control_weights.to(output.controls.speech_logits)
+                if speech_control_weights is not None
+                else None
+            ),
+            reduction="none",
+        ),
         target.speech_control_mask,
     )
     action_control = _masked_mean(
@@ -105,7 +119,8 @@ def compute_losses(output: StepOutput, target: StreamUnit) -> dict[str, Tensor]:
         + action_duration
         + action_text
         + action_keys
-        + 0.25 * (speech_control + action_control + cognitive_control)
+        + speech_control_loss_weight * speech_control
+        + 0.25 * (action_control + cognitive_control)
         + memory
         + 0.01 * write_budget
     )

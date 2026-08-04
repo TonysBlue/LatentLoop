@@ -5,6 +5,7 @@ import json
 import sys
 import time
 from dataclasses import asdict
+from pathlib import Path
 
 import torch
 
@@ -13,11 +14,13 @@ from latentloop.codec_worker import CodecWorkerClient
 from latentloop.config import ProjectConfig, load_config
 from latentloop.data import (
     EpisodeShardReader,
+    SpeechOverfitDataset,
     SyntheticEpisodeDataset,
     encode_target_speech,
     import_speech_manifest,
     write_episode_shards,
 )
+from latentloop.evaluation import evaluate_overfit_checkpoint
 from latentloop.model import StreamingLatentLoop
 from latentloop.ray_jobs import generate_synthetic_with_ray, write_ray_report
 from latentloop.speech_metrics import benchmark_decoder
@@ -129,6 +132,17 @@ def generate_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def build_overfit_data(args: argparse.Namespace) -> int:
+    config = _load(args)
+    if config.data.train_episodes != 32:
+        raise ValueError("the E2 overfit gate requires exactly 32 trajectories")
+    manifest = write_episode_shards(
+        SpeechOverfitDataset(config.data, config.model), args.output
+    )
+    print(json.dumps({"episodes": len(manifest), "output": args.output}, indent=2))
+    return 0
+
+
 def validate_data(args: argparse.Namespace) -> int:
     config = _load(args)
     source = args.shards or config.data.shards
@@ -234,6 +248,24 @@ def benchmark_stream(args: argparse.Namespace) -> int:
     )
 
 
+def evaluate_overfit(args: argparse.Namespace) -> int:
+    config = _load(args)
+    result = evaluate_overfit_checkpoint(
+        config,
+        args.checkpoint,
+        device=args.device,
+        codec_threshold=args.codec_threshold,
+        control_f1_threshold=args.control_f1_threshold,
+    )
+    report = json.dumps(asdict(result), indent=2)
+    if args.report:
+        report_path = Path(args.report).expanduser()
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report + "\n", encoding="utf-8")
+    print(report)
+    return int(not result.passed)
+
+
 def train_command(args: argparse.Namespace) -> int:
     config = _load(args)
     result = train(config, resume=args.resume, init_from=args.init_from)
@@ -263,6 +295,13 @@ def build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument("--output", help="ShardWriter pattern, for example train-%06d.tar")
     generate_parser.add_argument("--ray", action="store_true", help="Use CPU-only Ray workers")
     generate_parser.set_defaults(handler=generate_data)
+
+    overfit_data_parser = subparsers.add_parser("build-overfit-data")
+    _config_arguments(overfit_data_parser)
+    overfit_data_parser.add_argument(
+        "--output", required=True, help="Staging ShardWriter pattern"
+    )
+    overfit_data_parser.set_defaults(handler=build_overfit_data)
 
     validate_parser = subparsers.add_parser("validate-data")
     _config_arguments(validate_parser)
@@ -294,6 +333,15 @@ def build_parser() -> argparse.ArgumentParser:
     stream_parser.add_argument("--frames", type=int, default=250)
     stream_parser.add_argument("--warmup", type=int, default=10)
     stream_parser.set_defaults(handler=benchmark_stream)
+
+    evaluation_parser = subparsers.add_parser("evaluate-overfit")
+    _config_arguments(evaluation_parser)
+    evaluation_parser.add_argument("--checkpoint", required=True)
+    evaluation_parser.add_argument("--device")
+    evaluation_parser.add_argument("--codec-threshold", type=float, default=0.9)
+    evaluation_parser.add_argument("--control-f1-threshold", type=float, default=0.9)
+    evaluation_parser.add_argument("--report", help="Optional JSON report path")
+    evaluation_parser.set_defaults(handler=evaluate_overfit)
 
     train_parser = subparsers.add_parser("train")
     _config_arguments(train_parser)
