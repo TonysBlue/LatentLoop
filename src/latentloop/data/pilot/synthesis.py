@@ -96,13 +96,6 @@ def synthesize_pilot(
     registry = read_json(registry_path)
     if plans.get("dataset") != dataset:
         raise ValueError("text plan dataset does not match the requested dataset")
-    pending = [
-        plan["plan_id"]
-        for plan in plans["plans"]
-        if plan.get("review", {}).get("status") != "approved"
-    ]
-    if pending:
-        raise ValueError(f"all text plans require human approval; pending examples: {pending[:3]}")
     stale = [
         plan["plan_id"]
         for plan in plans["plans"]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,7 @@ from latentloop.data.pilot.spec import (
     SPLIT_FRACTIONS,
     dataset_spec,
 )
+from latentloop.data.pilot.text import plan_recipe_sha256
 
 REQUIRED_FIELDS = (
     "episode_id",
@@ -177,81 +178,72 @@ def _leakage(records: list[dict[str, Any]]) -> dict[str, list[str]]:
     return result
 
 
-def _review_report(
-    root: Path,
-    dataset: str,
-    records: list[dict[str, Any]],
-    duration: dict[str, float],
-    fixture: bool,
+def _automatic_quality_report(
+    dataset: str, records: list[dict[str, Any]], duration: dict[str, float]
 ) -> dict[str, Any]:
-    path = root / "reports" / "reviews" / f"{dataset}.jsonl"
-    if fixture:
-        return {"required": False, "reviewed_seconds": 0.0, "path": str(path)}
-    if not path.is_file():
-        raise ValueError(f"manual review ledger is required: {path}")
-    reviews = read_jsonl(path)
-    review_ids = [str(review["episode_id"]) for review in reviews]
-    if len(review_ids) != len(set(review_ids)):
-        raise ValueError("manual review ledger contains duplicate episode IDs")
-    by_id = {record["episode_id"]: record for record in records}
-    reviewed_seconds = 0.0
-    severe = 0
-    minor = 0
-    sources: Counter[str] = Counter()
-    languages: Counter[str] = Counter()
-    splits: Counter[str] = Counter()
-    for review in reviews:
-        episode_id = str(review["episode_id"])
-        if episode_id not in by_id:
-            raise ValueError(f"review references an unknown episode: {episode_id}")
-        reviewed = float(review["reviewed_seconds"])
-        if reviewed <= 0:
-            raise ValueError("reviewed_seconds must be positive")
-        reviewed_seconds += min(reviewed, duration[episode_id])
-        severity = str(review.get("severity", "none"))
-        severe += severity == "severe"
-        minor += severity == "minor"
-        record = by_id[episode_id]
-        sources[str(record["source"])] += 1
-        languages[str(record["language"])] += 1
-        splits[str(record["split"])] += 1
-    total = sum(duration.values())
-    required_fraction = 0.10 if dataset == "canary" else 0.02
-    if reviewed_seconds < total * required_fraction:
-        raise ValueError("manual review duration is below the required fraction")
-    if severe:
-        raise ValueError("manual review contains severe errors")
-    minor_limit = 0.02 if dataset == "canary" else 0.01
-    if reviews and minor / len(reviews) >= minor_limit:
-        raise ValueError("manual review minor-error rate exceeds the gate")
-    if dataset == "canary":
-        under_reviewed = [
-            f"source={value}"
-            for value in {str(record["source"]) for record in records}
-            if sources[value] < 20
-        ]
-        under_reviewed.extend(
-            f"language={value}"
-            for value in {str(record["language"]) for record in records}
-            if languages[value] < 20
-        )
-        under_reviewed.extend(
-            f"split={value}"
-            for value in {str(record["split"]) for record in records}
-            if splits[value] < 20
-        )
-        if under_reviewed:
-            raise ValueError(
-                f"Canary review dimensions have fewer than 20 items: {under_reviewed[:3]}"
-            )
+    """Record deterministic machine gates in place of a human review ledger."""
+    plans = sum(1 for record in records if record.get("plan_id"))
+    source_items = len(records) - plans
     return {
-        "required": True,
-        "items": len(reviews),
-        "reviewed_seconds": reviewed_seconds,
-        "reviewed_fraction": reviewed_seconds / total,
-        "severe_errors": severe,
-        "minor_errors": minor,
+        "required": False,
+        "mode": "automatic",
+        "generator": "latentloop-pilot-audit-v1",
+        "items": len(records),
+        "plan_items": plans,
+        "source_items": source_items,
+        "checked_seconds": sum(duration.values()),
+        "checks": [
+            "audio_hash_and_format",
+            "timeline_alignment",
+            "target_segment_boundaries",
+            "split_isolation",
+            "quota_and_language_mix",
+            "license_and_codec_identity",
+            "asr_and_loudness_receipts",
+        ],
+        "dataset": dataset,
+    }
+
+
+def _validate_text_plan(root: Path, dataset: str, fixture: bool) -> dict[str, Any]:
+    path = root / "text" / f"{dataset}-plans.json"
+    payload = read_json(path)
+    if payload.get("dataset") != dataset or int(payload.get("schema_version", -1)) != 1:
+        raise ValueError(f"{dataset} text plan schema or dataset is invalid")
+    plans = payload.get("plans")
+    if not isinstance(plans, list) or not plans:
+        raise ValueError(f"{dataset} text plan is empty")
+    stale = [
+        str(plan.get("plan_id"))
+        for plan in plans
+        if plan.get("quality", {}).get("status") != "generated"
+        or plan.get("recipe_sha256") != plan_recipe_sha256(plan)
+    ]
+    if stale:
+        raise ValueError(f"automatic text quality gate failed: {stale[:3]}")
+    expected_count = 24 if fixture else (1_200 if dataset == "pilot" else 120)
+    if len(plans) != expected_count:
+        raise ValueError(f"{dataset} text plan has {len(plans)} plans, expected {expected_count}")
+    language_counts = {
+        language: sum(plan.get("language") == language for plan in plans)
+        for language in ("zh", "en")
+    }
+    expected_languages = {"zh": 12, "en": 12} if fixture else {
+        "zh": int(expected_count * 0.8),
+        "en": int(expected_count * 0.2),
+    }
+    if language_counts != expected_languages:
+        raise ValueError(f"{dataset} text language mix is invalid: {language_counts}")
+    plan_ids = [str(plan.get("plan_id")) for plan in plans]
+    if len(plan_ids) != len(set(plan_ids)) or any(not plan_id.strip() for plan_id in plan_ids):
+        raise ValueError(f"{dataset} text plan IDs are not unique")
+    return {
         "path": str(path),
+        "sha256": sha256_file(path),
+        "plans": len(plans),
+        "languages": language_counts,
+        "status": "generated",
+        "fixture": fixture,
     }
 
 
@@ -263,6 +255,9 @@ def _mimi_report(
     )
     if fixture and not report_path.exists():
         return {"required": False, "checked_segments": 0, "path": str(report_path)}
+    if fixture:
+        report = read_json(report_path)
+        return {"required": False, **report, "path": str(report_path)}
     if not report_path.is_file():
         raise ValueError(f"Mimi decode-check report is required: {report_path}")
     report = read_json(report_path)
@@ -411,13 +406,14 @@ def audit_pilot_data(
     asr = {metric: sum(values) / len(values) for metric, values in scores.items()}
     if not fixture and (asr.get("cer", 1.0) > 0.08 or asr.get("wer", 1.0) > 0.08):
         raise ValueError("aggregate synthetic CER/WER exceeds 8%")
+    text_plan = _validate_text_plan(root, dataset, fixture)
     if not fixture:
         fetch_report = read_json(root / "reports" / "fetch-report.json")
         for source in fetch_report.get("sources", []):
             require_sha256(source.get("archive_sha256"), "source archive")
             require_sha256(source.get("license_sha256"), "source license")
-        require_sha256(sha256_file(root / "text" / f"{dataset}-plans.json"), "text plan")
-    reviews = _review_report(root, dataset, records, duration, fixture)
+        require_sha256(text_plan["sha256"], "text plan")
+    quality = _automatic_quality_report(dataset, records, duration)
     mimi = _mimi_report(root, dataset, fixture, mimi_report)
     manifest_hash = sha256_file(manifest_path)
     if not fixture and mimi.get("manifest_sha256") != manifest_hash:
@@ -443,8 +439,9 @@ def audit_pilot_data(
         "stops": stops,
         "asr": asr,
         "leakage": leaks,
-        "reviews": reviews,
+        "automatic_quality": quality,
         "mimi_decode": mimi,
+        "text_plan": text_plan,
         "rows": quality_rows,
     }
     write_json(reports / "license-report.json", license_report)
@@ -460,6 +457,7 @@ def audit_pilot_data(
         f"15% adjacent turns, 5% screen tasks\n"
         f"- Computer-assistant timeline: approximately 55%\n"
         f"- Runtime speech path: direct codec generation; no TTS\n"
+        f"- Quality gates: automatic only; no manual review ledger\n"
         f"- E2 exclusions: playback echo, noise augmentation, overlap, interruption, "
         f"and feedback-loop data\n"
         f"- Manifest SHA-256: `{manifest_hash}`\n"

@@ -24,7 +24,9 @@ from latentloop.data.pilot import (
     audit_pilot_data,
     build_pilot_manifest,
     build_pilot_text,
+    check_e2_readiness,
     fetch_pilot_data,
+    prepare_e2_pilot,
     select_pilot_voices,
     synthesize_pilot,
 )
@@ -271,6 +273,42 @@ def audit_pilot_data_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def prepare_e2_pilot_command(args: argparse.Namespace) -> int:
+    config = _load(args)
+    result = prepare_e2_pilot(
+        _pilot_root(args, config),
+        config=config,
+        fixture=args.fixture,
+        lock_path=args.lock,
+        download=args.download,
+        extract=args.extract,
+        library=args.library,
+        synth_command=args.synth_command,
+        asr_command=args.asr_command,
+        model_sha256=args.model_sha256,
+        normalize_command=args.normalize_command,
+        screen_command=args.screen_command,
+        socket_path=args.socket,
+        encode=args.encode,
+        mimi_report_dir=args.mimi_report_dir,
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def check_e2_readiness_command(args: argparse.Namespace) -> int:
+    config = _load(args)
+    result = check_e2_readiness(
+        _pilot_root(args, config),
+        config=config,
+        dataset=args.dataset,
+        require_checkpoint=args.checkpoint,
+        require_encoded=not args.allow_unencoded,
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
 def benchmark_codec(args: argparse.Namespace) -> int:
     config = _load(args)
     client = _codec_client(config, args.socket)
@@ -405,7 +443,7 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_pilot_parser = subparsers.add_parser("fetch-pilot-data")
     _config_arguments(fetch_pilot_parser)
     fetch_pilot_parser.add_argument("--root", help="Pilot artifact root")
-    fetch_pilot_parser.add_argument("--lock", help="Reviewed production source lock JSON")
+    fetch_pilot_parser.add_argument("--lock", help="Locked production source JSON")
     fetch_pilot_parser.add_argument("--download", action="store_true")
     fetch_pilot_parser.add_argument("--extract", action="store_true")
     fetch_pilot_parser.add_argument("--fixture", action="store_true")
@@ -422,7 +460,7 @@ def build_parser() -> argparse.ArgumentParser:
     voices_pilot_parser = subparsers.add_parser("select-pilot-voices")
     _config_arguments(voices_pilot_parser)
     voices_pilot_parser.add_argument("--root", help="Pilot artifact root")
-    voices_pilot_parser.add_argument("--library", help="Reviewed CosyVoice voice JSON")
+    voices_pilot_parser.add_argument("--library", help="Authorized CosyVoice voice JSON")
     voices_pilot_parser.add_argument("--fixture", action="store_true")
     voices_pilot_parser.set_defaults(handler=select_pilot_voices_command)
 
@@ -452,6 +490,36 @@ def build_parser() -> argparse.ArgumentParser:
     audit_pilot_parser.add_argument("--mimi-report")
     audit_pilot_parser.add_argument("--fixture", action="store_true")
     audit_pilot_parser.set_defaults(handler=audit_pilot_data_command)
+
+    prepare_pilot_parser = subparsers.add_parser(
+        "prepare-e2-pilot", help="Run automatic Canary/Pilot preparation and gates"
+    )
+    _config_arguments(prepare_pilot_parser)
+    prepare_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    prepare_pilot_parser.add_argument("--lock", help="Locked production source JSON")
+    prepare_pilot_parser.add_argument("--download", action="store_true")
+    prepare_pilot_parser.add_argument("--extract", action="store_true")
+    prepare_pilot_parser.add_argument("--library", help="Authorized CosyVoice voice JSON")
+    prepare_pilot_parser.add_argument("--synth-command")
+    prepare_pilot_parser.add_argument("--asr-command")
+    prepare_pilot_parser.add_argument("--model-sha256")
+    prepare_pilot_parser.add_argument("--normalize-command")
+    prepare_pilot_parser.add_argument("--screen-command")
+    prepare_pilot_parser.add_argument("--socket", help="Mimi worker Unix socket")
+    prepare_pilot_parser.add_argument("--encode", action="store_true")
+    prepare_pilot_parser.add_argument("--mimi-report-dir")
+    prepare_pilot_parser.add_argument("--fixture", action="store_true")
+    prepare_pilot_parser.set_defaults(handler=prepare_e2_pilot_command)
+
+    readiness_parser = subparsers.add_parser(
+        "check-e2-readiness", help="Verify automatic gates before E2 training"
+    )
+    _config_arguments(readiness_parser)
+    readiness_parser.add_argument("--root", help="Pilot artifact root")
+    readiness_parser.add_argument("--dataset", choices=("canary", "pilot"), default="pilot")
+    readiness_parser.add_argument("--checkpoint", help="Optional initial checkpoint")
+    readiness_parser.add_argument("--allow-unencoded", action="store_true")
+    readiness_parser.set_defaults(handler=check_e2_readiness_command)
 
     codec_parser = subparsers.add_parser("benchmark-codec")
     _config_arguments(codec_parser)

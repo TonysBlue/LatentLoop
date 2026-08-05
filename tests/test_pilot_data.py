@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from latentloop.config import DataConfig, ModelConfig
+from latentloop.config import DataConfig, ModelConfig, ProjectConfig
 from latentloop.data import import_speech_manifest
 from latentloop.data.pilot import (
     audit_pilot_data,
@@ -16,6 +16,7 @@ from latentloop.data.pilot import (
     synthesize_pilot,
 )
 from latentloop.data.pilot.common import read_jsonl, sha256_file
+from latentloop.data.pilot.prepare import prepare_e2_pilot
 from latentloop.types import SpeechControl
 
 
@@ -55,6 +56,18 @@ def test_fixture_pipeline_is_resumable_and_isolates_canary(tmp_path: Path) -> No
     assert (root / "reports" / "pilot" / "quality-report.json").is_file()
 
 
+def test_automatic_prepare_does_not_require_review_ledger(tmp_path: Path) -> None:
+    root = tmp_path / "e2-pilot"
+    result = prepare_e2_pilot(root, config=ProjectConfig(), fixture=True)
+    assert result["datasets"]["canary"]["audit"]["passed"]
+    assert result["datasets"]["pilot"]["audit"]["passed"]
+    quality = json.loads(
+        (root / "reports" / "pilot" / "quality-report.json").read_text(encoding="utf-8")
+    )
+    assert quality["automatic_quality"]["mode"] == "automatic"
+    assert not (root / "reports" / "reviews" / "pilot.jsonl").exists()
+
+
 def test_pilot_manifest_import_has_segment_aware_training_masks(
     tmp_path: Path,
 ) -> None:
@@ -90,7 +103,7 @@ def test_pilot_manifest_import_has_segment_aware_training_masks(
     )
 
 
-def test_production_fetch_requires_reviewed_source_lock(tmp_path: Path) -> None:
+def test_production_fetch_requires_locked_source_lock(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires --lock"):
         fetch_pilot_data(tmp_path / "e2-pilot")
     assert (tmp_path / "e2-pilot" / "raw" / "source-lock.template.json").is_file()
@@ -117,4 +130,4 @@ def test_production_text_plan_meets_scale_and_duration_mix(tmp_path: Path) -> No
     assert sum(
         plan["target_duration_seconds"] for plan in plans if plan["category"] == "screen_task"
     ) == pytest.approx(1_800, abs=0.001)
-    assert report["pending_review"] == 1_200
+    assert report["quality_status"] == "generated"

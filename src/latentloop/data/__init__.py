@@ -4,7 +4,11 @@ from latentloop.data.pilot import (
     audit_pilot_data,
     build_pilot_manifest,
     build_pilot_text,
+    check_e2_readiness,
+    check_mimi_decode,
+    encode_pilot_shards,
     fetch_pilot_data,
+    prepare_e2_pilot,
     select_pilot_voices,
     synthesize_pilot,
 )
@@ -23,7 +27,11 @@ __all__ = [
     "audit_pilot_data",
     "build_pilot_manifest",
     "build_pilot_text",
+    "check_mimi_decode",
+    "check_e2_readiness",
+    "encode_pilot_shards",
     "fetch_pilot_data",
+    "prepare_e2_pilot",
     "select_pilot_voices",
     "synthesize_pilot",
 ]

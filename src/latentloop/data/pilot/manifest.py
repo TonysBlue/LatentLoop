@@ -319,7 +319,7 @@ def _compose_plan(
         "mic_audio_sha256": sha256_file(mic_path),
         "target_speech": str(target_path.resolve()),
         "target_speech_sha256": sha256_file(target_path),
-        "source": "e2-reviewed-computer-dialogue",
+        "source": "e2-generated-computer-dialogue",
         "source_version": "pilot-plan-v1",
         "source_url": "internal://e2-pilot/text-plans",
         "source_utterance_ids": [plan["plan_id"]],

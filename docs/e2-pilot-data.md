@@ -60,14 +60,16 @@ done
 ```
 
 审计输出 `data-card.md`、`license-report.json`、`quota-report.json`、
-`quality-report.json` 和 manifest SHA-256。Pilot 构建前必须已有通过审计的 Canary。
+`quality-report.json` 和 manifest SHA-256。质量审计完全由哈希、格式、时间轴、配额、
+许可证、ASR、响度和 Mimi decode-check 自动完成，不读取人工 review ledger。Pilot 构建前
+必须已有通过审计的 Canary。
 
 ## 生产适配器
 
 生产模式不会猜测缺失依赖。每个外部适配器都通过 JSON request 和 `--output` 接口调用：
 
 - `fetch-pilot-data --lock lock.json --download --extract`：只接受锁定 URL、版本、许可证和 archive SHA-256。DailyTalk 没有可验证的匿名下载地址时直接阻断 Canary。
-- `build-pilot-text`：生成 1,200 条计划（960 中文、240 英文），所有计划默认 `pending`；人审将状态改为 `approved` 后才能合成。
+- `build-pilot-text`：生成 1,200 条计划（960 中文、240 英文）。计划由固定模板和哈希确定，自动进入合成；不依赖人工审核。
 - `select-pilot-voices --library voices.json`：要求恰好一个获得授权的固定助手声线，以及按 split 隔离的中英文用户声线。声线 prompt 和授权记录必须有 SHA-256。
 - `synthesize-pilot --synth-command CMD --asr-command CMD --model-sha256 HASH`：调用 CosyVoice 和 ASR。ASR 中文 CER、英文 WER 单条超过 20% 时重试一次后剔除；聚合门禁为 8%。合成适配器还必须写同名 `.metrics.json`，其中 `integrated_lufs` 在 `-23 +/- 1 LUFS` 内。
 - `build-pilot-manifest --normalize-command CMD --screen-command CMD`：normalizer 负责 24 kHz mono PCM16 FLAC、峰值、loudness 和 source inventory；screen adapter 只允许隔离 sandbox 的稀疏屏幕帧。
@@ -95,6 +97,37 @@ uv run latentloop import-speech --config "$CFG" \
 审计拒绝重复 ID、跨 split speaker/session/template/scenario、时间戳和音频错误、错误的
 codec identity、缺失许可证哈希、Canary/Pilot 复用、配额超差、ASR 超标以及缺少 100 段
 Mimi decode-check 的正式 Pilot。通过后再使用既有 `encode-speech` 生成 processed shard。
+
+不需要人工 review ledger。可以用编排命令自动完成所有数据准备阶段：
+
+```bash
+ROOT="$HOME/latentloop-data/e2-pilot"
+CFG=configs/e2-pilot.yaml
+
+uv run latentloop prepare-e2-pilot --config "$CFG" --root "$ROOT" \
+  --lock "$ROOT/raw/source-lock.json" --download --extract \
+  --library "$ROOT/voices/voice-library.json" \
+  --synth-command 'path/to/cosyvoice-adapter' \
+  --asr-command 'path/to/asr-adapter' \
+  --model-sha256 '<64-char-cosyvoice-model-sha256>' \
+  --normalize-command 'path/to/normalizer-adapter' \
+  --screen-command 'path/to/screen-adapter' \
+  --socket "$HOME/latentloop-data/run/mimi.sock" --encode
+```
+
+`prepare-e2-pilot` 会先完成 Canary 并通过自动审计，再构建排除 Canary 的 Pilot；`--encode`
+会为 train、validation、test 生成 staging 和 processed shards。外部数据、CosyVoice、ASR、
+屏幕采集和 Mimi 仍必须提供真实适配器和锁定哈希，命令不会用 fixture 冒充生产产物。
+
+训练前最后执行 fail-closed 检查：
+
+```bash
+uv run latentloop check-e2-readiness --config "$CFG" --root "$ROOT" \
+  --dataset pilot --checkpoint "$HOME/latentloop-data/checkpoints/e1.pt"
+```
+
+该检查确认 audit、三个 split 的 manifest/shard、编码状态、Mimi 报告、初始 checkpoint 和磁盘
+空间；失败时不会进入训练。
 
 编码完成后可以直接使用 `configs/e2-pilot.yaml` 训练（必要时用 `--set` 覆盖根目录）：
 

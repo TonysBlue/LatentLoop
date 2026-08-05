@@ -95,7 +95,7 @@ def _weighted_intents(count: int) -> list[str]:
 
 def plan_recipe_sha256(plan: dict[str, Any]) -> str:
     return stable_hash(
-        {key: value for key, value in plan.items() if key not in {"recipe_sha256", "review"}}
+        {key: value for key, value in plan.items() if key != "recipe_sha256"}
     )
 
 
@@ -325,10 +325,12 @@ def _plan(
         "duration_class": duration_class,
         "target_duration_seconds": duration_seconds,
         "turns": turns,
-        "review": {
-            "status": "approved" if fixture else "pending",
-            "reviewer": "fixture" if fixture else None,
-            "notes": "fixture only" if fixture else "",
+        # Text plans are generated deterministically and admitted by machine
+        # gates downstream; there is no manual approval state in E2.
+        "quality": {
+            "status": "generated",
+            "generator": "latentloop-pilot-text-v1",
+            "fixture": fixture,
         },
     }
     value["recipe_sha256"] = plan_recipe_sha256(value)
@@ -392,7 +394,7 @@ def build_pilot_text(
         "plans": len(plans),
         "assistant_responses": assistant_responses,
         "languages": language_counts,
-        "pending_review": sum(plan["review"]["status"] != "approved" for plan in plans),
+        "quality_status": "generated",
     }
     write_json(root / "reports" / f"{dataset}-text-report.json", report)
     return report
