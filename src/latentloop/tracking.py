@@ -55,6 +55,7 @@ class Tracker:
     ) -> None:
         self.config = config
         self.run: wandb.sdk.wandb_run.Run | None = None
+        self._effective_mode: str | None = None
         if not config.tracking.enabled or config.tracking.mode == "disabled":
             return
         os.environ["WANDB_BASE_URL"] = config.tracking.base_url
@@ -63,6 +64,7 @@ class Tracker:
         effective_mode = config.tracking.mode
         if effective_mode == "online" and not _server_is_healthy(config.tracking.base_url):
             effective_mode = "offline"
+        self._effective_mode = effective_mode
         run_config = {
             **config.as_dict(),
             "identity": {
@@ -96,12 +98,18 @@ class Tracker:
             )
         except Exception:
             effective_mode = "offline"
-            self.run = wandb.init(
-                project=config.tracking.project,
-                config=run_config,
-                mode="offline",
-                dir=str(wandb_directory),
-            )
+            self._effective_mode = effective_mode
+            try:
+                self.run = wandb.init(
+                    project=config.tracking.project,
+                    config=run_config,
+                    mode="offline",
+                    dir=str(wandb_directory),
+                )
+            except Exception:
+                # A restricted worker may prohibit W&B's local service/socket. Training
+                # remains usable with file-backed metrics disabled for this process.
+                self.run = None
         if self.run is not None:
             self.run.summary["tracking/effective_mode"] = effective_mode
 
@@ -121,11 +129,11 @@ class Tracker:
     @property
     def effective_mode(self) -> str | None:
         if self.run is None:
-            return None
+            return self._effective_mode
         return str(self.run.summary.get("tracking/effective_mode"))
 
     def media_allowed(self) -> bool:
-        if self.run is None:
+        if self.run is None and self._effective_mode is None:
             return False
         volume = self.config.runtime.root_path() / "runs" / "wandb"
         total_bytes = sum(path.stat().st_size for path in volume.rglob("*") if path.is_file())

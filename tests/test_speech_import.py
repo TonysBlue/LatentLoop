@@ -109,6 +109,67 @@ def test_import_generates_start_continue_and_stop(
     assert controls == [SpeechControl.START, SpeechControl.CONTINUE, SpeechControl.STOP]
 
 
+def test_import_uses_explicit_segments_for_controls_and_masks(
+    tmp_path: Path, smoke_config: ProjectConfig
+) -> None:
+    frame = smoke_config.data.unit_audio_samples
+    target = np.concatenate(
+        [np.zeros(frame), np.full(frame + frame // 2, 0.25), np.zeros(2 * frame)]
+    )
+    _write_audio(tmp_path / "mic.wav", np.zeros(target.size), 4_000)
+    _write_audio(tmp_path / "target.wav", target, 4_000)
+    manifest = tmp_path / "source.jsonl"
+    _write_manifest(
+        manifest,
+        _record(
+            target_segments=[
+                {
+                    "turn_id": "assistant-1",
+                    "start_sample": frame,
+                    "end_sample": frame + frame + frame // 2,
+                }
+            ]
+        ),
+    )
+
+    episode = next(import_speech_manifest(manifest, smoke_config.data, smoke_config.model))
+
+    assert [unit.control_target.speech.item() for unit in episode.units] == [
+        SpeechControl.SILENT,
+        SpeechControl.START,
+        SpeechControl.CONTINUE,
+        SpeechControl.STOP,
+        SpeechControl.SILENT,
+    ]
+    assert [bool(unit.speech_mask.item()) for unit in episode.units] == [
+        False,
+        True,
+        True,
+        True,
+        False,
+    ]
+
+
+def test_import_rejects_unaligned_explicit_segment(
+    tmp_path: Path, smoke_config: ProjectConfig
+) -> None:
+    frame = smoke_config.data.unit_audio_samples
+    _write_audio(tmp_path / "mic.wav", np.zeros(3 * frame), 4_000)
+    _write_audio(tmp_path / "target.wav", np.zeros(3 * frame), 4_000)
+    manifest = tmp_path / "source.jsonl"
+    _write_manifest(
+        manifest,
+        _record(
+            target_segments=[
+                {"turn_id": "assistant-1", "start_sample": 1, "end_sample": frame}
+            ]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="80 ms boundary"):
+        next(import_speech_manifest(manifest, smoke_config.data, smoke_config.model))
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [

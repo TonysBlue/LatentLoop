@@ -94,3 +94,16 @@ scripts/restore-wandb.sh ~/latentloop-data/backups/wandb-local-<timestamp>.tar.g
 ```
 E2 直接流式语音使用 80 ms 主时钟与 Mimi 24 kHz codec。实现和运行命令见
 [`docs/e2-direct-speech.md`](docs/e2-direct-speech.md)。
+
+E2 Canary/Pilot 数据准备、外部语料许可证锁、CosyVoice/ASR/屏幕适配器以及审计门禁见
+[`docs/e2-pilot-data.md`](docs/e2-pilot-data.md)。本地 fixture 可以在不下载语料和模型的
+情况下跑通六个阶段：
+
+```bash
+uv run latentloop fetch-pilot-data --config configs/local-25m.yaml --fixture
+uv run latentloop select-pilot-voices --config configs/local-25m.yaml --fixture
+uv run latentloop build-pilot-text --config configs/local-25m.yaml --dataset canary --fixture
+uv run latentloop synthesize-pilot --config configs/local-25m.yaml --dataset canary --fixture
+uv run latentloop build-pilot-manifest --config configs/local-25m.yaml --dataset canary --fixture
+uv run latentloop audit-pilot-data --config configs/local-25m.yaml --dataset canary --fixture
+```

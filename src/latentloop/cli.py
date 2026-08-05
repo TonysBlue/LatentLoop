@@ -20,6 +20,14 @@ from latentloop.data import (
     import_speech_manifest,
     write_episode_shards,
 )
+from latentloop.data.pilot import (
+    audit_pilot_data,
+    build_pilot_manifest,
+    build_pilot_text,
+    fetch_pilot_data,
+    select_pilot_voices,
+    synthesize_pilot,
+)
 from latentloop.evaluation import evaluate_overfit_checkpoint
 from latentloop.model import StreamingLatentLoop
 from latentloop.ray_jobs import generate_synthetic_with_ray, write_ray_report
@@ -136,9 +144,7 @@ def build_overfit_data(args: argparse.Namespace) -> int:
     config = _load(args)
     if config.data.train_episodes != 32:
         raise ValueError("the E2 overfit gate requires exactly 32 trajectories")
-    manifest = write_episode_shards(
-        SpeechOverfitDataset(config.data, config.model), args.output
-    )
+    manifest = write_episode_shards(SpeechOverfitDataset(config.data, config.model), args.output)
     print(json.dumps({"episodes": len(manifest), "output": args.output}, indent=2))
     return 0
 
@@ -171,9 +177,7 @@ def encode_speech(args: argparse.Namespace) -> int:
     )
     client = _codec_client(config, args.socket)
     client.health()
-    manifest = write_episode_shards(
-        encode_target_speech(episodes, client), args.output
-    )
+    manifest = write_episode_shards(encode_target_speech(episodes, client), args.output)
     print(json.dumps({"episodes": len(manifest), "output": args.output}, indent=2))
     return 0
 
@@ -183,6 +187,87 @@ def import_speech(args: argparse.Namespace) -> int:
     episodes = import_speech_manifest(args.manifest, config.data, config.model)
     manifest = write_episode_shards(episodes, args.output)
     print(json.dumps({"episodes": len(manifest), "output": args.output}, indent=2))
+    return 0
+
+
+def _pilot_root(args: argparse.Namespace, config: ProjectConfig) -> Path:
+    if args.root:
+        return Path(args.root).expanduser().resolve()
+    return config.runtime.root_path() / "e2-pilot"
+
+
+def fetch_pilot_data_command(args: argparse.Namespace) -> int:
+    config = _load(args)
+    result = fetch_pilot_data(
+        _pilot_root(args, config),
+        fixture=args.fixture,
+        lock_path=args.lock,
+        download=args.download,
+        extract=args.extract,
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def build_pilot_text_command(args: argparse.Namespace) -> int:
+    config = _load(args)
+    result = build_pilot_text(
+        _pilot_root(args, config),
+        dataset=args.dataset,
+        fixture=args.fixture,
+        seed=args.seed,
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def select_pilot_voices_command(args: argparse.Namespace) -> int:
+    config = _load(args)
+    result = select_pilot_voices(
+        _pilot_root(args, config),
+        library=args.library,
+        fixture=args.fixture,
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def synthesize_pilot_command(args: argparse.Namespace) -> int:
+    config = _load(args)
+    result = synthesize_pilot(
+        _pilot_root(args, config),
+        dataset=args.dataset,
+        fixture=args.fixture,
+        synth_command=args.synth_command,
+        asr_command=args.asr_command,
+        model_sha256=args.model_sha256,
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def build_pilot_manifest_command(args: argparse.Namespace) -> int:
+    config = _load(args)
+    result = build_pilot_manifest(
+        _pilot_root(args, config),
+        dataset=args.dataset,
+        fixture=args.fixture,
+        normalize_command=args.normalize_command,
+        screen_command=args.screen_command,
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def audit_pilot_data_command(args: argparse.Namespace) -> int:
+    config = _load(args)
+    result = audit_pilot_data(
+        _pilot_root(args, config),
+        dataset=args.dataset,
+        fixture=args.fixture,
+        mimi_report=args.mimi_report,
+    )
+    print(json.dumps(result, indent=2))
     return 0
 
 
@@ -221,9 +306,7 @@ def benchmark_stream(args: argparse.Namespace) -> int:
             started = time.perf_counter()
             generated = model.generate_step(unit, state)
             state = generated.output.state
-            client.decode_step(
-                generated.speech_codes.transpose(1, 2), "stream-benchmark"
-            )
+            client.decode_step(generated.speech_codes.transpose(1, 2), "stream-benchmark")
             if index >= args.warmup:
                 latencies.append(time.perf_counter() - started)
     measured = torch.tensor(latencies)
@@ -298,9 +381,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     overfit_data_parser = subparsers.add_parser("build-overfit-data")
     _config_arguments(overfit_data_parser)
-    overfit_data_parser.add_argument(
-        "--output", required=True, help="Staging ShardWriter pattern"
-    )
+    overfit_data_parser.add_argument("--output", required=True, help="Staging ShardWriter pattern")
     overfit_data_parser.set_defaults(handler=build_overfit_data)
 
     validate_parser = subparsers.add_parser("validate-data")
@@ -320,6 +401,57 @@ def build_parser() -> argparse.ArgumentParser:
     import_parser.add_argument("--manifest", required=True, help="Speech source JSONL")
     import_parser.add_argument("--output", required=True, help="Staging ShardWriter pattern")
     import_parser.set_defaults(handler=import_speech)
+
+    fetch_pilot_parser = subparsers.add_parser("fetch-pilot-data")
+    _config_arguments(fetch_pilot_parser)
+    fetch_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    fetch_pilot_parser.add_argument("--lock", help="Reviewed production source lock JSON")
+    fetch_pilot_parser.add_argument("--download", action="store_true")
+    fetch_pilot_parser.add_argument("--extract", action="store_true")
+    fetch_pilot_parser.add_argument("--fixture", action="store_true")
+    fetch_pilot_parser.set_defaults(handler=fetch_pilot_data_command)
+
+    text_pilot_parser = subparsers.add_parser("build-pilot-text")
+    _config_arguments(text_pilot_parser)
+    text_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    text_pilot_parser.add_argument("--dataset", choices=("canary", "pilot"), required=True)
+    text_pilot_parser.add_argument("--seed", type=int, default=17)
+    text_pilot_parser.add_argument("--fixture", action="store_true")
+    text_pilot_parser.set_defaults(handler=build_pilot_text_command)
+
+    voices_pilot_parser = subparsers.add_parser("select-pilot-voices")
+    _config_arguments(voices_pilot_parser)
+    voices_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    voices_pilot_parser.add_argument("--library", help="Reviewed CosyVoice voice JSON")
+    voices_pilot_parser.add_argument("--fixture", action="store_true")
+    voices_pilot_parser.set_defaults(handler=select_pilot_voices_command)
+
+    synthesize_pilot_parser = subparsers.add_parser("synthesize-pilot")
+    _config_arguments(synthesize_pilot_parser)
+    synthesize_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    synthesize_pilot_parser.add_argument("--dataset", choices=("canary", "pilot"), required=True)
+    synthesize_pilot_parser.add_argument("--synth-command")
+    synthesize_pilot_parser.add_argument("--asr-command")
+    synthesize_pilot_parser.add_argument("--model-sha256")
+    synthesize_pilot_parser.add_argument("--fixture", action="store_true")
+    synthesize_pilot_parser.set_defaults(handler=synthesize_pilot_command)
+
+    manifest_pilot_parser = subparsers.add_parser("build-pilot-manifest")
+    _config_arguments(manifest_pilot_parser)
+    manifest_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    manifest_pilot_parser.add_argument("--dataset", choices=("canary", "pilot"), required=True)
+    manifest_pilot_parser.add_argument("--normalize-command")
+    manifest_pilot_parser.add_argument("--screen-command")
+    manifest_pilot_parser.add_argument("--fixture", action="store_true")
+    manifest_pilot_parser.set_defaults(handler=build_pilot_manifest_command)
+
+    audit_pilot_parser = subparsers.add_parser("audit-pilot-data")
+    _config_arguments(audit_pilot_parser)
+    audit_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    audit_pilot_parser.add_argument("--dataset", choices=("canary", "pilot"), required=True)
+    audit_pilot_parser.add_argument("--mimi-report")
+    audit_pilot_parser.add_argument("--fixture", action="store_true")
+    audit_pilot_parser.set_defaults(handler=audit_pilot_data_command)
 
     codec_parser = subparsers.add_parser("benchmark-codec")
     _config_arguments(codec_parser)
