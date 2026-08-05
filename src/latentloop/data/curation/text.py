@@ -4,8 +4,8 @@ import random
 from pathlib import Path
 from typing import Any
 
-from latentloop.data.pilot.common import ensure_tree, sha256_file, stable_hash, write_json
-from latentloop.data.pilot.spec import (
+from latentloop.data.curation.common import ensure_tree, sha256_file, stable_hash, write_json
+from latentloop.data.curation.spec import (
     LANGUAGE_FRACTIONS,
     SPLIT_FRACTIONS,
     dataset_spec,

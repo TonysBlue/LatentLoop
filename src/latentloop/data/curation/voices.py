@@ -4,8 +4,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from latentloop.data.pilot.audio import fixture_voice, write_flac
-from latentloop.data.pilot.common import (
+from latentloop.data.curation.audio import fixture_voice, write_flac
+from latentloop.data.curation.common import (
     ensure_tree,
     read_json,
     relative_to_root,

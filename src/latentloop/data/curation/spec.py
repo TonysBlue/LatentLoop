@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from latentloop.data.pilot.common import CATEGORIES, LANGUAGES, SPLITS
+from latentloop.data.curation.common import CATEGORIES, LANGUAGES, SPLITS
 
 CATEGORY_FRACTIONS = {
     "public_speech": 0.30,

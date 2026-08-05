@@ -4,13 +4,13 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from latentloop.data.pilot.audio import (
+from latentloop.data.curation.audio import (
     FRAME_SAMPLES,
     SAMPLE_RATE,
     quality_metrics,
     read_mono,
 )
-from latentloop.data.pilot.common import (
+from latentloop.data.curation.common import (
     CATEGORIES,
     LANGUAGES,
     SPLITS,
@@ -22,7 +22,7 @@ from latentloop.data.pilot.common import (
     stable_hash,
     write_json,
 )
-from latentloop.data.pilot.spec import (
+from latentloop.data.curation.spec import (
     CATEGORY_FRACTIONS,
     LANGUAGE_FRACTIONS,
     MIMI_CODEC_ID,
@@ -31,7 +31,7 @@ from latentloop.data.pilot.spec import (
     SPLIT_FRACTIONS,
     dataset_spec,
 )
-from latentloop.data.pilot.text import plan_recipe_sha256
+from latentloop.data.curation.text import plan_recipe_sha256
 
 REQUIRED_FIELDS = (
     "episode_id",

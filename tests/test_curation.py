@@ -7,7 +7,7 @@ import pytest
 
 from latentloop.config import DataConfig, ModelConfig, ProjectConfig
 from latentloop.data import import_speech_manifest
-from latentloop.data.pilot import (
+from latentloop.data.curation import (
     audit_pilot_data,
     build_pilot_manifest,
     build_pilot_text,
@@ -15,9 +15,9 @@ from latentloop.data.pilot import (
     select_pilot_voices,
     synthesize_pilot,
 )
-from latentloop.data.pilot.common import read_jsonl, sha256_file
-from latentloop.data.pilot.manifest import _duration_subset
-from latentloop.data.pilot.prepare import prepare_pilot_data
+from latentloop.data.curation.common import read_jsonl, sha256_file
+from latentloop.data.curation.manifest import _duration_subset
+from latentloop.data.curation.prepare import prepare_pilot_data
 from latentloop.types import SpeechControl
 
 

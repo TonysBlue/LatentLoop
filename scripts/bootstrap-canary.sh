@@ -86,7 +86,7 @@ download \
   "$ROOT/voices/bootstrap/zero_shot_prompt.wav" \
   "c7b31d6dbe7cc6a716dded00550db5b50940bf209e424e4ad207b12e657c8ff6"
 
-uv run --project "$REPO/tools/pilot" python "$REPO/tools/pilot/write_source_lock.py" \
+uv run --project "$REPO/tools/curation" python "$REPO/tools/curation/write_source_lock.py" \
   --root "$ROOT" --cache "$CACHE" --output "$LOCK"
 
 printf 'Canary public sources and lock are ready: %s\n' "$LOCK"

@@ -8,8 +8,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from latentloop.data.pilot.audio import fixture_voice, quality_metrics, write_flac
-from latentloop.data.pilot.common import (
+from latentloop.data.curation.audio import fixture_voice, quality_metrics, write_flac
+from latentloop.data.curation.common import (
     ensure_tree,
     read_json,
     relative_to_root,
@@ -19,7 +19,7 @@ from latentloop.data.pilot.common import (
     write_json,
     write_jsonl,
 )
-from latentloop.data.pilot.text import plan_recipe_sha256
+from latentloop.data.curation.text import plan_recipe_sha256
 
 
 def _run_adapter(command: str, request: dict[str, Any], output: Path) -> None:
@@ -283,7 +283,7 @@ def synthesize_pilot(
             receipts.append(receipt)
     source_inventory = root / "normalized" / "source-items.jsonl"
     if source_inventory.exists():
-        from latentloop.data.pilot.common import read_jsonl
+        from latentloop.data.curation.common import read_jsonl
 
         for source_index, item in enumerate(read_jsonl(source_inventory)):
             if item.get("category") != "adjacent_turns" or not item.get("response_text"):

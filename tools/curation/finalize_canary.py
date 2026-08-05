@@ -4,8 +4,8 @@ import argparse
 from pathlib import Path
 
 from latentloop.config import load_config
-from latentloop.data.pilot.audit import audit_pilot_data
-from latentloop.data.pilot.prepare import (
+from latentloop.data.curation.audit import audit_pilot_data
+from latentloop.data.curation.prepare import (
     check_mimi_decode,
     codec_client,
     encode_pilot_shards,

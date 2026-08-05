@@ -7,7 +7,7 @@ from typing import Any
 import torch
 
 from latentloop.config import ProjectConfig
-from latentloop.data.pilot.common import SPLITS, read_json, read_jsonl, write_json
+from latentloop.data.curation.common import SPLITS, read_json, read_jsonl, write_json
 
 
 def _required(path: Path, label: str, missing: list[str]) -> None:

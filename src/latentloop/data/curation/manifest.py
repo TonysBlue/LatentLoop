@@ -10,14 +10,14 @@ from typing import Any
 
 import numpy as np
 
-from latentloop.data.pilot.audio import (
+from latentloop.data.curation.audio import (
     FRAME_SAMPLES,
     SAMPLE_RATE,
     align_up,
     read_mono,
     write_flac,
 )
-from latentloop.data.pilot.common import (
+from latentloop.data.curation.common import (
     CATEGORIES,
     LANGUAGES,
     SPLITS,
@@ -30,7 +30,7 @@ from latentloop.data.pilot.common import (
     write_json,
     write_jsonl,
 )
-from latentloop.data.pilot.spec import (
+from latentloop.data.curation.spec import (
     CATEGORY_FRACTIONS,
     LANGUAGE_FRACTIONS,
     SPLIT_FRACTIONS,

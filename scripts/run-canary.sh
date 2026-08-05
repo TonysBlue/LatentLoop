@@ -8,8 +8,8 @@ LOCK="${PILOT_SOURCE_LOCK:-$ROOT/raw/source-lock.json}"
 VOICES="${PILOT_VOICE_LIBRARY:-$ROOT/voices/voice-library.json}"
 RUN_DIR="${LATENTLOOP_RUN_DIR:-$HOME/latentloop-data/run}"
 TTS_HASH="b144ef55b51ce8cfb79a73c90dbba0bdaba4e451c0ebcfab20f769264f84a608"
-NORMALIZER="uv run --project $REPO/tools/pilot python $REPO/tools/pilot/normalize_adapter.py"
-SCREEN="uv run --project $REPO/tools/pilot python $REPO/tools/pilot/screen_adapter.py"
+NORMALIZER="uv run --project $REPO/tools/curation python $REPO/tools/curation/normalize_adapter.py"
+SCREEN="uv run --project $REPO/tools/curation python $REPO/tools/curation/screen_adapter.py"
 TTS="env COSYVOICE_SOCKET=$RUN_DIR/cosyvoice.sock uv run --project $REPO/tools/cosyvoice python $REPO/tools/cosyvoice/adapter.py"
 ASR="env SENSEVOICE_SOCKET=$RUN_DIR/sensevoice.sock uv run --project $REPO/tools/asr python $REPO/tools/asr/adapter.py"
 ACTION="${1:-all}"
@@ -36,7 +36,7 @@ encode_and_audit() {
   "$REPO/scripts/canary-mimi-worker.sh" start
   trap '"$REPO/scripts/canary-mimi-worker.sh" stop' EXIT
   uv run latentloop benchmark-codec --config "$CFG" --socket "$RUN_DIR/mimi.sock"
-  uv run python "$REPO/tools/pilot/finalize_canary.py" \
+  uv run python "$REPO/tools/curation/finalize_canary.py" \
     --config "$CFG" --root "$ROOT" --socket "$RUN_DIR/mimi.sock"
   uv run latentloop check-pilot-readiness --config "$CFG" --root "$ROOT" --dataset canary
   "$REPO/scripts/canary-mimi-worker.sh" stop

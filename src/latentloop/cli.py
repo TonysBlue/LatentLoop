@@ -20,7 +20,7 @@ from latentloop.data import (
     import_speech_manifest,
     write_episode_shards,
 )
-from latentloop.data.pilot import (
+from latentloop.data.curation import (
     audit_pilot_data,
     build_pilot_manifest,
     build_pilot_text,

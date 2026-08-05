@@ -10,8 +10,8 @@ from latentloop.codec import CodecIdentity
 from latentloop.codec_worker import CodecWorkerClient
 from latentloop.config import ProjectConfig
 from latentloop.data.codec_targets import encode_target_speech
-from latentloop.data.pilot.audit import audit_pilot_data
-from latentloop.data.pilot.common import (
+from latentloop.data.curation.audit import audit_pilot_data
+from latentloop.data.curation.common import (
     SPLITS,
     ensure_tree,
     read_json,
@@ -19,11 +19,11 @@ from latentloop.data.pilot.common import (
     sha256_file,
     write_json,
 )
-from latentloop.data.pilot.fetch import fetch_pilot_data
-from latentloop.data.pilot.manifest import build_pilot_manifest, build_source_inventory
-from latentloop.data.pilot.synthesis import synthesize_pilot
-from latentloop.data.pilot.text import build_pilot_text
-from latentloop.data.pilot.voices import select_pilot_voices
+from latentloop.data.curation.fetch import fetch_pilot_data
+from latentloop.data.curation.manifest import build_pilot_manifest, build_source_inventory
+from latentloop.data.curation.synthesis import synthesize_pilot
+from latentloop.data.curation.text import build_pilot_text
+from latentloop.data.curation.voices import select_pilot_voices
 from latentloop.data.speech_import import import_speech_manifest
 from latentloop.data.webdataset import EpisodeShardReader, write_episode_shards
 
