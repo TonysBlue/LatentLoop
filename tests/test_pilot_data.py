@@ -16,6 +16,7 @@ from latentloop.data.pilot import (
     synthesize_pilot,
 )
 from latentloop.data.pilot.common import read_jsonl, sha256_file
+from latentloop.data.pilot.manifest import _duration_subset
 from latentloop.data.pilot.prepare import prepare_e2_pilot
 from latentloop.types import SpeechControl
 
@@ -25,6 +26,12 @@ def _fixture_pipeline(root: Path, dataset: str) -> None:
     synthesize_pilot(root, dataset=dataset, fixture=True)
     build_pilot_manifest(root, dataset=dataset, fixture=True)
     audit_pilot_data(root, dataset=dataset, fixture=True)
+
+
+def test_duration_subset_finds_a_quota_fit_that_greedy_order_misses() -> None:
+    durations = [5.6, 5.6, 4.8, 4.8]
+    selected = _duration_subset(durations, 10.4)
+    assert sum(durations[index] for index in selected) == pytest.approx(10.4)
 
 
 def test_fixture_pipeline_is_resumable_and_isolates_canary(tmp_path: Path) -> None:

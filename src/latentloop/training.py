@@ -171,6 +171,7 @@ def train(
         config.training.max_updates,
         stop_after_updates if stop_after_updates is not None else config.training.max_updates,
     )
+    last_checkpoint_update = 0
     try:
         epoch = cursor.epoch
         while train_state["update"] < target_updates:
@@ -331,6 +332,7 @@ def train(
                             config=config.as_dict(),
                         )
                         parent_sha256 = digest
+                        last_checkpoint_update = train_state["update"]
                         tracker.record_checkpoint(path, digest, train_state["update"])
                 if train_state["update"] >= target_updates:
                     break
@@ -341,6 +343,24 @@ def train(
                 cursor = DataCursor(epoch=epoch, episode=0, unit=0)
                 recurrent = None
     finally:
+        if (
+            accelerator.is_main_process
+            and train_state["update"]
+            and train_state["update"] != last_checkpoint_update
+        ):
+            path, digest = checkpoint_manager.save(
+                f"step-{train_state['update']:08d}",
+                model=accelerator.unwrap_model(model),
+                optimizer=optimizer,
+                scheduler=scheduler,
+                scaler=accelerator.scaler,
+                recurrent_state=recurrent,
+                train_state=train_state,
+                data_cursor=cursor,
+                metadata=_checkpoint_metadata(config, parent_sha256),
+                config=config.as_dict(),
+            )
+            tracker.record_checkpoint(path, digest, train_state["update"])
         elapsed_seconds = time.perf_counter() - training_started
         runtime_metrics = {
             "runtime/elapsed_seconds": elapsed_seconds,

@@ -30,13 +30,35 @@ from latentloop.data.pilot.common import (
     write_json,
     write_jsonl,
 )
-from latentloop.data.pilot.spec import dataset_spec
+from latentloop.data.pilot.spec import (
+    CATEGORY_FRACTIONS,
+    LANGUAGE_FRACTIONS,
+    SPLIT_FRACTIONS,
+    dataset_spec,
+)
+
+# Episode audio is quantized to PCM16 by ``write_flac``.  Keep a small amount
+# of headroom so quantization cannot turn a nominally safe source peak into a
+# value above the audit gate's -1 dBFS limit.
+EPISODE_AUDIO_VERSION = 2
+TIMELINE_CALIBRATION_VERSION = 2
+AUDIO_PEAK_LIMIT_DBFS = -1.5
+AUDIO_PEAK_LIMIT = 10 ** (AUDIO_PEAK_LIMIT_DBFS / 20.0)
 
 
-def _run_inventory_adapter(command: str, root: Path) -> None:
+def build_source_inventory(command: str, root: str | Path) -> dict[str, Any]:
+    """Build the normalized public-source inventory before synthesis starts."""
+    root = Path(root).expanduser().resolve()
+    ensure_tree(root)
     output = root / "normalized" / "source-items.jsonl"
     receipt_path = root / "normalized" / "source-items.receipt.json"
     fetch_report = root / "reports" / "fetch-report.json"
+    adapter_files = {}
+    for argument in shlex.split(command):
+        candidate = Path(argument).expanduser()
+        if candidate.is_file():
+            resolved = candidate.resolve()
+            adapter_files[str(resolved)] = sha256_file(resolved)
     recipe = {
         "operation": "index-and-normalize",
         "fetch_report_sha256": sha256_file(fetch_report),
@@ -44,6 +66,7 @@ def _run_inventory_adapter(command: str, root: Path) -> None:
         "channels": 1,
         "format": "FLAC/PCM16",
         "adapter": command,
+        "adapter_files": adapter_files,
     }
     recipe_hash = stable_hash(recipe)
     if output.is_file() and receipt_path.is_file():
@@ -51,7 +74,7 @@ def _run_inventory_adapter(command: str, root: Path) -> None:
         if receipt.get("recipe_sha256") == recipe_hash and receipt.get(
             "inventory_sha256"
         ) == sha256_file(output):
-            return
+            return {**receipt, "path": str(output), "cached": True}
     with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8") as request_file:
         json.dump(
             {
@@ -79,6 +102,12 @@ def _run_inventory_adapter(command: str, root: Path) -> None:
         receipt_path,
         {"recipe_sha256": recipe_hash, "inventory_sha256": sha256_file(output)},
     )
+    return {
+        "path": str(output),
+        "inventory_sha256": sha256_file(output),
+        "recipe_sha256": recipe_hash,
+        "cached": False,
+    }
 
 
 def _load_assets(
@@ -154,7 +183,11 @@ def _cached_episode(path: Path, recipe_hash: str) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     record = read_json(path)
-    if record.get("recipe_sha256") != recipe_hash:
+    if (
+        record.get("recipe_sha256") != recipe_hash
+        or record.get("audio_version") != EPISODE_AUDIO_VERSION
+        or record.get("timeline_calibration_version") != TIMELINE_CALIBRATION_VERSION
+    ):
         return None
     for field in ("mic_audio", "target_speech"):
         asset = Path(record[field])
@@ -165,6 +198,140 @@ def _cached_episode(path: Path, recipe_hash: str) -> dict[str, Any] | None:
         if not screen.is_file() or sha256_file(screen) != record.get("screens_sha256"):
             return None
     return record
+
+
+def _write_episode_audio(
+    mic_path: Path, target_path: Path, mic: np.ndarray, target: np.ndarray
+) -> None:
+    """Write a timeline with one common peak scale for mic and target."""
+    peak = max(
+        float(np.abs(mic).max(initial=0.0)),
+        float(np.abs(target).max(initial=0.0)),
+    )
+    if peak > AUDIO_PEAK_LIMIT:
+        scale = AUDIO_PEAK_LIMIT / peak
+        mic = mic * scale
+        target = target * scale
+    write_flac(mic_path, mic)
+    write_flac(target_path, target)
+
+
+def _record_path(root: Path, dataset: str, episode_id: str) -> Path:
+    return root / "normalized" / "episodes" / dataset / f"{episode_id}.json"
+
+
+def _minimum_episode_ticks(record: dict[str, Any]) -> int:
+    """Return the shortest timeline that preserves speech and STOP labels."""
+    ends = [int(turn["end_sample"]) for turn in record.get("turns", [])]
+    minimum = max(1, max((align_up(end) // FRAME_SAMPLES for end in ends), default=1))
+    for segment in record.get("target_segments", []):
+        # Audit requires a complete frame after the frame containing speech.
+        stop_frame = (int(segment["end_sample"]) - 1) // FRAME_SAMPLES + 1
+        minimum = max(minimum, stop_frame + 1)
+    return minimum
+
+
+def _calibrate_split_durations(
+    root: Path, dataset: str, records: list[dict[str, Any]]
+) -> None:
+    """Trim only deterministic tail silence to hit each split's tick quota."""
+    spec = dataset_spec(dataset)
+    tick_seconds = FRAME_SAMPLES / SAMPLE_RATE
+    durations: dict[str, int] = {}
+    capacities: dict[str, int] = {}
+    buckets: dict[str, tuple[str, str, str]] = {}
+    cross_ticks: dict[tuple[str, str, str], int] = defaultdict(int)
+    category_ticks: dict[str, int] = defaultdict(int)
+    language_ticks: dict[str, int] = defaultdict(int)
+    for record in records:
+        episode_id = str(record["episode_id"])
+        ticks = read_mono(Path(record["mic_audio"])).size // FRAME_SAMPLES
+        key = (str(record["category"]), str(record["language"]), str(record["split"]))
+        durations[episode_id] = ticks
+        capacities[episode_id] = max(0, ticks - _minimum_episode_ticks(record))
+        buckets[episode_id] = key
+        cross_ticks[key] += ticks
+        category_ticks[key[0]] += ticks
+        language_ticks[key[1]] += ticks
+
+    def error(value: int, target: float) -> float:
+        return ((value - target) / max(target, 1.0)) ** 2
+
+    def trim_cost(key: tuple[str, str, str]) -> float:
+        category, language, split = key
+        cross_target = spec.target_seconds(category, language, split) / tick_seconds
+        category_target = spec.duration_seconds * CATEGORY_FRACTIONS[category] / tick_seconds
+        language_target = spec.duration_seconds * LANGUAGE_FRACTIONS[language] / tick_seconds
+        return (
+            error(cross_ticks[key] - 1, cross_target) - error(cross_ticks[key], cross_target)
+            + error(category_ticks[category] - 1, category_target)
+            - error(category_ticks[category], category_target)
+            + error(language_ticks[language] - 1, language_target)
+            - error(language_ticks[language], language_target)
+        )
+
+    for split in SPLITS:
+        split_records = sorted(
+            (record for record in records if record["split"] == split),
+            key=lambda record: str(record["episode_id"]),
+        )
+        if not split_records:
+            continue
+        current_ticks = sum(durations[str(record["episode_id"])] for record in split_records)
+        target_ticks = round(
+            spec.duration_seconds * SPLIT_FRACTIONS[split] / tick_seconds
+        )
+        excess = current_ticks - target_ticks
+        if excess <= 0:
+            continue
+        bucket_capacity: dict[tuple[str, str, str], int] = defaultdict(int)
+        for record in split_records:
+            episode_id = str(record["episode_id"])
+            bucket_capacity[buckets[episode_id]] += capacities[episode_id]
+        requested: dict[tuple[str, str, str], int] = defaultdict(int)
+        for _ in range(excess):
+            candidates = [key for key, capacity in bucket_capacity.items() if capacity > 0]
+            if not candidates:
+                raise ValueError(
+                    f"cannot calibrate {dataset}/{split} duration: no tail silence remains"
+                )
+            key = min(candidates, key=lambda candidate: (trim_cost(candidate), candidate))
+            requested[key] += 1
+            bucket_capacity[key] -= 1
+            cross_ticks[key] -= 1
+            category_ticks[key[0]] -= 1
+            language_ticks[key[1]] -= 1
+
+        for key, requested_ticks in sorted(requested.items()):
+            candidates = sorted(
+                (
+                    (capacities[str(record["episode_id"])], str(record["episode_id"]), record)
+                    for record in split_records
+                    if buckets[str(record["episode_id"])] == key
+                    and capacities[str(record["episode_id"])] > 0
+                ),
+                key=lambda item: (-item[0], item[1]),
+            )
+            for capacity, _, record in candidates:
+                if requested_ticks <= 0:
+                    break
+                trim = min(requested_ticks, capacity)
+                mic_path = Path(record["mic_audio"])
+                target_path = Path(record["target_speech"])
+                mic = read_mono(mic_path)[: -trim * FRAME_SAMPLES]
+                target = read_mono(target_path)[: -trim * FRAME_SAMPLES]
+                _write_episode_audio(mic_path, target_path, mic, target)
+                record["mic_audio_sha256"] = sha256_file(mic_path)
+                record["target_speech_sha256"] = sha256_file(target_path)
+                record["timeline_calibration_version"] = TIMELINE_CALIBRATION_VERSION
+                record["timeline_trimmed_ticks"] = trim
+                write_json(_record_path(root, dataset, record["episode_id"]), record)
+                requested_ticks -= trim
+            if requested_ticks:
+                raise ValueError(
+                    f"cannot calibrate {dataset}/{split}/{key}: "
+                    f"{requested_ticks} ticks remain"
+                )
 
 
 def _screens(
@@ -255,6 +422,8 @@ def _compose_plan(
             "voice_registry": registry["registry_sha256"],
             "screen_adapter": screen_command if plan["category"] == "screen_task" else None,
             "fixture": fixture,
+            "audio_version": EPISODE_AUDIO_VERSION,
+            "timeline_calibration_version": TIMELINE_CALIBRATION_VERSION,
         }
     )
     audio_dir = root / "normalized" / "episodes" / dataset
@@ -308,8 +477,7 @@ def _compose_plan(
     target = np.pad(target, (0, timeline - target.size))
     mic_path = audio_dir / f"{episode_id}-mic.flac"
     target_path = audio_dir / f"{episode_id}-target.flac"
-    write_flac(mic_path, mic)
-    write_flac(target_path, target)
+    _write_episode_audio(mic_path, target_path, mic, target)
     source_license = "internal-generated-plans; CosyVoice example voices"
     license_hash = sha256_file(root / "voices" / "registry.json")
     record = {
@@ -339,6 +507,8 @@ def _compose_plan(
         "turns": turns,
         "target_segments": segments,
         "recipe_sha256": recipe_hash,
+        "audio_version": EPISODE_AUDIO_VERSION,
+        "timeline_calibration_version": TIMELINE_CALIBRATION_VERSION,
         "fixture": fixture,
     }
     if plan["category"] == "screen_task":
@@ -416,8 +586,7 @@ def _compose_source(
         segments.append({"turn_id": "assistant-response", "start_sample": start, "end_sample": end})
     mic_path = audio_dir / f"{episode_id}-mic.flac"
     target_path = audio_dir / f"{episode_id}-target.flac"
-    write_flac(mic_path, mic)
-    write_flac(target_path, target)
+    _write_episode_audio(mic_path, target_path, mic, target)
     record = {
         "episode_id": episode_id,
         "mic_audio": str(mic_path.resolve()),
@@ -449,6 +618,8 @@ def _compose_source(
         "turns": turns,
         "target_segments": segments,
         "recipe_sha256": recipe_hash,
+        "audio_version": EPISODE_AUDIO_VERSION,
+        "timeline_calibration_version": TIMELINE_CALIBRATION_VERSION,
         "source_normalization": item.get("normalization"),
         "fixture": fixture,
     }
@@ -479,6 +650,39 @@ def _duration_seconds(root: Path, record: dict[str, Any]) -> float:
     return read_mono(path).size / SAMPLE_RATE
 
 
+def _duration_subset(durations: list[float], target: float) -> list[int]:
+    tick_seconds = FRAME_SAMPLES / SAMPLE_RATE
+    ticks = [round(duration / tick_seconds) for duration in durations]
+    target_ticks = target / tick_seconds
+    minimum = int(np.ceil(target_ticks * 0.98))
+    maximum = int(np.floor(target_ticks * 1.02))
+    reachable = bytearray(maximum + 1)
+    previous = [-1] * (maximum + 1)
+    chosen = [-1] * (maximum + 1)
+    reachable[0] = 1
+    for index, duration_ticks in enumerate(ticks):
+        if duration_ticks <= 0 or duration_ticks > maximum:
+            continue
+        for elapsed in range(maximum - duration_ticks, -1, -1):
+            updated = elapsed + duration_ticks
+            if reachable[elapsed] and not reachable[updated]:
+                reachable[updated] = 1
+                previous[updated] = elapsed
+                chosen[updated] = index
+    candidates = [elapsed for elapsed in range(minimum, maximum + 1) if reachable[elapsed]]
+    if not candidates:
+        return []
+    elapsed = min(candidates, key=lambda value: (abs(value - target_ticks), value))
+    indices = []
+    while elapsed:
+        index = chosen[elapsed]
+        if index < 0:
+            raise RuntimeError("duration subset reconstruction failed")
+        indices.append(index)
+        elapsed = previous[elapsed]
+    return sorted(indices)
+
+
 def _select_sources(
     root: Path,
     dataset: str,
@@ -501,22 +705,28 @@ def _select_sources(
         if fixture:
             candidates = items[::2] if dataset == "canary" else items
         else:
-            candidates = items
+            candidates = [
+                item
+                for item in items
+                if item["category"] != "adjacent_turns"
+                or (str(item["source_item_id"]), "assistant-response") in receipts
+            ]
         target = spec.target_seconds(*key)
-        elapsed = 0.0
-        for item in candidates:
-            record = _compose_source(root, dataset, item, receipts, registry, fixture)
-            duration = _duration_seconds(root, record)
-            if not fixture and elapsed and elapsed + duration > target * 1.02:
-                continue
-            selected.append(record)
-            elapsed += duration
-            if not fixture and elapsed >= target * 0.998:
-                break
-        if not fixture and elapsed < target * 0.98:
+        records = [
+            _compose_source(root, dataset, item, receipts, registry, fixture)
+            for item in candidates
+        ]
+        if fixture:
+            selected.extend(records)
+            continue
+        durations = [_duration_seconds(root, record) for record in records]
+        indices = _duration_subset(durations, target)
+        if not indices:
             raise ValueError(
-                f"not enough independent source audio for {key}: {elapsed:.1f}s < {target:.1f}s"
+                f"not enough independent source audio for {key}: no combination within "
+                f"{target * 0.98:.1f}-{target * 1.02:.1f}s"
             )
+        selected.extend(records[index] for index in indices)
     return selected
 
 
@@ -531,7 +741,7 @@ def build_pilot_manifest(
     root = Path(root).expanduser().resolve()
     ensure_tree(root)
     if normalize_command:
-        _run_inventory_adapter(normalize_command, root)
+        build_source_inventory(normalize_command, root)
     elif not fixture:
         inventory = root / "normalized" / "source-items.jsonl"
         receipt = root / "normalized" / "source-items.receipt.json"
@@ -559,6 +769,7 @@ def build_pilot_manifest(
     ids = [record["episode_id"] for record in records]
     if len(ids) != len(set(ids)):
         raise ValueError("episode IDs are duplicated")
+    _calibrate_split_durations(root, dataset, records)
     _verify_isolation(records)
     destination = root / "manifests" / dataset
     for split in SPLITS:

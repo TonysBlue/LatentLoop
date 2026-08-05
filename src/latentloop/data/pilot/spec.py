@@ -19,32 +19,35 @@ MIMI_WEIGHT_SHA256 = "09b782f0629851a271227fb9d36db65c041790365f11bbe5d3d59369cf
 
 SOURCE_CATALOG = {
     "aishell1": {
-        "source_version": "SLR33",
-        "source_url": "https://www.openslr.org/resources/33/data_aishell.tgz",
+        "source_version": "hf-AISHELL-1@bbe295d5",
+        "source_url": "https://huggingface.co/datasets/AISHELL/AISHELL-1",
         "license": "Apache-2.0",
         "license_url": "https://www.openslr.org/33/",
         "language": "zh",
         "category": "public_speech",
     },
     "librispeech_train_clean_100": {
-        "source_version": "SLR12-train-clean-100",
-        "source_url": "https://www.openslr.org/resources/12/train-clean-100.tar.gz",
+        "source_version": "hf-librispeech_asr@71cacbfb",
+        "source_url": "https://huggingface.co/datasets/openslr/librispeech_asr",
         "license": "CC-BY-4.0",
         "license_url": "https://www.openslr.org/12/",
         "language": "en",
         "category": "public_speech",
     },
     "aishell4_train_l": {
-        "source_version": "SLR111-train_L",
-        "source_url": "https://www.openslr.org/resources/111/train_L.tar.gz",
+        "source_version": "hf-argmaxinc-aishell-4@0cf6e538",
+        "source_url": "https://huggingface.co/datasets/argmaxinc/aishell-4",
         "license": "CC-BY-SA-4.0",
         "license_url": "https://www.openslr.org/111/",
         "language": "zh",
         "category": "adjacent_turns",
     },
     "dailytalk": {
-        "source_version": "v0.1.0",
-        "source_url": "",
+        "source_version": "hf-DailyTalk@1f0d958a",
+        "source_url": (
+            "https://huggingface.co/datasets/"
+            "DynamicSuperbPrivate/DialogueActClassification_DailyTalk"
+        ),
         "license": "CC-BY-SA-4.0 AND academic-use-statement",
         "license_url": "https://github.com/keonlee9420/DailyTalk",
         "language": "en",

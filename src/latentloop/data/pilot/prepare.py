@@ -14,12 +14,13 @@ from latentloop.data.pilot.audit import audit_pilot_data
 from latentloop.data.pilot.common import (
     SPLITS,
     ensure_tree,
+    read_json,
     read_jsonl,
     sha256_file,
     write_json,
 )
 from latentloop.data.pilot.fetch import fetch_pilot_data
-from latentloop.data.pilot.manifest import build_pilot_manifest
+from latentloop.data.pilot.manifest import build_pilot_manifest, build_source_inventory
 from latentloop.data.pilot.synthesis import synthesize_pilot
 from latentloop.data.pilot.text import build_pilot_text
 from latentloop.data.pilot.voices import select_pilot_voices
@@ -129,7 +130,7 @@ def encode_pilot_shards(
             import_speech_manifest(manifest, config.data, config.model), staging
         )
         staged = EpisodeShardReader(
-            str(staging).replace("%06d", "*.tar"),
+            str(staging).replace("%06d", "*"),
             config.data,
             config.model,
             require_encoded_speech=False,
@@ -137,7 +138,7 @@ def encode_pilot_shards(
         )
         write_episode_shards(encode_target_speech(staged, client), processed)
         encoded = EpisodeShardReader(
-            str(processed).replace("%06d", "*.tar"),
+            str(processed).replace("%06d", "*"),
             config.data,
             config.model,
             require_encoded_speech=True,
@@ -178,6 +179,7 @@ def prepare_e2_pilot(
     socket_path: str | Path | None = None,
     encode: bool = False,
     mimi_report_dir: str | Path | None = None,
+    dataset: str = "all",
 ) -> dict[str, Any]:
     """Run all deterministic E2 preparation stages in dependency order."""
     root = Path(root).expanduser().resolve()
@@ -185,16 +187,26 @@ def prepare_e2_pilot(
     fetch = fetch_pilot_data(
         root, fixture=fixture, lock_path=lock_path, download=download, extract=extract
     )
+    inventory = None
+    if not fixture:
+        if not normalize_command:
+            raise ValueError("production preparation requires --normalize-command")
+        inventory = build_source_inventory(normalize_command, root)
     voices = select_pilot_voices(root, library=library, fixture=fixture)
+    if dataset not in {"canary", "pilot", "all"}:
+        raise ValueError("dataset must be canary, pilot, or all")
     datasets: dict[str, Any] = {}
     client = codec_client(config, socket_path) if socket_path else None
     if encode and client is None:
         raise ValueError("--encode requires --socket")
-    for dataset in ("canary", "pilot"):
-        text = build_pilot_text(root, dataset=dataset, fixture=fixture, seed=config.data.seed)
+    dataset_names = ("canary", "pilot") if dataset == "all" else (dataset,)
+    for dataset_name in dataset_names:
+        text = build_pilot_text(
+            root, dataset=dataset_name, fixture=fixture, seed=config.data.seed
+        )
         synthesis = synthesize_pilot(
             root,
-            dataset=dataset,
+            dataset=dataset_name,
             fixture=fixture,
             synth_command=synth_command,
             asr_command=asr_command,
@@ -202,30 +214,44 @@ def prepare_e2_pilot(
         )
         manifest = build_pilot_manifest(
             root,
-            dataset=dataset,
+            dataset=dataset_name,
             fixture=fixture,
             normalize_command=normalize_command,
             screen_command=screen_command,
         )
+        mimi_path: str | None = None
         if client:
             client.health()
-            mimi = check_mimi_decode(root, dataset=dataset, client=client, fixture=fixture)
+            mimi = check_mimi_decode(
+                root, dataset=dataset_name, client=client, fixture=fixture
+            )
+            mimi_path = str(mimi["path"])
         else:
             report_dir = Path(mimi_report_dir).expanduser() if mimi_report_dir else root / "reports"
-            mimi_path = report_dir / f"{dataset}-mimi-decode.json"
-            mimi = {"path": str(mimi_path), "provided": mimi_path.is_file()}
-        audit = audit_pilot_data(
-            root,
-            dataset=dataset,
-            fixture=fixture,
-            mimi_report=mimi.get("path") if mimi.get("provided") else None,
+            candidate = report_dir / f"{dataset_name}-mimi-decode.json"
+            manifest_path = root / "manifests" / dataset_name / "episodes.jsonl"
+            current_manifest_hash = sha256_file(manifest_path)
+            provided = False
+            if candidate.is_file():
+                provided = read_json(candidate).get("manifest_sha256") == current_manifest_hash
+            mimi = {"path": str(candidate), "provided": provided}
+            mimi_path = str(candidate) if provided else None
+        audit = (
+            audit_pilot_data(
+                root,
+                dataset=dataset_name,
+                fixture=fixture,
+                mimi_report=mimi_path,
+            )
+            if fixture or mimi_path
+            else None
         )
         encoded = (
-            encode_pilot_shards(root, dataset=dataset, config=config, client=client)
+            encode_pilot_shards(root, dataset=dataset_name, config=config, client=client)
             if encode
             else None
         )
-        datasets[dataset] = {
+        datasets[dataset_name] = {
             "text": text,
             "synthesis": synthesis,
             "manifest": manifest,
@@ -233,6 +259,12 @@ def prepare_e2_pilot(
             "audit": audit,
             "encoded": encoded,
         }
-    result = {"root": str(root), "fetch": fetch, "voices": voices, "datasets": datasets}
+    result = {
+        "root": str(root),
+        "fetch": fetch,
+        "voices": voices,
+        "inventory": inventory,
+        "datasets": datasets,
+    }
     write_json(root / "reports" / "prepare-report.json", result)
     return result

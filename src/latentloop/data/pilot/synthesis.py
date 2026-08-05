@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -79,6 +80,74 @@ def _production_audio_report(path: Path) -> dict[str, Any]:
     return {"integrated_lufs": loudness, "metrics_sha256": sha256_file(report_path)}
 
 
+def _cached_synthesis(
+    root: Path, recipe: dict[str, Any], output: Path
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    content_recipe = {
+        key: recipe[key]
+        for key in (
+            "text",
+            "language",
+            "role",
+            "voice_id",
+            "voice_prompt_sha256",
+            "model_sha256",
+        )
+    }
+    cache_key = stable_hash(content_recipe)
+    cache_audio = root / "synthesized" / "cache" / f"{cache_key}.flac"
+    cache_receipt = cache_audio.with_suffix(".json")
+    if not cache_audio.is_file() or not cache_receipt.is_file():
+        return None
+    receipt = read_json(cache_receipt)
+    if (
+        receipt.get("content_recipe_sha256") != cache_key
+        or receipt.get("audio_sha256") != sha256_file(cache_audio)
+    ):
+        return None
+    output.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(cache_audio, output)
+    shutil.copy2(cache_audio.with_suffix(".metrics.json"), output.with_suffix(".metrics.json"))
+    return receipt, content_recipe
+
+
+def _store_synthesis_cache(
+    root: Path,
+    recipe: dict[str, Any],
+    output: Path,
+    *,
+    metric: str,
+    score: float,
+    attempts: int,
+) -> None:
+    content_recipe = {
+        key: recipe[key]
+        for key in (
+            "text",
+            "language",
+            "role",
+            "voice_id",
+            "voice_prompt_sha256",
+            "model_sha256",
+        )
+    }
+    cache_key = stable_hash(content_recipe)
+    cache_audio = root / "synthesized" / "cache" / f"{cache_key}.flac"
+    cache_audio.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(output, cache_audio)
+    shutil.copy2(output.with_suffix(".metrics.json"), cache_audio.with_suffix(".metrics.json"))
+    write_json(
+        cache_audio.with_suffix(".json"),
+        {
+            "content_recipe_sha256": cache_key,
+            "audio_sha256": sha256_file(cache_audio),
+            "asr_metric": metric,
+            "asr_score": score,
+            "attempts": attempts,
+        },
+    )
+
+
 def synthesize_pilot(
     root: str | Path,
     *,
@@ -135,6 +204,7 @@ def synthesize_pilot(
             role = str(turn["role"])
             voice_id = assistant_voice if role == "assistant" else user_voice
             prompt_hash = str(voices[voice_id]["prompt_sha256"])
+            prompt_audio = root / str(voices[voice_id]["prompt_audio"])
             recipe = {
                 "plan_id": plan["plan_id"],
                 "plan_recipe_sha256": plan["recipe_sha256"],
@@ -144,6 +214,8 @@ def synthesize_pilot(
                 "role": role,
                 "voice_id": voice_id,
                 "voice_prompt_sha256": prompt_hash,
+                "voice_prompt_audio": str(prompt_audio.resolve()),
+                "voice_prompt_text": str(voices[voice_id].get("prompt_text") or ""),
                 "model_sha256": model_hash,
             }
             recipe_hash = stable_hash(recipe)
@@ -156,21 +228,31 @@ def synthesize_pilot(
                 ) == sha256_file(output):
                     receipts.append(old)
                     continue
-            attempts = 0
-            while True:
-                attempts += 1
-                if fixture:
-                    write_flac(output, fixture_voice(turn["text"], plan_index + attempts))
-                else:
-                    _run_adapter(synth_command or "", {**recipe, "attempt": attempts}, output)
+            cached = None if fixture else _cached_synthesis(root, recipe, output)
+            if cached:
+                cache_receipt, _ = cached
+                attempts = int(cache_receipt["attempts"])
+                metric = str(cache_receipt["asr_metric"])
+                score = float(cache_receipt["asr_score"])
                 metrics = quality_metrics(output)
-                if metrics["duration_seconds"] < 0.3 or metrics["duration_seconds"] > 15:
-                    raise ValueError(f"synthesized utterance duration is invalid: {output}")
-                if not metrics["finite"] or metrics["clipping_fraction"] > 0.001:
-                    raise ValueError(f"synthesized utterance quality is invalid: {output}")
-                metric, score = _asr_score(asr_command, output, turn["text"], language, fixture)
-                if score <= 0.20 or attempts == 2:
-                    break
+            else:
+                attempts = 0
+                while True:
+                    attempts += 1
+                    if fixture:
+                        write_flac(output, fixture_voice(turn["text"], plan_index + attempts))
+                    else:
+                        _run_adapter(synth_command or "", {**recipe, "attempt": attempts}, output)
+                    metrics = quality_metrics(output)
+                    if metrics["duration_seconds"] < 0.3 or metrics["duration_seconds"] > 15:
+                        raise ValueError(f"synthesized utterance duration is invalid: {output}")
+                    if not metrics["finite"] or metrics["clipping_fraction"] > 0.001:
+                        raise ValueError(f"synthesized utterance quality is invalid: {output}")
+                    metric, score = _asr_score(
+                        asr_command, output, turn["text"], language, fixture
+                    )
+                    if score <= 0.20 or attempts == 2:
+                        break
             if score > 0.20:
                 output.unlink(missing_ok=True)
                 rejected += 1
@@ -188,6 +270,15 @@ def synthesize_pilot(
             }
             if not fixture:
                 receipt["normalization"] = _production_audio_report(output)
+                if not cached:
+                    _store_synthesis_cache(
+                        root,
+                        recipe,
+                        output,
+                        metric=metric,
+                        score=score,
+                        attempts=attempts,
+                    )
             write_json(receipt_path, receipt)
             receipts.append(receipt)
     source_inventory = root / "normalized" / "source-items.jsonl"
@@ -208,6 +299,12 @@ def synthesize_pilot(
                 "role": "assistant",
                 "voice_id": assistant_voice,
                 "voice_prompt_sha256": voices[assistant_voice]["prompt_sha256"],
+                "voice_prompt_audio": str(
+                    (root / str(voices[assistant_voice]["prompt_audio"])).resolve()
+                ),
+                "voice_prompt_text": str(
+                    voices[assistant_voice].get("prompt_text") or ""
+                ),
                 "model_sha256": model_hash,
             }
             recipe_hash = stable_hash(recipe)
@@ -226,21 +323,29 @@ def synthesize_pilot(
                 ) == sha256_file(output):
                     receipts.append(old)
                     continue
-            attempts = 0
-            while True:
-                attempts += 1
-                if fixture:
-                    write_flac(output, fixture_voice(text, source_index + attempts))
-                else:
-                    _run_adapter(synth_command or "", {**recipe, "attempt": attempts}, output)
+            cached = None if fixture else _cached_synthesis(root, recipe, output)
+            if cached:
+                cache_receipt, _ = cached
+                attempts = int(cache_receipt["attempts"])
+                metric = str(cache_receipt["asr_metric"])
+                score = float(cache_receipt["asr_score"])
                 metrics = quality_metrics(output)
-                if metrics["duration_seconds"] < 0.3 or metrics["duration_seconds"] > 15:
-                    raise ValueError(f"synthesized utterance duration is invalid: {output}")
-                if not metrics["finite"] or metrics["clipping_fraction"] > 0.001:
-                    raise ValueError(f"synthesized utterance quality is invalid: {output}")
-                metric, score = _asr_score(asr_command, output, text, language, fixture)
-                if score <= 0.20 or attempts == 2:
-                    break
+            else:
+                attempts = 0
+                while True:
+                    attempts += 1
+                    if fixture:
+                        write_flac(output, fixture_voice(text, source_index + attempts))
+                    else:
+                        _run_adapter(synth_command or "", {**recipe, "attempt": attempts}, output)
+                    metrics = quality_metrics(output)
+                    if metrics["duration_seconds"] < 0.3 or metrics["duration_seconds"] > 15:
+                        raise ValueError(f"synthesized utterance duration is invalid: {output}")
+                    if not metrics["finite"] or metrics["clipping_fraction"] > 0.001:
+                        raise ValueError(f"synthesized utterance quality is invalid: {output}")
+                    metric, score = _asr_score(asr_command, output, text, language, fixture)
+                    if score <= 0.20 or attempts == 2:
+                        break
             if score > 0.20:
                 output.unlink(missing_ok=True)
                 rejected += 1
@@ -258,6 +363,15 @@ def synthesize_pilot(
             }
             if not fixture:
                 receipt["normalization"] = _production_audio_report(output)
+                if not cached:
+                    _store_synthesis_cache(
+                        root,
+                        recipe,
+                        output,
+                        metric=metric,
+                        score=score,
+                        attempts=attempts,
+                    )
             write_json(receipt_path, receipt)
             receipts.append(receipt)
     path = root / "synthesized" / f"{dataset}-utterances.jsonl"

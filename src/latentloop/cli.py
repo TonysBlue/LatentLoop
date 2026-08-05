@@ -30,7 +30,7 @@ from latentloop.data.pilot import (
     select_pilot_voices,
     synthesize_pilot,
 )
-from latentloop.evaluation import evaluate_overfit_checkpoint
+from latentloop.evaluation import evaluate_canary_checkpoint, evaluate_overfit_checkpoint
 from latentloop.model import StreamingLatentLoop
 from latentloop.ray_jobs import generate_synthetic_with_ray, write_ray_report
 from latentloop.speech_metrics import benchmark_decoder
@@ -291,6 +291,7 @@ def prepare_e2_pilot_command(args: argparse.Namespace) -> int:
         socket_path=args.socket,
         encode=args.encode,
         mimi_report_dir=args.mimi_report_dir,
+        dataset=args.dataset,
     )
     print(json.dumps(result, indent=2))
     return 0
@@ -385,6 +386,20 @@ def evaluate_overfit(args: argparse.Namespace) -> int:
         report_path.write_text(report + "\n", encoding="utf-8")
     print(report)
     return int(not result.passed)
+
+
+def evaluate_canary(args: argparse.Namespace) -> int:
+    config = _load(args)
+    result = evaluate_canary_checkpoint(
+        config, args.checkpoint, split=args.split, device=args.device
+    )
+    report = json.dumps(asdict(result), indent=2)
+    if args.report:
+        report_path = Path(args.report).expanduser()
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report + "\n", encoding="utf-8")
+    print(report)
+    return 0
 
 
 def train_command(args: argparse.Namespace) -> int:
@@ -508,6 +523,9 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_pilot_parser.add_argument("--socket", help="Mimi worker Unix socket")
     prepare_pilot_parser.add_argument("--encode", action="store_true")
     prepare_pilot_parser.add_argument("--mimi-report-dir")
+    prepare_pilot_parser.add_argument(
+        "--dataset", choices=("canary", "pilot", "all"), default="canary"
+    )
     prepare_pilot_parser.add_argument("--fixture", action="store_true")
     prepare_pilot_parser.set_defaults(handler=prepare_e2_pilot_command)
 
@@ -542,6 +560,16 @@ def build_parser() -> argparse.ArgumentParser:
     evaluation_parser.add_argument("--control-f1-threshold", type=float, default=0.9)
     evaluation_parser.add_argument("--report", help="Optional JSON report path")
     evaluation_parser.set_defaults(handler=evaluate_overfit)
+
+    canary_evaluation_parser = subparsers.add_parser("evaluate-canary")
+    _config_arguments(canary_evaluation_parser)
+    canary_evaluation_parser.add_argument("--checkpoint", required=True)
+    canary_evaluation_parser.add_argument(
+        "--split", choices=("validation", "test"), default="validation"
+    )
+    canary_evaluation_parser.add_argument("--device")
+    canary_evaluation_parser.add_argument("--report", help="Optional JSON report path")
+    canary_evaluation_parser.set_defaults(handler=evaluate_canary)
 
     train_parser = subparsers.add_parser("train")
     _config_arguments(train_parser)

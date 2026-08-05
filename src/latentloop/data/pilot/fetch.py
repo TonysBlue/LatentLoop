@@ -31,6 +31,10 @@ def _safe_extract(archive: Path, destination: Path) -> None:
         bundle.extractall(destination, filter="data")
 
 
+def _is_tar_archive(path: Path) -> bool:
+    return tarfile.is_tarfile(path)
+
+
 def _download(url: str, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".partial")
@@ -151,44 +155,50 @@ def fetch_pilot_data(
         record = lock[source_id]
         if record.get("source_version") != expected["source_version"]:
             raise ValueError(f"{source_id} source_version differs from the locked catalog")
-        url = str(record.get("source_url") or expected["source_url"])
-        if not url:
-            raise ValueError(
-                "DailyTalk has no verified anonymous data URL; Canary is blocked until one "
-                "is recorded in the source lock"
-            )
-        expected_archive = require_sha256(record.get("archive_sha256"), f"{source_id} archive")
         expected_license = require_sha256(record.get("license_sha256"), f"{source_id} license")
         license_path = Path(record["license_path"]).expanduser().resolve()
         if not license_path.is_file() or sha256_file(license_path) != expected_license:
             raise ValueError(f"{source_id} license record is missing or has the wrong hash")
-        destination = root / "raw" / source_id / Path(url).name
-        if not destination.exists():
-            if not download:
-                raise FileNotFoundError(
-                    f"{destination} is absent; rerun with --download after reviewing the lock"
-                )
-            _download(url, destination)
-        actual_archive = sha256_file(destination)
-        if actual_archive != expected_archive:
-            raise ValueError(f"{source_id} archive SHA-256 mismatch")
         stored_license = root / "licenses" / f"{source_id}{license_path.suffix or '.txt'}"
         shutil.copy2(license_path, stored_license)
-        if extract:
-            _safe_extract(destination, root / "raw" / source_id / "extracted")
-        results.append(
-            {
-                "source_id": source_id,
-                "source_version": expected["source_version"],
-                "source_url": url,
-                "archive": relative_to_root(destination, root),
-                "archive_sha256": actual_archive,
-                "license": expected["license"],
-                "license_path": relative_to_root(stored_license, root),
-                "license_sha256": expected_license,
-                "recipe_sha256": stable_hash(record),
-            }
-        )
+        archives = record.get("archives")
+        if archives is None:
+            archives = [record]
+        if not isinstance(archives, list) or not archives:
+            raise ValueError(f"{source_id} archives must be a non-empty list")
+        for archive_index, archive in enumerate(archives):
+            url = str(archive.get("source_url") or "")
+            if not url:
+                raise ValueError(f"{source_id} archive {archive_index} has no URL")
+            expected_archive = require_sha256(
+                archive.get("archive_sha256"), f"{source_id} archive {archive_index}"
+            )
+            filename = str(archive.get("filename") or Path(url).name)
+            destination = root / "raw" / source_id / filename
+            if not destination.exists():
+                if not download:
+                    raise FileNotFoundError(
+                        f"{destination} is absent; rerun with --download after reviewing the lock"
+                    )
+                _download(url, destination)
+            actual_archive = sha256_file(destination)
+            if actual_archive != expected_archive:
+                raise ValueError(f"{source_id} archive {archive_index} SHA-256 mismatch")
+            if extract and _is_tar_archive(destination):
+                _safe_extract(destination, root / "raw" / source_id / "extracted")
+            results.append(
+                {
+                    "source_id": source_id,
+                    "source_version": expected["source_version"],
+                    "source_url": url,
+                    "archive": relative_to_root(destination, root),
+                    "archive_sha256": actual_archive,
+                    "license": expected["license"],
+                    "license_path": relative_to_root(stored_license, root),
+                    "license_sha256": expected_license,
+                    "recipe_sha256": stable_hash(record),
+                }
+            )
     report = {"fixture": False, "sources": results}
     write_json(root / "reports" / "fetch-report.json", report)
     return report

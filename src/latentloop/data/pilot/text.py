@@ -48,7 +48,7 @@ EN_COPY = {
     ),
     "file_management": (
         "Find the report in Downloads.",
-        "I am checking Downloads.",
+        "I am looking for the report now.",
         "I found the report.",
     ),
     "document_editing": (

@@ -26,6 +26,18 @@ class OverfitEvaluation:
     passed: bool
 
 
+@dataclass(frozen=True, slots=True)
+class CanaryEvaluation:
+    split: str
+    episodes: int
+    speech_frames: int
+    teacher_codec_accuracy: list[float]
+    speech_control_macro_f1: float
+    speech_control_accuracy: float
+    speech_control_per_class_f1: list[float]
+    speech_control_confusion: list[list[int]]
+
+
 class _ClassificationCounts:
     def __init__(self, classes: int) -> None:
         self.matrix = torch.zeros(classes, classes, dtype=torch.long)
@@ -55,7 +67,11 @@ class _ClassificationCounts:
 
 
 def load_evaluation_model(
-    config: ProjectConfig, checkpoint: str | Path, device: torch.device
+    config: ProjectConfig,
+    checkpoint: str | Path,
+    device: torch.device,
+    *,
+    require_data_identity: bool = True,
 ) -> StreamingLatentLoop:
     payload = torch.load(Path(checkpoint).expanduser(), map_location="cpu", weights_only=False)
     if payload.get("format_version") != 3:
@@ -68,7 +84,7 @@ def load_evaluation_model(
     ):
         if metadata.get(field) != expected:
             raise ValueError(f"checkpoint {field} does not match the evaluation config")
-    if config.data.manifest:
+    if require_data_identity and config.data.manifest:
         manifest = Path(config.data.manifest).expanduser()
         if not manifest.is_absolute():
             manifest = config.runtime.root_path() / manifest
@@ -156,4 +172,61 @@ def evaluate_overfit_checkpoint(
         speech_control_per_class_f1=control_per_class.tolist(),
         speech_control_confusion=control.matrix.tolist(),
         passed=passed,
+    )
+
+
+def evaluate_canary_checkpoint(
+    config: ProjectConfig,
+    checkpoint: str | Path,
+    *,
+    split: str = "validation",
+    device: str | torch.device | None = None,
+) -> CanaryEvaluation:
+    if split not in {"validation", "test"}:
+        raise ValueError("Canary evaluation split must be validation or test")
+    selected_device = torch.device(
+        device or ("cuda:0" if torch.cuda.is_available() else "cpu")
+    )
+    model = load_evaluation_model(
+        config, checkpoint, selected_device, require_data_identity=False
+    )
+    if config.data.shards is None:
+        raise ValueError("Canary evaluation requires WebDataset shards")
+    teacher_correct = torch.zeros(config.model.speech_codebooks, dtype=torch.long)
+    valid_frames = 0
+    control = _ClassificationCounts(5)
+    episodes = 0
+    with torch.inference_mode():
+        for episode in EpisodeShardReader(config.data.shards, config.data, config.model):
+            episodes += 1
+            state = model.initial_state(1, selected_device)
+            for raw_unit in episode.units:
+                unit = raw_unit.to(selected_device)
+                if selected_device.type == "cuda":
+                    unit.mic_audio = unit.mic_audio.half()
+                    unit.screen = unit.screen.half()
+                output = model(unit, state, unit.speech_codes)
+                predicted_control = model._select_speech_control(
+                    output.controls.speech_logits, state.speech_local.utterance_active
+                )
+                control.add(predicted_control, unit.control_target.speech)
+                state = output.state
+                mask = unit.speech_mask[:, :, None]
+                if mask.any():
+                    teacher_correct += (
+                        output.speech_logits.argmax(dim=-1).eq(unit.speech_codes) & mask
+                    ).sum(dim=(0, 1)).cpu()
+                    valid_frames += int(unit.speech_mask.sum().item())
+    if episodes == 0 or valid_frames == 0:
+        raise ValueError("Canary evaluation dataset contains no valid speech frames")
+    per_class, _ = control.f1()
+    return CanaryEvaluation(
+        split=split,
+        episodes=episodes,
+        speech_frames=valid_frames,
+        teacher_codec_accuracy=(teacher_correct.float() / valid_frames).tolist(),
+        speech_control_macro_f1=control.macro_f1(),
+        speech_control_accuracy=control.accuracy(),
+        speech_control_per_class_f1=per_class.tolist(),
+        speech_control_confusion=control.matrix.tolist(),
     )

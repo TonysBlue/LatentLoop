@@ -99,6 +99,13 @@ E2 Canary/Pilot 数据准备、外部语料许可证锁、CosyVoice/ASR/屏幕�
 [`docs/e2-pilot-data.md`](docs/e2-pilot-data.md)。本地 fixture 可以在不下载语料和模型的
 情况下跑通六个阶段：
 
+真实一小时 Canary 的固定数据下载、TTS/ASR、Mimi 编码、训练和 validation/test 评测
+使用统一入口，完整说明见 [`docs/e2-canary-runbook.md`](docs/e2-canary-runbook.md)：
+
+```bash
+E2_CANARY_MAX_UPDATES=5 E2_TRACKING_MODE=offline scripts/run-canary.sh all
+```
+
 ```bash
 uv run latentloop fetch-pilot-data --config configs/local-25m.yaml --fixture
 uv run latentloop select-pilot-voices --config configs/local-25m.yaml --fixture
