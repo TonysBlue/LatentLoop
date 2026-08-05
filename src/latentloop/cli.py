@@ -24,9 +24,9 @@ from latentloop.data.pilot import (
     audit_pilot_data,
     build_pilot_manifest,
     build_pilot_text,
-    check_e2_readiness,
+    check_pilot_readiness,
     fetch_pilot_data,
-    prepare_e2_pilot,
+    prepare_pilot_data,
     select_pilot_voices,
     synthesize_pilot,
 )
@@ -145,7 +145,7 @@ def generate_data(args: argparse.Namespace) -> int:
 def build_overfit_data(args: argparse.Namespace) -> int:
     config = _load(args)
     if config.data.train_episodes != 32:
-        raise ValueError("the E2 overfit gate requires exactly 32 trajectories")
+        raise ValueError("the direct-speech overfit gate requires exactly 32 trajectories")
     manifest = write_episode_shards(SpeechOverfitDataset(config.data, config.model), args.output)
     print(json.dumps({"episodes": len(manifest), "output": args.output}, indent=2))
     return 0
@@ -195,7 +195,7 @@ def import_speech(args: argparse.Namespace) -> int:
 def _pilot_root(args: argparse.Namespace, config: ProjectConfig) -> Path:
     if args.root:
         return Path(args.root).expanduser().resolve()
-    return config.runtime.root_path() / "e2-pilot"
+    return config.runtime.root_path() / "pilot-data"
 
 
 def fetch_pilot_data_command(args: argparse.Namespace) -> int:
@@ -273,9 +273,9 @@ def audit_pilot_data_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def prepare_e2_pilot_command(args: argparse.Namespace) -> int:
+def prepare_pilot_data_command(args: argparse.Namespace) -> int:
     config = _load(args)
-    result = prepare_e2_pilot(
+    result = prepare_pilot_data(
         _pilot_root(args, config),
         config=config,
         fixture=args.fixture,
@@ -297,9 +297,9 @@ def prepare_e2_pilot_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def check_e2_readiness_command(args: argparse.Namespace) -> int:
+def check_pilot_readiness_command(args: argparse.Namespace) -> int:
     config = _load(args)
-    result = check_e2_readiness(
+    result = check_pilot_readiness(
         _pilot_root(args, config),
         config=config,
         dataset=args.dataset,
@@ -507,7 +507,7 @@ def build_parser() -> argparse.ArgumentParser:
     audit_pilot_parser.set_defaults(handler=audit_pilot_data_command)
 
     prepare_pilot_parser = subparsers.add_parser(
-        "prepare-e2-pilot", help="Run automatic Canary/Pilot preparation and gates"
+        "prepare-pilot-data", help="Run automatic Canary/Pilot preparation and gates"
     )
     _config_arguments(prepare_pilot_parser)
     prepare_pilot_parser.add_argument("--root", help="Pilot artifact root")
@@ -527,17 +527,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--dataset", choices=("canary", "pilot", "all"), default="canary"
     )
     prepare_pilot_parser.add_argument("--fixture", action="store_true")
-    prepare_pilot_parser.set_defaults(handler=prepare_e2_pilot_command)
+    prepare_pilot_parser.set_defaults(handler=prepare_pilot_data_command)
 
     readiness_parser = subparsers.add_parser(
-        "check-e2-readiness", help="Verify automatic gates before E2 training"
+        "check-pilot-readiness", help="Verify automatic gates before Pilot training"
     )
     _config_arguments(readiness_parser)
     readiness_parser.add_argument("--root", help="Pilot artifact root")
     readiness_parser.add_argument("--dataset", choices=("canary", "pilot"), default="pilot")
     readiness_parser.add_argument("--checkpoint", help="Optional initial checkpoint")
     readiness_parser.add_argument("--allow-unencoded", action="store_true")
-    readiness_parser.set_defaults(handler=check_e2_readiness_command)
+    readiness_parser.set_defaults(handler=check_pilot_readiness_command)
 
     codec_parser = subparsers.add_parser("benchmark-codec")
     _config_arguments(codec_parser)
@@ -574,7 +574,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser = subparsers.add_parser("train")
     _config_arguments(train_parser)
     train_parser.add_argument("--resume", help="Checkpoint path")
-    train_parser.add_argument("--init-from", help="Warm-start compatible weights from E1")
+    train_parser.add_argument("--init-from", help="Warm-start compatible base weights")
     train_parser.set_defaults(handler=train_command)
     return parser
 

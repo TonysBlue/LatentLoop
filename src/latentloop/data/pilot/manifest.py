@@ -40,7 +40,7 @@ from latentloop.data.pilot.spec import (
 # Episode audio is quantized to PCM16 by ``write_flac``.  Keep a small amount
 # of headroom so quantization cannot turn a nominally safe source peak into a
 # value above the audit gate's -1 dBFS limit.
-EPISODE_AUDIO_VERSION = 2
+EPISODE_FORMAT_VERSION = 3
 TIMELINE_CALIBRATION_VERSION = 2
 AUDIO_PEAK_LIMIT_DBFS = -1.5
 AUDIO_PEAK_LIMIT = 10 ** (AUDIO_PEAK_LIMIT_DBFS / 20.0)
@@ -185,7 +185,7 @@ def _cached_episode(path: Path, recipe_hash: str) -> dict[str, Any] | None:
     record = read_json(path)
     if (
         record.get("recipe_sha256") != recipe_hash
-        or record.get("audio_version") != EPISODE_AUDIO_VERSION
+        or record.get("format_version") != EPISODE_FORMAT_VERSION
         or record.get("timeline_calibration_version") != TIMELINE_CALIBRATION_VERSION
     ):
         return None
@@ -422,7 +422,7 @@ def _compose_plan(
             "voice_registry": registry["registry_sha256"],
             "screen_adapter": screen_command if plan["category"] == "screen_task" else None,
             "fixture": fixture,
-            "audio_version": EPISODE_AUDIO_VERSION,
+            "format_version": EPISODE_FORMAT_VERSION,
             "timeline_calibration_version": TIMELINE_CALIBRATION_VERSION,
         }
     )
@@ -487,9 +487,9 @@ def _compose_plan(
         "mic_audio_sha256": sha256_file(mic_path),
         "target_speech": str(target_path.resolve()),
         "target_speech_sha256": sha256_file(target_path),
-        "source": "e2-generated-computer-dialogue",
+        "source": "generated-computer-dialogue",
         "source_version": "pilot-plan-v1",
-        "source_url": "internal://e2-pilot/text-plans",
+        "source_url": "internal://pilot-data/text-plans",
         "source_utterance_ids": [plan["plan_id"]],
         "source_license": source_license,
         "redistribution_allowed": False,
@@ -507,7 +507,7 @@ def _compose_plan(
         "turns": turns,
         "target_segments": segments,
         "recipe_sha256": recipe_hash,
-        "audio_version": EPISODE_AUDIO_VERSION,
+        "format_version": EPISODE_FORMAT_VERSION,
         "timeline_calibration_version": TIMELINE_CALIBRATION_VERSION,
         "fixture": fixture,
     }
@@ -618,7 +618,7 @@ def _compose_source(
         "turns": turns,
         "target_segments": segments,
         "recipe_sha256": recipe_hash,
-        "audio_version": EPISODE_AUDIO_VERSION,
+        "format_version": EPISODE_FORMAT_VERSION,
         "timeline_calibration_version": TIMELINE_CALIBRATION_VERSION,
         "source_normalization": item.get("normalization"),
         "fixture": fixture,

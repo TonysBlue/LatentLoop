@@ -18,7 +18,7 @@ from latentloop.types import (
 
 
 class SpeechOverfitDataset:
-    """Small deterministic speech-response trajectories for the E2 overfit gate."""
+    """Small deterministic trajectories for the direct-speech overfit gate."""
 
     def __init__(self, data: DataConfig, model: ModelConfig) -> None:
         if data.episode_units < 12:
@@ -43,7 +43,7 @@ class SpeechOverfitDataset:
             for index in range(self.data.episode_units)
         ]
         episode = Episode(
-            episode_id=f"e2-overfit-{episode_index:04d}",
+            episode_id=f"direct-speech-overfit-{episode_index:04d}",
             units=units,
             metadata={
                 "schema_version": self.data.schema_version,
@@ -52,9 +52,9 @@ class SpeechOverfitDataset:
                 "redistribution_allowed": True,
                 "language": "zxx-procedural",
                 "split": "train",
-                "scenario": "e2-codec-overfit-gate",
-                "device_id_hash": "e2-overfit-device",
-                "session_id_hash": f"e2-overfit-session-{episode_index:04d}",
+                "scenario": "direct-speech-codec-overfit-gate",
+                "device_id_hash": "direct-speech-overfit-device",
+                "session_id_hash": f"direct-speech-overfit-session-{episode_index:04d}",
                 "sample_rate": self.data.audio_sample_rate,
                 "unit_ms": self.data.unit_ms,
                 "codec_frame_rate": self.data.codec_frame_rate,

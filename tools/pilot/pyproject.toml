@@ -1,5 +1,5 @@
 [project]
-name = "latentloop-e2-tools"
+name = "latentloop-pilot-tools"
 version = "0.1.0"
 requires-python = ">=3.11,<3.12"
 dependencies = [

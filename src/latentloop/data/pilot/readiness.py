@@ -15,7 +15,7 @@ def _required(path: Path, label: str, missing: list[str]) -> None:
         missing.append(f"{label}: {path}")
 
 
-def check_e2_readiness(
+def check_pilot_readiness(
     root: str | Path,
     *,
     config: ProjectConfig,
@@ -23,7 +23,7 @@ def check_e2_readiness(
     require_checkpoint: str | Path | None = None,
     require_encoded: bool = True,
 ) -> dict[str, Any]:
-    """Fail-closed machine check immediately before launching E2 training."""
+    """Fail-closed machine check immediately before launching Pilot training."""
     root = Path(root).expanduser().resolve()
     missing: list[str] = []
     invalid: list[str] = []
@@ -78,11 +78,11 @@ def check_e2_readiness(
                     invalid.append("initial checkpoint must use format version 2 or 3")
                 metadata = payload.get("metadata", {})
                 if metadata.get("codec_id") != config.data.codec_id:
-                    invalid.append("initial checkpoint codec_id differs from E2 config")
+                    invalid.append("initial checkpoint codec_id differs from Pilot config")
                 if metadata.get("codec_revision") != config.data.codec_revision:
-                    invalid.append("initial checkpoint codec_revision differs from E2 config")
+                    invalid.append("initial checkpoint codec_revision differs from Pilot config")
                 if metadata.get("codec_weight_hash") != config.data.codec_weight_hash:
-                    invalid.append("initial checkpoint codec weight hash differs from E2 config")
+                    invalid.append("initial checkpoint codec weight hash differs from Pilot config")
                 state = payload.get("model", {})
                 if not isinstance(state, dict) or not state:
                     invalid.append("initial checkpoint has no model state")
@@ -103,5 +103,5 @@ def check_e2_readiness(
     write_json(root / "reports" / f"{dataset}-readiness.json", result)
     if not result["passed"]:
         problems = "; ".join(missing + invalid)
-        raise ValueError(f"E2 training readiness failed: {problems}")
+        raise ValueError(f"Pilot training readiness failed: {problems}")
     return result

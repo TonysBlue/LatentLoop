@@ -1,4 +1,7 @@
-# Formal E2 Pilot training after audit, Mimi encoding and validate-data.
+# One-hour Canary: an end-to-end pipeline run after production data audit and
+# Mimi encoding. The default is full training so a missing base checkpoint cannot
+# silently leave a randomly initialized frozen backbone.  For a quality-valid
+# warm start, pass --init-from with a compatible base checkpoint.
 model:
   model_dim: 512
   latent_dim: 512
@@ -27,8 +30,8 @@ model:
   activation_checkpointing: false
 data:
   source: webdataset
-  shards: ~/latentloop-data/e2-pilot/processed/pilot/train/train-*.tar
-  manifest: ~/latentloop-data/e2-pilot/processed/pilot/train/train-manifest.jsonl
+  shards: ~/latentloop-data/pilot-data/processed/canary/train/train-*.tar
+  manifest: ~/latentloop-data/pilot-data/processed/canary/train/train-manifest.jsonl
   schema_version: 2
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
@@ -42,24 +45,26 @@ data:
   screen_height: 224
   screen_width: 224
   episode_units: 32
-  train_episodes: 10000
+  train_episodes: 1000
   seed: 17
 training:
-  max_updates: 100000
+  max_updates: 2000
   learning_rate: 0.0003
   weight_decay: 0.1
   gradient_accumulation_steps: 16
   tbptt_units: 16
   mixed_precision: fp16
   max_grad_norm: 1.0
-  checkpoint_every: 500
+  checkpoint_every: 250
   log_every: 10
   head_learning_rate: 0.0001
   backbone_learning_rate: 0.00003
   warmup_ratio: 0.03
-  codec_scheduled_sampling: 0.25
+  codec_scheduled_sampling: 0.1
   codec_scheduled_sampling_start: 0.7
-  backbone_train_mode: frozen
+  backbone_train_mode: all
+  speech_control_class_weights: [1.0, 4.0, 1.0, 1.0, 4.0]
+  speech_control_loss_weight: 0.5
 tracking:
   enabled: true
   project: latentloop
@@ -69,4 +74,4 @@ tracking:
   media_warning_gb: 40
   media_stop_gb: 50
 runtime:
-  data_root: ~/latentloop-data
+  data_root: ~/latentloop-data/canary-run

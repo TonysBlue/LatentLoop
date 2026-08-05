@@ -267,7 +267,7 @@ def _mimi_report(
     if weight_hash != MIMI_WEIGHT_SHA256:
         raise ValueError("Mimi decode-check used an unexpected weight identity")
     if report.get("codec_id") != MIMI_CODEC_ID or report.get("codec_revision") != MIMI_REVISION:
-        raise ValueError("Mimi decode-check codec identity does not match E2")
+        raise ValueError("Mimi decode-check codec identity does not match the Pilot config")
     return report
 
 
@@ -449,7 +449,7 @@ def audit_pilot_data(
     write_json(reports / "quality-report.json", quality_report)
     write_json(reports / "manifest-hash.json", {"sha256": manifest_hash})
     data_card = (
-        f"# E2 {dataset.title()} Data Card\n\n"
+        f"# {dataset.title()} Data Card\n\n"
         f"- Episodes: {len(records)}\n"
         f"- Timeline hours: {total / 3600:.4f}\n"
         f"- Chinese/English target: 80%/20%\n"
@@ -458,7 +458,7 @@ def audit_pilot_data(
         f"- Computer-assistant timeline: approximately 55%\n"
         f"- Runtime speech path: direct codec generation; no TTS\n"
         f"- Quality gates: automatic only; no manual review ledger\n"
-        f"- E2 exclusions: playback echo, noise augmentation, overlap, interruption, "
+        f"- Exclusions: playback echo, noise augmentation, overlap, interruption, "
         f"and feedback-loop data\n"
         f"- Manifest SHA-256: `{manifest_hash}`\n"
         f"- Audit recipe SHA-256: `{stable_hash({'dataset': dataset, 'fixture': fixture})}`\n"

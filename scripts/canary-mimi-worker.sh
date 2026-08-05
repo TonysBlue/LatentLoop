@@ -2,8 +2,8 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUN_DIR="${E2_RUN_DIR:-$HOME/latentloop-data/run}"
-LOG_DIR="${E2_LOG_DIR:-$HOME/latentloop-data/logs}"
+RUN_DIR="${LATENTLOOP_RUN_DIR:-$HOME/latentloop-data/run}"
+LOG_DIR="${LATENTLOOP_LOG_DIR:-$HOME/latentloop-data/logs}"
 ACTION="${1:-start}"
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 

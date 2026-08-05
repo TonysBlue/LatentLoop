@@ -308,7 +308,7 @@ def _plan(
         duration_class = "long"
         duration_seconds = 32 + index % 9
     category = "screen_task" if fixture and index in {0, 9, 10} else "synthetic_dialogue"
-    # IDs are global within the E2 catalog so Pilot exclusion cannot be bypassed
+    # IDs are global within the data catalog so Pilot exclusion cannot be bypassed
     # by generating Canary and Pilot in separate commands.
     plan_id = f"plan-{language}-{plan_offset + index:04d}"
     template_id = f"{dataset}-{intent}-{split}-v{index % 7}"
@@ -326,7 +326,7 @@ def _plan(
         "target_duration_seconds": duration_seconds,
         "turns": turns,
         # Text plans are generated deterministically and admitted by machine
-        # gates downstream; there is no manual approval state in E2.
+        # gates downstream; there is no manual approval state in this pipeline.
         "quality": {
             "status": "generated",
             "generator": "latentloop-pilot-text-v1",

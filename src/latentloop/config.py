@@ -142,9 +142,9 @@ class ProjectConfig:
         if self.data.codec_codebook_size != self.model.speech_codebook_size:
             raise ValueError("data and model codec vocabularies must match")
         if self.data.unit_ms * self.data.codec_frame_rate != 1_000:
-            raise ValueError("E2 requires exactly one codec frame per stream unit")
+            raise ValueError("direct speech requires exactly one codec frame per stream unit")
         if self.model.speech_frames_per_unit != 1:
-            raise ValueError("E2 requires exactly one speech frame per stream unit")
+            raise ValueError("direct speech requires exactly one speech frame per stream unit")
         if (
             self.model.speech_depth_heads < 1
             or self.model.model_dim % self.model.speech_depth_heads

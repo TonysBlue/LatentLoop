@@ -2,19 +2,19 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ROOT="${E2_ROOT:-$HOME/latentloop-data/e2-pilot}"
-CFG="${E2_CONFIG:-$REPO/configs/e2-canary.yaml}"
-RUN_ROOT="${E2_CANARY_RUN_ROOT:-$HOME/latentloop-data/e2-canary-run}"
-INIT_CHECKPOINT="${E2_INIT_CHECKPOINT:-}"
-MAX_UPDATES="${E2_CANARY_MAX_UPDATES:-2000}"
-TRACKING_MODE="${E2_TRACKING_MODE:-online}"
+ROOT="${PILOT_DATA_ROOT:-$HOME/latentloop-data/pilot-data}"
+CFG="${CANARY_CONFIG:-$REPO/configs/canary.yaml}"
+RUN_ROOT="${CANARY_RUN_ROOT:-$HOME/latentloop-data/canary-run}"
+INIT_CHECKPOINT="${CANARY_INIT_CHECKPOINT:-}"
+MAX_UPDATES="${CANARY_MAX_UPDATES:-2000}"
+TRACKING_MODE="${CANARY_TRACKING_MODE:-online}"
 
 [[ -f "$CFG" ]] || { printf 'Canary config is absent: %s\n' "$CFG" >&2; exit 2; }
 [[ -d "$ROOT" ]] || { printf 'Canary data root is absent: %s\nRun scripts/prepare-canary.sh first.\n' "$ROOT" >&2; exit 2; }
 
 cd "$REPO"
 readiness=(
-  uv run latentloop check-e2-readiness
+  uv run latentloop check-pilot-readiness
   --config "$CFG"
   --root "$ROOT"
   --dataset canary

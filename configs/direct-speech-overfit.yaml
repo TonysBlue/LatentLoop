@@ -26,8 +26,8 @@ model:
   activation_checkpointing: false
 data:
   source: webdataset
-  shards: ~/latentloop-data/e2-overfit/processed/train-*.tar
-  manifest: ~/latentloop-data/e2-overfit/processed/train-manifest.jsonl
+  shards: ~/latentloop-data/direct-speech-overfit/processed/train-*.tar
+  manifest: ~/latentloop-data/direct-speech-overfit/processed/train-manifest.jsonl
   schema_version: 2
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
@@ -70,4 +70,4 @@ tracking:
   media_warning_gb: 40
   media_stop_gb: 50
 runtime:
-  data_root: ~/latentloop-data/e2-overfit-final
+  data_root: ~/latentloop-data/direct-speech-overfit-run

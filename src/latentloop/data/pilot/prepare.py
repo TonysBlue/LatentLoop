@@ -162,7 +162,7 @@ def encode_pilot_shards(
     return report
 
 
-def prepare_e2_pilot(
+def prepare_pilot_data(
     root: str | Path,
     *,
     config: ProjectConfig,
@@ -181,7 +181,7 @@ def prepare_e2_pilot(
     mimi_report_dir: str | Path | None = None,
     dataset: str = "all",
 ) -> dict[str, Any]:
-    """Run all deterministic E2 preparation stages in dependency order."""
+    """Run all deterministic Pilot preparation stages in dependency order."""
     root = Path(root).expanduser().resolve()
     ensure_tree(root)
     fetch = fetch_pilot_data(

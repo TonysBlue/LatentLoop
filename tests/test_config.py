@@ -18,7 +18,7 @@ def test_config_rejects_incompatible_attention_width() -> None:
         load_config("configs/smoke.yaml", ["model.model_dim=63"])
 
 
-def test_e2_config_requires_one_codec_frame_per_tick() -> None:
+def test_direct_speech_requires_one_codec_frame_per_tick() -> None:
     with pytest.raises(ValueError, match="exactly one speech frame"):
         load_config("configs/smoke.yaml", ["model.speech_frames_per_unit=2"])
 

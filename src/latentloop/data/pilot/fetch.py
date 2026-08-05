@@ -38,7 +38,7 @@ def _is_tar_archive(path: Path) -> bool:
 def _download(url: str, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".partial")
-    request = urllib.request.Request(url, headers={"User-Agent": "LatentLoop-E2/0.1"})
+    request = urllib.request.Request(url, headers={"User-Agent": "LatentLoop-Pilot/0.1"})
     with urllib.request.urlopen(request, timeout=60) as response, temporary.open("wb") as output:
         shutil.copyfileobj(response, output)
     temporary.replace(destination)
@@ -149,7 +149,7 @@ def fetch_pilot_data(
         )
     lock = read_json(Path(lock_path).expanduser())
     if set(lock) != set(SOURCE_CATALOG):
-        raise ValueError("source lock must contain exactly the locked E2 source catalog")
+        raise ValueError("source lock must contain exactly the locked Pilot source catalog")
     results = []
     for source_id, expected in SOURCE_CATALOG.items():
         record = lock[source_id]

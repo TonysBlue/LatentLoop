@@ -229,7 +229,7 @@ codebook size    2048
 frame size       80 ms
 ```
 
-E2 起主模型 unit 与 Mimi codec 帧严格对齐，每个 80 ms unit 包含一个有效 codec 帧。因而：
+直接语音路径要求主模型 unit 与 Mimi codec 帧严格对齐，每个 80 ms unit 包含一个有效 codec 帧。因而：
 
 - 每个 unit 输入 1920 个 24 kHz 麦克风采样；
 - `speech_codes` 形状固定为 `[B, 1, 8]`；

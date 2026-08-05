@@ -5,8 +5,8 @@
 TBPTT、精确断点恢复、WebDataset、CPU-only Ray 任务和 W&B Local。
 
 完整架构见 `docs/realtime-multimodal-latent-loop.md`，本地训练设计见
-`docs/local-training-platform.md`。E2 直接流式语音的实现与运行命令见
-`docs/e2-direct-speech.md`。
+`docs/local-training-platform.md`。直接流式语音的实现与运行命令见
+`docs/direct-speech.md`。
 
 ## 环境初始化
 
@@ -43,8 +43,8 @@ uv run latentloop validate-data \
   --shards "$HOME/latentloop-data/processed/train-*.tar"
 ```
 
-E2 的 32 轨迹真实 Mimi 过拟合门禁使用 `configs/e2-overfit.yaml`，完整命令和本机
-验收结果见 [`docs/e2-direct-speech.md`](docs/e2-direct-speech.md)。
+32 轨迹真实 Mimi 过拟合门禁使用 `configs/direct-speech-overfit.yaml`，完整命令和本机
+验收结果见 [`docs/direct-speech.md`](docs/direct-speech.md)。
 
 使用 Ray 的 CPU worker 生成数据：
 
@@ -92,18 +92,18 @@ scripts/backup-wandb.sh
 scripts/wandb-local.sh down
 scripts/restore-wandb.sh ~/latentloop-data/backups/wandb-local-<timestamp>.tar.gz
 ```
-E2 直接流式语音使用 80 ms 主时钟与 Mimi 24 kHz codec。实现和运行命令见
-[`docs/e2-direct-speech.md`](docs/e2-direct-speech.md)。
+直接流式语音使用 80 ms 主时钟与 Mimi 24 kHz codec。实现和运行命令见
+[`docs/direct-speech.md`](docs/direct-speech.md)。
 
-E2 Canary/Pilot 数据准备、外部语料许可证锁、CosyVoice/ASR/屏幕适配器以及自动审计门禁见
-[`docs/e2-pilot-data.md`](docs/e2-pilot-data.md)。本地 fixture 可以在不下载语料和模型的
+Canary/Pilot 数据准备、外部语料许可证锁、CosyVoice/ASR/屏幕适配器以及自动审计门禁见
+[`docs/pilot-data.md`](docs/pilot-data.md)。本地 fixture 可以在不下载语料和模型的
 情况下跑通六个阶段：
 
 真实一小时 Canary 的固定数据下载、TTS/ASR、Mimi 编码、训练和 validation/test 评测
-使用统一入口，完整说明见 [`docs/e2-canary-runbook.md`](docs/e2-canary-runbook.md)：
+使用统一入口，完整说明见 [`docs/canary-runbook.md`](docs/canary-runbook.md)：
 
 ```bash
-E2_CANARY_MAX_UPDATES=5 E2_TRACKING_MODE=offline scripts/run-canary.sh all
+CANARY_MAX_UPDATES=5 CANARY_TRACKING_MODE=offline scripts/run-canary.sh all
 ```
 
 ```bash

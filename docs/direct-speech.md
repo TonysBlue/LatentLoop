@@ -1,10 +1,10 @@
-# E2 直接流式语音实施说明
+# 直接流式语音实施说明
 
 ## 1. 完成边界
 
-E2 将模型时钟固定为 80 ms。每个 tick 接收一路 24 kHz、1920 样本的混合麦克风输入，模型生成一个 Mimi 帧，冻结的因果 decoder 将其转换成 1920 个波形采样。运行路径不经过文本或 TTS。
+直接语音路径将模型时钟固定为 80 ms。每个 tick 接收一路 24 kHz、1920 样本的混合麦克风输入，模型生成一个 Mimi 帧，冻结的因果 decoder 将其转换成 1920 个波形采样。运行路径不经过文本或 TTS。
 
-E2 训练受语音与多模态上下文条件化的直接语音回复。扬声器回流、房间响应、重叠说话和用户打断仍由 E4 实现。输出 codec token 不作为额外输入回灌主干。
+模型训练受语音与多模态上下文条件化的直接语音回复。扬声器回流、房间响应、重叠说话和用户打断由后续声学环境闭环实现。输出 codec token 不作为额外输入回灌主干。
 
 ## 2. 固定 Codec
 
@@ -77,7 +77,7 @@ Schema v2 episode 包含：
 `frames: [N, 3, H, W]` 的 NPZ。一个最小记录如下：
 
 ```json
-{"episode_id":"e2-000001","mic_audio":"audio/e2-000001-mic.wav","target_speech":"audio/e2-000001-target.wav","source":"internal-dialogue-v1","source_license":"internal-research","redistribution_allowed":false,"language":"zh-CN","split":"train","session_id_hash":"sha256:...","scenario":"spoken-response","turns":[]}
+{"episode_id":"direct-speech-000001","mic_audio":"audio/direct-speech-000001-mic.wav","target_speech":"audio/direct-speech-000001-target.wav","source":"internal-dialogue-v1","source_license":"internal-research","redistribution_allowed":false,"language":"zh-CN","split":"train","session_id_hash":"sha256:...","scenario":"spoken-response","turns":[]}
 ```
 
 `source_license` 必须是非空字符串，`redistribution_allowed` 必须是真正的 JSON
@@ -90,7 +90,7 @@ Schema v2 episode 包含：
 ```bash
 uv run latentloop import-speech \
   --config configs/local-25m.yaml \
-  --manifest '~/latentloop-data/sources/e2-10h.jsonl' \
+  --manifest '~/latentloop-data/sources/direct-speech-10h.jsonl' \
   --output '~/latentloop-data/staging/train-%06d.tar'
 
 uv run latentloop encode-speech \
@@ -117,38 +117,38 @@ uv run latentloop validate-data \
 1. Codec gate：流式/离线帧对齐、连续解码、权重 identity 与本机 RTF 全部通过。
 2. 32 轨迹 overfit：冻结主干，仅训练 Speech Head 和 SpeechControl，所有 codebook accuracy 超过 90%。
 3. 10 小时 pilot：Head 训练 3 epoch，再解冻 audio encoder、latent updater、final norm 和顶层 25% Transformer 训练 2 epoch。
-4. 50 小时扩展：Head 训练 1 epoch，选择性联合训练 1 epoch；每 10 batch 插入一个 E1 replay batch。
+4. 50 小时扩展：Head 训练 1 epoch，选择性联合训练 1 epoch；每 10 batch 插入一个状态闭环基础数据 replay batch。
 5. 最后 30% 更新把 scheduled sampling 线性提高至 25%。
 
-使用 `--init-from` 从 E1 checkpoint 加载形状兼容的主干权重；它与严格恢复训练的 `--resume` 互斥。Head LR 为 `1e-4`，解冻主干 LR 为 `3e-5`，3% warmup 后 cosine decay，gradient clipping 为 1.0。
+使用 `--init-from` 从状态闭环基础 checkpoint 加载形状兼容的主干权重；它与严格恢复训练的 `--resume` 互斥。Head LR 为 `1e-4`，解冻主干 LR 为 `3e-5`，3% warmup 后 cosine decay，gradient clipping 为 1.0。
 
 ### 5.1 32 轨迹门禁
 
-`configs/e2-overfit.yaml` 生成 32 条确定性开发轨迹。每条轨迹有 16 个 80 ms
+`configs/direct-speech-overfit.yaml` 生成 32 条确定性开发轨迹。每条轨迹有 16 个 80 ms
 tick：前三个 tick 是单路麦克风提示，第 5 至 12 个 tick 是程序化目标波形，第 13
 个 tick 是 STOP。它用于验证真实 Mimi target、WebDataset、时序状态、Speech Head 和
 SpeechControl 能否闭环，不代表自然语音或开放域对话能力。
 
 ```bash
 uv run latentloop build-overfit-data \
-  --config configs/e2-overfit.yaml \
-  --output '~/latentloop-data/e2-overfit/staging/train-%06d.tar'
+  --config configs/direct-speech-overfit.yaml \
+  --output '~/latentloop-data/direct-speech-overfit/staging/train-%06d.tar'
 
 scripts/codec-worker.sh
 
 uv run latentloop encode-speech \
-  --config configs/e2-overfit.yaml \
-  --shards '~/latentloop-data/e2-overfit/staging/train-*.tar' \
-  --output '~/latentloop-data/e2-overfit/processed/train-%06d.tar' \
+  --config configs/direct-speech-overfit.yaml \
+  --shards '~/latentloop-data/direct-speech-overfit/staging/train-*.tar' \
+  --output '~/latentloop-data/direct-speech-overfit/processed/train-%06d.tar' \
   --socket ~/latentloop-data/run/mimi.sock
 
-uv run latentloop validate-data --config configs/e2-overfit.yaml
-uv run latentloop train --config configs/e2-overfit.yaml
+uv run latentloop validate-data --config configs/direct-speech-overfit.yaml
+uv run latentloop train --config configs/direct-speech-overfit.yaml
 
 uv run latentloop evaluate-overfit \
-  --config configs/e2-overfit.yaml \
-  --checkpoint '~/latentloop-data/e2-overfit-final/checkpoints/step-00000256.pt' \
-  --report '~/latentloop-data/e2-overfit-final/runs/evaluation.json'
+  --config configs/direct-speech-overfit.yaml \
+  --checkpoint '~/latentloop-data/direct-speech-overfit-run/checkpoints/step-00000256.pt' \
+  --report '~/latentloop-data/direct-speech-overfit-run/runs/evaluation.json'
 ```
 
 本机实测 256 updates 用时 264.3 秒，训练峰值为 969 MB allocated、1000 MB
@@ -171,4 +171,4 @@ scheduled sampling 或 sequence-level distillation，并把自由生成指标作
 - 0.0496B 本地主模型加 CUDA codec worker 峰值显存低于 7.5 GiB，codec RTF 小于 1，单帧 p95 小于 80 ms。
 - 推理依赖图中不存在文本生成、TTS、额外音频通道、SelfSpeechTrace 或 codec token 回灌。
 
-这些是 E2 的完成门槛。通用开放域对话能力依赖 E5 的 MiniCPM 迁移，不以本机从零训练模型冒充。
+这些是直接流式语音的完成门槛。通用开放域对话能力依赖后续 MiniCPM 迁移，不以本机从零训练模型冒充。

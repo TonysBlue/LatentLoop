@@ -1,4 +1,4 @@
-# E2 Canary / Pilot 数据流水线
+# Canary / Pilot 数据流水线
 
 这条流水线先构造 1 小时 Canary，再构造独立的 10 小时 Pilot。Canary 的 source
 utterance、plan、speaker、session 和 scenario 都会写入选择账本；Pilot 构建前会读取
@@ -18,12 +18,12 @@ Canary 清单并拒绝任何 source 或 plan 复用。episode 时长是完整时
 短/中/长 episode 为 60%（4–16 s）、25%（16–32 s）、15%（32–60 s）。Pilot 的
 电脑助手时间线约 55%，因为公开真实语音和相邻轮次合计 45%；不把这组配方宣称成 70%。
 
-E2 不加入播放回流、显式噪声增强、重叠说话、打断和反馈环路；这些属于 E4。每个 episode
+当前数据配方不加入播放回流、显式噪声增强、重叠说话、打断和反馈环路；这些由后续声学环境闭环覆盖。每个 episode
 只有一路 `mic_audio`，助手目标只出现在 `target_speech`，运行时不经过 TTS。
 
 ## 产物树
 
-默认根目录为 `~/latentloop-data/e2-pilot`，也可以给每个命令传 `--root`：
+默认根目录为 `~/latentloop-data/pilot-data`，也可以给每个命令传 `--root`：
 
 ```text
 raw/ licenses/ text/ voices/ normalized/ synthesized/
@@ -41,7 +41,7 @@ fixture 不下载公开语料、不冒充 CosyVoice，也不代表模型质量�
 和门禁：
 
 ```bash
-ROOT="$HOME/latentloop-data/e2-pilot-fixture"
+ROOT="$HOME/latentloop-data/pilot-data-fixture"
 CFG=configs/local-25m.yaml
 
 uv run latentloop fetch-pilot-data --config "$CFG" --root "$ROOT" --fixture
@@ -101,10 +101,10 @@ Mimi decode-check 的正式 Pilot。通过后再使用既有 `encode-speech` 生
 不需要人工 review ledger。可以用编排命令自动完成所有数据准备阶段：
 
 ```bash
-ROOT="$HOME/latentloop-data/e2-pilot"
-CFG=configs/e2-pilot.yaml
+ROOT="$HOME/latentloop-data/pilot-data"
+CFG=configs/pilot.yaml
 
-uv run latentloop prepare-e2-pilot --config "$CFG" --root "$ROOT" \
+uv run latentloop prepare-pilot-data --config "$CFG" --root "$ROOT" \
   --lock "$ROOT/raw/source-lock.json" --download --extract \
   --library "$ROOT/voices/voice-library.json" \
   --synth-command 'path/to/cosyvoice-adapter' \
@@ -115,24 +115,24 @@ uv run latentloop prepare-e2-pilot --config "$CFG" --root "$ROOT" \
   --socket "$HOME/latentloop-data/run/mimi.sock" --encode
 ```
 
-`prepare-e2-pilot` 会先完成 Canary 并通过自动审计，再构建排除 Canary 的 Pilot；`--encode`
+`prepare-pilot-data` 会先完成 Canary 并通过自动审计，再构建排除 Canary 的 Pilot；`--encode`
 会为 train、validation、test 生成 staging 和 processed shards。外部数据、CosyVoice、ASR、
 屏幕采集和 Mimi 仍必须提供真实适配器和锁定哈希，命令不会用 fixture 冒充生产产物。
 
 训练前最后执行 fail-closed 检查：
 
 ```bash
-uv run latentloop check-e2-readiness --config "$CFG" --root "$ROOT" \
-  --dataset pilot --checkpoint "$HOME/latentloop-data/checkpoints/e1.pt"
+uv run latentloop check-pilot-readiness --config "$CFG" --root "$ROOT" \
+  --dataset pilot --checkpoint "$HOME/latentloop-data/checkpoints/state-loop.pt"
 ```
 
 该检查确认 audit、三个 split 的 manifest/shard、编码状态、Mimi 报告、初始 checkpoint 和磁盘
 空间；失败时不会进入训练。
 
-编码完成后可以直接使用 `configs/e2-pilot.yaml` 训练（必要时用 `--set` 覆盖根目录）：
+编码完成后可以直接使用 `configs/pilot.yaml` 训练（必要时用 `--set` 覆盖根目录）：
 
 ```bash
-uv run latentloop train --config configs/e2-pilot.yaml \
+uv run latentloop train --config configs/pilot.yaml \
   --set data.shards="$ROOT/processed/pilot/train/train-*.tar" \
   --set data.manifest="$ROOT/processed/pilot/train/train-manifest.jsonl"
 ```

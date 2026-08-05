@@ -2,9 +2,9 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ROOT="${E2_ROOT:-$HOME/latentloop-data/e2-pilot}"
-CACHE="${E2_CANARY_SOURCE_CACHE:-$HOME/latentloop-data/e2-canary-sources}"
-LOCK="${E2_SOURCE_LOCK:-$ROOT/raw/source-lock.json}"
+ROOT="${PILOT_DATA_ROOT:-$HOME/latentloop-data/pilot-data}"
+CACHE="${CANARY_SOURCE_CACHE:-$HOME/latentloop-data/canary-sources}"
+LOCK="${PILOT_SOURCE_LOCK:-$ROOT/raw/source-lock.json}"
 LICENSES="$ROOT/raw/license-records"
 
 mkdir -p "$ROOT/raw" "$LICENSES" "$CACHE"
@@ -86,7 +86,7 @@ download \
   "$ROOT/voices/bootstrap/zero_shot_prompt.wav" \
   "c7b31d6dbe7cc6a716dded00550db5b50940bf209e424e4ad207b12e657c8ff6"
 
-uv run --project "$REPO/tools/e2" python "$REPO/tools/e2/write_source_lock.py" \
+uv run --project "$REPO/tools/pilot" python "$REPO/tools/pilot/write_source_lock.py" \
   --root "$ROOT" --cache "$CACHE" --output "$LOCK"
 
 printf 'Canary public sources and lock are ready: %s\n' "$LOCK"

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MODEL_ROOT="${E2_MODEL_ROOT:-$HOME/latentloop-data/models}"
-SOURCE_ROOT="${E2_SOURCE_ROOT:-$HOME/latentloop-data/vendor}"
+MODEL_ROOT="${LATENTLOOP_MODEL_ROOT:-$HOME/latentloop-data/models}"
+SOURCE_ROOT="${LATENTLOOP_VENDOR_ROOT:-$HOME/latentloop-data/vendor}"
 COSY_MODEL="$MODEL_ROOT/CosyVoice2-0.5B"
 SENSE_MODEL="$MODEL_ROOT/SenseVoiceSmall"
 COSY_SOURCE="$SOURCE_ROOT/CosyVoice"
