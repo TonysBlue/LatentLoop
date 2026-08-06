@@ -49,9 +49,7 @@ class DataConfig:
     audio_sample_rate: int = 24_000
     codec_frame_rate: float = 12.5
     codec_id: str = "mimi-24khz-8x2048"
-    codec_weight_hash: str = (
-        "09b782f0629851a271227fb9d36db65c041790365f11bbe5d3d59369cf863f50"
-    )
+    codec_weight_hash: str = "09b782f0629851a271227fb9d36db65c041790365f11bbe5d3d59369cf863f50"
     codec_revision: str = "a49141e28b3d9c947cf9aa5314431e1b11cbd2f5"
     codec_codebooks: int = 8
     codec_codebook_size: int = 2048
@@ -81,10 +79,21 @@ class TrainingConfig:
     codec_scheduled_sampling: float = 0.0
     codec_scheduled_sampling_start: float = 0.7
     backbone_train_mode: str = "all"
-    speech_control_class_weights: list[float] = field(
-        default_factory=lambda: [1.0] * 5
-    )
+    speech_control_class_weights: list[float] = field(default_factory=lambda: [1.0] * 5)
     speech_control_loss_weight: float = 0.25
+    # A balanced window stream is used by production speech runs.  Smoke
+    # fixtures can opt out when they specifically test sequential resume.
+    balanced_sampling: bool = True
+    window_units: int = 16
+    warmup_units: int = 16
+    # Windows containing assistant speech targets (the assistant is talking).
+    talking_windows_per_update: int = 8
+    boundary_windows_per_update: int = 2
+    # Windows with no assistant speech target. MIC may still contain sound.
+    silent_windows_per_update: int = 6
+    min_speech_frames_per_update: int = 64
+    latent_write_loss_weight: float = 0.0
+    min_learning_rate_ratio: float = 0.1
 
 
 @dataclass(slots=True)
@@ -152,19 +161,49 @@ class ProjectConfig:
             raise ValueError("model_dim must be divisible by speech_depth_heads")
         if self.training.tbptt_units < 1:
             raise ValueError("tbptt_units must be positive")
+        if (
+            self.training.balanced_sampling
+            and self.training.window_units != self.training.tbptt_units
+        ):
+            raise ValueError("balanced sampling requires window_units == tbptt_units")
         if not 0 <= self.training.codec_scheduled_sampling <= 1:
             raise ValueError("codec_scheduled_sampling must be in [0, 1]")
         if not 0 <= self.training.codec_scheduled_sampling_start < 1:
             raise ValueError("codec_scheduled_sampling_start must be in [0, 1)")
         if self.training.backbone_train_mode not in {"frozen", "selective", "all"}:
             raise ValueError("backbone_train_mode must be frozen, selective, or all")
-        if (
-            len(self.training.speech_control_class_weights) != 5
-            or any(weight <= 0 for weight in self.training.speech_control_class_weights)
+        if len(self.training.speech_control_class_weights) != 5 or any(
+            weight <= 0 for weight in self.training.speech_control_class_weights
         ):
             raise ValueError("speech_control_class_weights must contain five positive values")
         if self.training.speech_control_loss_weight <= 0:
             raise ValueError("speech_control_loss_weight must be positive")
+        if self.training.window_units < 1 or self.training.warmup_units < 0:
+            raise ValueError("window_units must be positive and warmup_units non-negative")
+        if any(
+            value < 0
+            for value in (
+                self.training.talking_windows_per_update,
+                self.training.boundary_windows_per_update,
+                self.training.silent_windows_per_update,
+            )
+        ):
+            raise ValueError("balanced sampling window counts cannot be negative")
+        if self.training.balanced_sampling and (
+            self.training.talking_windows_per_update
+            + self.training.boundary_windows_per_update
+            + self.training.silent_windows_per_update
+            != self.training.gradient_accumulation_steps
+        ):
+            raise ValueError(
+                "balanced sampling window counts must equal gradient_accumulation_steps"
+            )
+        if self.training.min_speech_frames_per_update < 0:
+            raise ValueError("min_speech_frames_per_update cannot be negative")
+        if self.training.latent_write_loss_weight < 0:
+            raise ValueError("latent_write_loss_weight cannot be negative")
+        if not 0 <= self.training.min_learning_rate_ratio <= 1:
+            raise ValueError("min_learning_rate_ratio must be in [0, 1]")
         if not 0 <= self.training.warmup_ratio < 1:
             raise ValueError("warmup_ratio must be in [0, 1)")
         if self.training.mixed_precision not in {"no", "fp16"}:

@@ -10,7 +10,7 @@ from latentloop.checkpoint import file_sha256
 from latentloop.config import ProjectConfig
 from latentloop.data import EpisodeShardReader
 from latentloop.model import StreamingLatentLoop
-from latentloop.types import SpeechSamplingConfig
+from latentloop.types import SpeechControl, SpeechSamplingConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +23,14 @@ class OverfitEvaluation:
     speech_control_accuracy: float
     speech_control_per_class_f1: list[float]
     speech_control_confusion: list[list[int]]
+    speech_control_start_f1: float
+    speech_control_stop_f1: float
+    speech_control_balanced_accuracy: float
+    speech_control_boundary_frames: int
+    autoregressive_speech_control_macro_f1: float
+    autoregressive_speech_control_accuracy: float
+    autoregressive_speech_control_per_class_f1: list[float]
+    autoregressive_speech_control_confusion: list[list[int]]
     passed: bool
 
 
@@ -36,6 +44,14 @@ class CanaryEvaluation:
     speech_control_accuracy: float
     speech_control_per_class_f1: list[float]
     speech_control_confusion: list[list[int]]
+    speech_control_start_f1: float
+    speech_control_stop_f1: float
+    speech_control_balanced_accuracy: float
+    speech_control_boundary_frames: int
+    autoregressive_speech_control_macro_f1: float
+    autoregressive_speech_control_accuracy: float
+    autoregressive_speech_control_per_class_f1: list[float]
+    autoregressive_speech_control_confusion: list[list[int]]
 
 
 class _ClassificationCounts:
@@ -46,9 +62,19 @@ class _ClassificationCounts:
         predictions = predictions.detach().long().cpu().flatten()
         targets = targets.detach().long().cpu().flatten()
         indices = targets * self.matrix.shape[0] + predictions
-        self.matrix += torch.bincount(
-            indices, minlength=self.matrix.numel()
-        ).reshape_as(self.matrix)
+        self.matrix += torch.bincount(indices, minlength=self.matrix.numel()).reshape_as(
+            self.matrix
+        )
+
+    def balanced_accuracy(self) -> float:
+        actual = self.matrix.sum(dim=1).float()
+        recall = self.matrix.diag().float() / actual.clamp_min(1)
+        included = actual > 0
+        return float(recall[included].mean()) if included.any() else 0.0
+
+    def class_f1(self, index: int) -> float:
+        values, _ = self.f1()
+        return float(values[index])
 
     def accuracy(self) -> float:
         return float(self.matrix.diag().sum() / self.matrix.sum().clamp_min(1))
@@ -104,9 +130,7 @@ def evaluate_overfit_checkpoint(
     codec_threshold: float = 0.9,
     control_f1_threshold: float = 0.9,
 ) -> OverfitEvaluation:
-    selected_device = torch.device(
-        device or ("cuda:0" if torch.cuda.is_available() else "cpu")
-    )
+    selected_device = torch.device(device or ("cuda:0" if torch.cuda.is_available() else "cpu"))
     model = load_evaluation_model(config, checkpoint, selected_device)
     if config.data.shards is None:
         raise ValueError("overfit evaluation requires WebDataset shards")
@@ -114,12 +138,12 @@ def evaluate_overfit_checkpoint(
     autoregressive_correct = torch.zeros_like(teacher_correct)
     valid_frames = 0
     control = _ClassificationCounts(5)
+    autoregressive_control = _ClassificationCounts(5)
+    boundary_frames = start_count = stop_count = 0
     episodes = 0
 
     with torch.inference_mode():
-        for episode in EpisodeShardReader(
-            config.data.shards, config.data, config.model
-        ):
+        for episode in EpisodeShardReader(config.data.shards, config.data, config.model):
             episodes += 1
             teacher_state = model.initial_state(1, selected_device)
             autoregressive_state = model.initial_state(1, selected_device)
@@ -135,6 +159,13 @@ def evaluate_overfit_checkpoint(
                     teacher_state.speech_local.utterance_active,
                 )
                 control.add(predicted_control, unit.control_target.speech)
+                if bool(unit.speech_control_mask.item()):
+                    control_value = int(unit.control_target.speech.item())
+                    boundary_frames += int(
+                        control_value in (int(SpeechControl.START), int(SpeechControl.STOP))
+                    )
+                    start_count += int(control_value == int(SpeechControl.START))
+                    stop_count += int(control_value == int(SpeechControl.STOP))
                 teacher_state = teacher.state
 
                 generated = model.generate_step(
@@ -143,16 +174,17 @@ def evaluate_overfit_checkpoint(
                     SpeechSamplingConfig(greedy=True),
                 )
                 autoregressive_state = generated.output.state
+                autoregressive_control.add(generated.speech_control, unit.control_target.speech)
                 mask = unit.speech_mask[:, :, None]
                 if mask.any():
                     targets = unit.speech_codes
                     teacher_predictions = teacher.speech_logits.argmax(dim=-1)
                     teacher_correct += (
-                        teacher_predictions.eq(targets) & mask
-                    ).sum(dim=(0, 1)).cpu()
+                        (teacher_predictions.eq(targets) & mask).sum(dim=(0, 1)).cpu()
+                    )
                     autoregressive_correct += (
-                        generated.speech_codes.eq(targets) & mask
-                    ).sum(dim=(0, 1)).cpu()
+                        (generated.speech_codes.eq(targets) & mask).sum(dim=(0, 1)).cpu()
+                    )
                     valid_frames += int(unit.speech_mask.sum().item())
 
     if episodes == 0 or valid_frames == 0:
@@ -171,6 +203,14 @@ def evaluate_overfit_checkpoint(
         speech_control_accuracy=control.accuracy(),
         speech_control_per_class_f1=control_per_class.tolist(),
         speech_control_confusion=control.matrix.tolist(),
+        speech_control_start_f1=control.class_f1(int(SpeechControl.START)),
+        speech_control_stop_f1=control.class_f1(int(SpeechControl.STOP)),
+        speech_control_balanced_accuracy=control.balanced_accuracy(),
+        speech_control_boundary_frames=boundary_frames,
+        autoregressive_speech_control_macro_f1=autoregressive_control.macro_f1(),
+        autoregressive_speech_control_accuracy=autoregressive_control.accuracy(),
+        autoregressive_speech_control_per_class_f1=autoregressive_control.f1()[0].tolist(),
+        autoregressive_speech_control_confusion=autoregressive_control.matrix.tolist(),
         passed=passed,
     )
 
@@ -184,22 +224,21 @@ def evaluate_canary_checkpoint(
 ) -> CanaryEvaluation:
     if split not in {"validation", "test"}:
         raise ValueError("Canary evaluation split must be validation or test")
-    selected_device = torch.device(
-        device or ("cuda:0" if torch.cuda.is_available() else "cpu")
-    )
-    model = load_evaluation_model(
-        config, checkpoint, selected_device, require_data_identity=False
-    )
+    selected_device = torch.device(device or ("cuda:0" if torch.cuda.is_available() else "cpu"))
+    model = load_evaluation_model(config, checkpoint, selected_device, require_data_identity=False)
     if config.data.shards is None:
         raise ValueError("Canary evaluation requires WebDataset shards")
     teacher_correct = torch.zeros(config.model.speech_codebooks, dtype=torch.long)
     valid_frames = 0
     control = _ClassificationCounts(5)
+    autoregressive_control = _ClassificationCounts(5)
+    boundary_frames = start_count = stop_count = 0
     episodes = 0
     with torch.inference_mode():
         for episode in EpisodeShardReader(config.data.shards, config.data, config.model):
             episodes += 1
             state = model.initial_state(1, selected_device)
+            autoregressive_state = model.initial_state(1, selected_device)
             for raw_unit in episode.units:
                 unit = raw_unit.to(selected_device)
                 if selected_device.type == "cuda":
@@ -210,12 +249,28 @@ def evaluate_canary_checkpoint(
                     output.controls.speech_logits, state.speech_local.utterance_active
                 )
                 control.add(predicted_control, unit.control_target.speech)
+                generated = model.generate_step(
+                    unit,
+                    autoregressive_state,
+                    SpeechSamplingConfig(greedy=True),
+                )
+                autoregressive_state = generated.output.state
+                autoregressive_control.add(generated.speech_control, unit.control_target.speech)
+                if bool(unit.speech_control_mask.item()):
+                    control_value = int(unit.control_target.speech.item())
+                    boundary_frames += int(
+                        control_value in (int(SpeechControl.START), int(SpeechControl.STOP))
+                    )
+                    start_count += int(control_value == int(SpeechControl.START))
+                    stop_count += int(control_value == int(SpeechControl.STOP))
                 state = output.state
                 mask = unit.speech_mask[:, :, None]
                 if mask.any():
                     teacher_correct += (
-                        output.speech_logits.argmax(dim=-1).eq(unit.speech_codes) & mask
-                    ).sum(dim=(0, 1)).cpu()
+                        (output.speech_logits.argmax(dim=-1).eq(unit.speech_codes) & mask)
+                        .sum(dim=(0, 1))
+                        .cpu()
+                    )
                     valid_frames += int(unit.speech_mask.sum().item())
     if episodes == 0 or valid_frames == 0:
         raise ValueError("Canary evaluation dataset contains no valid speech frames")
@@ -229,4 +284,12 @@ def evaluate_canary_checkpoint(
         speech_control_accuracy=control.accuracy(),
         speech_control_per_class_f1=per_class.tolist(),
         speech_control_confusion=control.matrix.tolist(),
+        speech_control_start_f1=control.class_f1(int(SpeechControl.START)),
+        speech_control_stop_f1=control.class_f1(int(SpeechControl.STOP)),
+        speech_control_balanced_accuracy=control.balanced_accuracy(),
+        speech_control_boundary_frames=boundary_frames,
+        autoregressive_speech_control_macro_f1=autoregressive_control.macro_f1(),
+        autoregressive_speech_control_accuracy=autoregressive_control.accuracy(),
+        autoregressive_speech_control_per_class_f1=autoregressive_control.f1()[0].tolist(),
+        autoregressive_speech_control_confusion=autoregressive_control.matrix.tolist(),
     )

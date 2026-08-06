@@ -16,6 +16,7 @@ def compute_losses(
     target: StreamUnit,
     speech_control_weights: Tensor | None = None,
     speech_control_loss_weight: float = 0.25,
+    latent_write_loss_weight: float = 0.0,
 ) -> dict[str, Tensor]:
     batch, frames, codebooks, codebook_size = output.speech_logits.shape
     speech = F.cross_entropy(
@@ -53,9 +54,7 @@ def compute_losses(
             action.scroll_delta.to(output.action.scroll_delta.dtype),
             reduction="none",
         ),
-        (action.scroll_mask & target.action_mask)[:, None].expand_as(
-            output.action.scroll_delta
-        ),
+        (action.scroll_mask & target.action_mask)[:, None].expand_as(output.action.scroll_delta),
     )
     action_duration = _masked_mean(
         F.smooth_l1_loss(
@@ -71,18 +70,14 @@ def compute_losses(
         action.text_tokens.reshape(-1),
         reduction="none",
     ).view_as(action.text_tokens)
-    action_text = _masked_mean(
-        action_text_values, action.text_mask & target.action_mask[:, None]
-    )
+    action_text = _masked_mean(action_text_values, action.text_mask & target.action_mask[:, None])
     action_keys = _masked_mean(
         F.binary_cross_entropy_with_logits(
             output.action.key_logits,
             action.key_mask.to(output.action.key_logits.dtype),
             reduction="none",
         ),
-        ((action.type == 7) & target.action_mask)[:, None].expand_as(
-            output.action.key_logits
-        ),
+        ((action.type == 7) & target.action_mask)[:, None].expand_as(output.action.key_logits),
     )
     speech_control = _masked_mean(
         F.cross_entropy(
@@ -122,7 +117,7 @@ def compute_losses(
         + speech_control_loss_weight * speech_control
         + 0.25 * (action_control + cognitive_control)
         + memory
-        + 0.01 * write_budget
+        + latent_write_loss_weight * write_budget
     )
     return {
         "total": total,

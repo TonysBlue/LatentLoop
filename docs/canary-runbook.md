@@ -91,6 +91,16 @@ CANARY_INIT_CHECKPOINT="$HOME/latentloop-data/checkpoints/state-loop.pt" \
 CANARY_MAX_UPDATES=2000 scripts/run-canary.sh train
 ```
 
+Canary 默认使用均衡窗口训练：每个 optimizer update 由 16 个 16-unit 目标窗口组成，
+其中 8 个是助手正在说话的窗口（`talking`）、2 个优先覆盖 START/STOP（`boundary`）、6 个是助手静音目标窗口（`silent`）。
+这里的“静音”只描述助手输出目标，不代表 MIC_MIXED 没有声音；窗口仍可能包含用户语音、播放回流、
+其他说话人和环境噪声。
+每个目标窗口前最多回放 16 个 warmup unit，只建立 KV/latent 状态，不计入损失。W&B 中
+`speech/valid_frames`、`speech/no_speech_chunks`、`speech/control_start_count` 和
+`speech/control_stop_count` 用于区分有效监督与静音目标窗口；没有有效语音帧时 codec 指标为
+`NaN`，不再以 0 混淆。`latent_write_loss_weight` 默认是 0，避免 gate 被正则项压到关闭；
+cosine 学习率最低保持为初始值的 10%。
+
 ## 验收产物
 
 成功的一键短闭环至少包含：

@@ -59,8 +59,17 @@ training:
   codec_scheduled_sampling: 0.0
   codec_scheduled_sampling_start: 0.7
   backbone_train_mode: frozen
-  speech_control_class_weights: [1.0, 7.0, 1.0, 1.0, 7.0]
+  speech_control_class_weights: [1.0, 16.0, 1.0, 1.0, 16.0]
   speech_control_loss_weight: 1.0
+  balanced_sampling: true
+  window_units: 16
+  warmup_units: 16
+  talking_windows_per_update: 1
+  boundary_windows_per_update: 0
+  silent_windows_per_update: 0
+  min_speech_frames_per_update: 1
+  latent_write_loss_weight: 0.0
+  min_learning_rate_ratio: 0.1
 tracking:
   enabled: false
   project: latentloop

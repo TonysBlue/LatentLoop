@@ -68,9 +68,7 @@ def train_summary(report_path: Path, checkpoint: Path) -> None:
     metrics = report["metrics"]
     tracking = report.get("tracking", {})
     codec_values = [
-        float(value)
-        for key, value in metrics.items()
-        if key.startswith("speech/codec_accuracy_q")
+        float(value) for key, value in metrics.items() if key.startswith("speech/codec_accuracy_q")
     ]
     line("Updates", str(state["update"]))
     line(
@@ -84,6 +82,23 @@ def train_summary(report_path: Path, checkpoint: Path) -> None:
         "Last metrics",
         f"loss {metrics.get('train/loss_total', 0.0):.4f}, "
         f"mean codec accuracy {sum(codec_values) / max(len(codec_values), 1):.4f}",
+    )
+    line(
+        "Supervision",
+        f"{metrics.get('speech/valid_frames', 0.0):.0f} speech frames, "
+        f"{metrics.get('speech/active_unit_fraction', 0.0):.1%} active units, "
+        f"{metrics.get('speech/no_speech_chunks', 0.0):.0f} context windows",
+    )
+    line(
+        "Speech boundaries",
+        f"{metrics.get('speech/control_boundary_frames', 0.0):.0f} total, "
+        f"{metrics.get('speech/control_start_count', 0.0):.0f} START, "
+        f"{metrics.get('speech/control_stop_count', 0.0):.0f} STOP",
+    )
+    line(
+        "Latent gate",
+        f"mean {metrics.get('latent/gate_mean', 0.0):.4f}; "
+        f"windows {metrics.get('data/update_windows', 0.0):.0f}",
     )
     line("Checkpoint", str(checkpoint))
     tracking_mode = tracking.get("effective_mode")
@@ -106,7 +121,11 @@ def evaluate_summary(run_root: Path, max_updates: int) -> None:
             f"{report['episodes']} episodes, macro-F1 "
             f"{report['speech_control_macro_f1']:.3f}, control accuracy "
             f"{report['speech_control_accuracy']:.3f}, mean codec accuracy "
-            f"{sum(codec) / max(len(codec), 1):.4f}",
+            f"{sum(codec) / max(len(codec), 1):.4f}, "
+            f"START F1 {report.get('speech_control_start_f1', 0.0):.3f}, "
+            f"STOP F1 {report.get('speech_control_stop_f1', 0.0):.3f}, "
+            f"balanced accuracy {report.get('speech_control_balanced_accuracy', 0.0):.3f}, "
+            f"AR macro-F1 {report.get('autoregressive_speech_control_macro_f1', 0.0):.3f}",
         )
     if max_updates <= 5:
         line("Quality", "pipeline smoke test only; model is not converged")

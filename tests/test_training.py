@@ -2,7 +2,29 @@ from __future__ import annotations
 
 from latentloop.config import ProjectConfig
 from latentloop.data import SyntheticEpisodeDataset, write_episode_shards
-from latentloop.training import train
+from latentloop.training import build_balanced_windows, train
+
+
+class _RecordingTracker:
+    def __init__(self, *args, **kwargs) -> None:
+        self.logs: list[tuple[dict[str, float], int]] = []
+
+    def log(self, metrics: dict[str, float], step: int) -> None:
+        self.logs.append((metrics, step))
+
+    def record_checkpoint(self, path, digest: str, step: int) -> None:
+        pass
+
+    def finish(self) -> None:
+        pass
+
+    @property
+    def effective_mode(self) -> None:
+        return None
+
+    @property
+    def run_url(self) -> None:
+        return None
 
 
 def test_smoke_training_and_atomic_checkpoint(smoke_config: ProjectConfig) -> None:
@@ -18,6 +40,22 @@ def test_smoke_training_and_atomic_checkpoint(smoke_config: ProjectConfig) -> No
     assert result["tracking"]["run_url"] is None
     assert checkpoints
     assert not list(checkpoint_dir.glob("*.tmp.pt"))
+
+
+def test_short_training_logs_final_metrics(smoke_config: ProjectConfig, monkeypatch) -> None:
+    smoke_config.training.max_updates = 2
+    smoke_config.training.log_every = 10
+    tracker = _RecordingTracker()
+    monkeypatch.setattr("latentloop.training.Tracker", lambda *args, **kwargs: tracker)
+
+    train(smoke_config)
+
+    assert tracker.logs
+    final_metrics, final_step = tracker.logs[-1]
+    assert final_step == 2
+    assert "train/loss_total" in final_metrics
+    assert "speech/codec_accuracy_q0" in final_metrics
+    assert "runtime/elapsed_seconds" in final_metrics
 
 
 def test_interrupted_training_matches_continuous_training(
@@ -42,6 +80,7 @@ def test_gradient_accumulation_tracks_all_consumed_units(
     smoke_config: ProjectConfig,
 ) -> None:
     smoke_config.training.gradient_accumulation_steps = 2
+    smoke_config.training.talking_windows_per_update = 2
     smoke_config.training.max_updates = 2
     smoke_config.training.checkpoint_every = 1
 
@@ -57,6 +96,7 @@ def test_gradient_accumulation_resume_matches_continuous_training(
     smoke_config: ProjectConfig,
 ) -> None:
     smoke_config.training.gradient_accumulation_steps = 2
+    smoke_config.training.talking_windows_per_update = 2
     smoke_config.training.max_updates = 2
     smoke_config.training.checkpoint_every = 1
     continuous = train(smoke_config)
@@ -74,9 +114,63 @@ def test_gradient_accumulation_resume_matches_continuous_training(
         assert value.equal(continuous_state[name]), name
 
 
+def test_balanced_windows_have_requested_mix(smoke_config: ProjectConfig) -> None:
+    smoke_config.training.balanced_sampling = True
+    smoke_config.training.window_units = 2
+    smoke_config.training.tbptt_units = 2
+    smoke_config.training.gradient_accumulation_steps = 4
+    smoke_config.training.talking_windows_per_update = 2
+    smoke_config.training.boundary_windows_per_update = 1
+    smoke_config.training.silent_windows_per_update = 1
+    smoke_config.training.min_speech_frames_per_update = 2
+
+    episodes = list(SyntheticEpisodeDataset(smoke_config.data, smoke_config.model))
+    schedule = build_balanced_windows(episodes, smoke_config, epoch=0)
+
+    assert len(schedule) % 4 == 0
+    for offset in range(0, len(schedule), 4):
+        batch = schedule[offset : offset + 4]
+        # Synthetic trajectories have no START/STOP boundary pool, so the
+        # requested boundary/silent slots deterministically fall back to the
+        # talking pool.
+        assert len(batch) == 4
+        assert sum(window.kind == "talking" for window in batch) >= 2
+        assert sum(window.speech_frames for window in batch) >= 2
+
+
+def test_balanced_training_resume_matches_continuous(
+    smoke_config: ProjectConfig,
+) -> None:
+    smoke_config.training.balanced_sampling = True
+    smoke_config.training.window_units = 2
+    smoke_config.training.tbptt_units = 2
+    smoke_config.training.gradient_accumulation_steps = 1
+    smoke_config.training.talking_windows_per_update = 1
+    smoke_config.training.boundary_windows_per_update = 0
+    smoke_config.training.silent_windows_per_update = 0
+    smoke_config.training.min_speech_frames_per_update = 1
+    smoke_config.data.train_episodes = 8
+    smoke_config.training.max_updates = 3
+    smoke_config.training.checkpoint_every = 1
+    continuous = train(smoke_config)
+    continuous_state = {
+        name: value.detach().clone() for name, value in continuous["model"].state_dict().items()
+    }
+
+    interrupted = train(smoke_config, stop_after_updates=1)
+    checkpoint = smoke_config.runtime.root_path() / "checkpoints" / "step-00000001.pt"
+    resumed = train(smoke_config, resume=str(checkpoint))
+
+    assert interrupted["train_state"]["update"] == 1
+    assert resumed["train_state"]["update"] == 3
+    for name, value in resumed["model"].state_dict().items():
+        assert value.equal(continuous_state[name]), name
+
+
 def test_webdataset_resume_across_shards_matches_continuous_training(
     smoke_config: ProjectConfig,
 ) -> None:
+    smoke_config.training.balanced_sampling = False
     smoke_config.data.episode_units = 4
     smoke_config.data.train_episodes = 2
     episodes = list(SyntheticEpisodeDataset(smoke_config.data, smoke_config.model))
