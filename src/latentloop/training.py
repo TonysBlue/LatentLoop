@@ -172,6 +172,7 @@ def train(
         stop_after_updates if stop_after_updates is not None else config.training.max_updates,
     )
     last_checkpoint_update = 0
+    tracking: dict[str, str | None] = {}
     try:
         epoch = cursor.epoch
         while train_state["update"] < target_updates:
@@ -249,9 +250,9 @@ def train(
                             accelerator.clip_grad_norm_(
                                 model.parameters(), config.training.max_grad_norm
                             )
-                        optimizer.step()
-                        scheduler.step()
-                        optimizer.zero_grad(set_to_none=True)
+                            optimizer.step()
+                            scheduler.step()
+                            optimizer.zero_grad(set_to_none=True)
                     assert output is not None
                     recurrent = recurrent.detach()
                     next_unit = chunk_start + len(chunk)
@@ -381,11 +382,17 @@ def train(
         last_metrics.update(runtime_metrics)
         if accelerator.is_main_process and train_state["update"]:
             tracker.log(runtime_metrics, train_state["update"])
+        tracking = {
+            "requested_mode": config.tracking.mode,
+            "effective_mode": tracker.effective_mode,
+            "run_url": tracker.run_url,
+        }
         tracker.finish()
     return {
         "train_state": train_state,
         "data_cursor": cursor,
         "metrics": last_metrics,
+        "tracking": tracking,
         "model": model,
     }
 

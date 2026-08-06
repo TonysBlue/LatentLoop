@@ -69,6 +69,15 @@ def _codec_client(config: ProjectConfig, socket_path: str) -> CodecWorkerClient:
     )
 
 
+def _emit_json_report(value: object, path: str | None = None) -> None:
+    report = json.dumps(value, indent=2)
+    if path:
+        report_path = Path(path).expanduser()
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report + "\n", encoding="utf-8")
+    print(report)
+
+
 def inspect_model(args: argparse.Namespace) -> int:
     config = _load(args)
     model = StreamingLatentLoop(config.model)
@@ -321,7 +330,10 @@ def benchmark_codec(args: argparse.Namespace) -> int:
         generator=generator,
     )
     result = benchmark_decoder(client, codes)
-    print(json.dumps({"health": health, "benchmark": asdict(result)}, indent=2))
+    _emit_json_report(
+        {"health": health, "benchmark": asdict(result)},
+        args.report,
+    )
     return int(result.rtf >= 1 or result.p95_frame_ms >= config.data.unit_ms)
 
 
@@ -379,12 +391,7 @@ def evaluate_overfit(args: argparse.Namespace) -> int:
         codec_threshold=args.codec_threshold,
         control_f1_threshold=args.control_f1_threshold,
     )
-    report = json.dumps(asdict(result), indent=2)
-    if args.report:
-        report_path = Path(args.report).expanduser()
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(report + "\n", encoding="utf-8")
-    print(report)
+    _emit_json_report(asdict(result), args.report)
     return int(not result.passed)
 
 
@@ -393,23 +400,20 @@ def evaluate_canary(args: argparse.Namespace) -> int:
     result = evaluate_canary_checkpoint(
         config, args.checkpoint, split=args.split, device=args.device
     )
-    report = json.dumps(asdict(result), indent=2)
-    if args.report:
-        report_path = Path(args.report).expanduser()
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(report + "\n", encoding="utf-8")
-    print(report)
+    _emit_json_report(asdict(result), args.report)
     return 0
 
 
 def train_command(args: argparse.Namespace) -> int:
     config = _load(args)
     result = train(config, resume=args.resume, init_from=args.init_from)
-    print(
-        json.dumps(
-            {"train_state": result["train_state"], "metrics": result["metrics"]},
-            indent=2,
-        )
+    _emit_json_report(
+        {
+            "train_state": result["train_state"],
+            "metrics": result["metrics"],
+            "tracking": result["tracking"],
+        },
+        args.report,
     )
     return 0
 
@@ -543,6 +547,7 @@ def build_parser() -> argparse.ArgumentParser:
     _config_arguments(codec_parser)
     codec_parser.add_argument("--socket", required=True, help="Mimi worker Unix socket")
     codec_parser.add_argument("--frames", type=int, default=250)
+    codec_parser.add_argument("--report", help="Optional JSON report path")
     codec_parser.set_defaults(handler=benchmark_codec)
 
     stream_parser = subparsers.add_parser("benchmark-stream")
@@ -575,6 +580,7 @@ def build_parser() -> argparse.ArgumentParser:
     _config_arguments(train_parser)
     train_parser.add_argument("--resume", help="Checkpoint path")
     train_parser.add_argument("--init-from", help="Warm-start compatible base weights")
+    train_parser.add_argument("--report", help="Optional JSON report path")
     train_parser.set_defaults(handler=train_command)
     return parser
 

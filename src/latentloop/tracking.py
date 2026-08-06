@@ -132,6 +132,12 @@ class Tracker:
             return self._effective_mode
         return str(self.run.summary.get("tracking/effective_mode"))
 
+    @property
+    def run_url(self) -> str | None:
+        if self.run is None:
+            return None
+        return self.run.url
+
     def media_allowed(self) -> bool:
         if self.run is None and self._effective_mode is None:
             return False

@@ -19,6 +19,7 @@ def test_tracker_falls_back_to_offline_without_server(
     )
     try:
         assert tracker.effective_mode == "offline"
+        assert tracker.run_url is None
         assert tracker.media_allowed()
     finally:
         tracker.finish()

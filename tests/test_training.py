@@ -13,6 +13,9 @@ def test_smoke_training_and_atomic_checkpoint(smoke_config: ProjectConfig) -> No
     assert "train/loss_total" in result["metrics"]
     assert result["metrics"]["runtime/elapsed_seconds"] > 0
     assert result["metrics"]["runtime/units_per_second"] > 0
+    assert result["tracking"]["requested_mode"] == smoke_config.tracking.mode
+    assert result["tracking"]["effective_mode"] is None
+    assert result["tracking"]["run_url"] is None
     assert checkpoints
     assert not list(checkpoint_dir.glob("*.tmp.pt"))
 

@@ -16,10 +16,10 @@
 
 ```text
 ~/latentloop-data/canary-sources/  固定公开数据下载缓存
-~/latentloop-data/models/             CosyVoice2、SenseVoice、Mimi 权重
-~/latentloop-data/vendor/             固定 revision 的 CosyVoice 源码
-~/latentloop-data/pilot-data/           Canary 中间产物、manifest 和 shard
-~/latentloop-data/canary-run/      checkpoint、评测和 W&B run
+~/latentloop-data/models/          CosyVoice2、SenseVoice、Mimi 权重
+~/latentloop-data/vendor/          固定 revision 的 CosyVoice 源码
+~/latentloop-data/pilot-data/      Canary 中间产物、manifest 和 shard
+~/latentloop-data/canary-run/      checkpoint、评测、日志和 W&B run
 ```
 
 ## 一键执行
@@ -34,6 +34,19 @@ CANARY_MAX_UPDATES=5 CANARY_TRACKING_MODE=offline scripts/run-canary.sh all
 每个阶段都有内容哈希和收据，可以安全重跑。中断后执行同一命令会复用已验证的下载、
 规范化音频、TTS 缓存和 episode。脚本会按阶段启动和关闭 worker，失败时也会清理当前
 worker。
+
+终端只显示阶段任务、运行时间和关键指标。各子命令的完整 stdout/stderr 保存到本次运行目录：
+
+```text
+~/latentloop-data/canary-run/logs/<UTC 时间>-<PID>/
+  prepare.log
+  encode.log
+  train.log
+  evaluate.log
+```
+
+长阶段每 30 秒打印一次 elapsed time。阶段失败时，终端会自动打印对应日志的最后 60 行；
+无需重新运行即可定位失败。需要固定日志路径时设置 `CANARY_LOG_DIR=/path/to/logs`。
 
 ## 分阶段执行
 
@@ -84,16 +97,19 @@ CANARY_MAX_UPDATES=2000 scripts/run-canary.sh train
 
 ```text
 ~/latentloop-data/pilot-data/reports/canary-audit.json
+~/latentloop-data/pilot-data/reports/canary-codec-benchmark.json
 ~/latentloop-data/pilot-data/reports/canary-readiness.json
 ~/latentloop-data/pilot-data/processed/canary/{train,validation,test}/*.tar
 ~/latentloop-data/canary-run/checkpoints/step-00000005.pt
+~/latentloop-data/canary-run/runs/training.json
 ~/latentloop-data/canary-run/runs/validation-evaluation.json
 ~/latentloop-data/canary-run/runs/test-evaluation.json
 ```
 
 `canary-audit.json` 必须为 `passed: true`，readiness 必须没有失败项，validation/test
-评测必须读取到非零 episode 和 speech frame。5 update 只证明真实数据、codec、训练、
-checkpoint 和评测链路可运行，不代表模型质量收敛。
+评测必须读取到非零 episode 和 speech frame。`training.json` 记录训练耗时、吞吐、显存、
+最后一次训练指标、W&B 实际模式和 run URL。5 update 只证明真实数据、codec、训练、
+checkpoint 和评测链路可运行；此时 codec accuracy、macro-F1 等质量指标不用于判断收敛。
 
 ## 自定义目录
 
