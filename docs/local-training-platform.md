@@ -233,7 +233,7 @@ frame size       80 ms
 
 - 每个 unit 输入 1920 个 24 kHz 麦克风采样；
 - `speech_codes` 形状固定为 `[B, 1, 8]`；
-- KV 窗口按 16 秒定义，对应 200 个 unit；
+- 正式流式 profile 的 KV 窗口按 60 秒定义，对应 750 个 unit；
 - 音频和 codec 时间轴不存在累计四舍五入。
 
 神经 codec decoder 是声学解码器，不是 TTS。主干直接预测声学 codec 帧，中间不存在文本生成再转语音的链路。
@@ -480,7 +480,7 @@ layers             18
 attention heads    14
 FFN                 3584
 latent             16 x 1024
-KV                 32 units = 16 秒
+KV                 750 units = 60 秒
 屏幕               224 x 224
 batch size          1
 gradient accumulation 16
@@ -488,7 +488,8 @@ gradient accumulation 16
 
 验收以峰值显存不超过 7.5 GiB 为准。若超出，依次启用 activation checkpointing、减少 TBPTT unit、降低视觉分辨率，再缩小模型；不依赖共享 GPU 内存维持训练。
 
-该档位用于机制研究，不承担从头恢复 MiniCPM-o 级别知识的目标。裁剪后大模型的大规模持续预训练和恢复训练迁移到多 GPU 环境。
+该档位用于机制研究，不承担从头恢复 MiniCPM-o 级别知识的目标。训练按 episode 顺序执行连续
+TBPTT，跨 chunk 保留并 detach KV/latent 状态；裁剪后大模型的大规模持续预训练和恢复训练迁移到多 GPU 环境。
 
 ## 9. 数据格式
 

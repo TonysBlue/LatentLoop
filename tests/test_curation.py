@@ -110,6 +110,32 @@ def test_pilot_manifest_import_has_segment_aware_training_masks(
     )
 
 
+def test_manifest_interleaves_supervision_categories_deterministically(tmp_path: Path) -> None:
+    root = tmp_path / "pilot-data"
+    fetch_pilot_data(root, fixture=True)
+    select_pilot_voices(root, fixture=True)
+    build_pilot_text(root, dataset="canary", fixture=True)
+    synthesize_pilot(root, dataset="canary", fixture=True)
+    build_pilot_manifest(root, dataset="canary", fixture=True)
+
+    train_path = root / "manifests" / "canary" / "train.jsonl"
+    first = read_jsonl(train_path)
+    first_hash = sha256_file(train_path)
+    categories = [str(record["category"]) for record in first]
+    # A short sequential run must not be trapped in public-speech-only data.
+    assert len(set(categories[:8])) >= 2
+    assert any(record.get("target_segments") for record in first[:8])
+    counts = {category: categories.count(category) for category in set(categories)}
+
+    build_pilot_manifest(root, dataset="canary", fixture=True)
+    second = read_jsonl(train_path)
+    assert sha256_file(train_path) == first_hash
+    second_categories = [str(record["category"]) for record in second]
+    assert {
+        category: second_categories.count(category) for category in counts
+    } == counts
+
+
 def test_production_fetch_requires_locked_source_lock(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires --lock"):
         fetch_pilot_data(tmp_path / "pilot-data")

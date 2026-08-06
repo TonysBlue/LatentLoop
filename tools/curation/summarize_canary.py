@@ -87,7 +87,7 @@ def train_summary(report_path: Path, checkpoint: Path) -> None:
         "Supervision",
         f"{metrics.get('speech/valid_frames', 0.0):.0f} speech frames, "
         f"{metrics.get('speech/active_unit_fraction', 0.0):.1%} active units, "
-        f"{metrics.get('speech/no_speech_chunks', 0.0):.0f} context windows",
+        f"{metrics.get('speech/no_speech_chunks', 0.0):.0f} silent chunks",
     )
     line(
         "Speech boundaries",
@@ -98,7 +98,7 @@ def train_summary(report_path: Path, checkpoint: Path) -> None:
     line(
         "Latent gate",
         f"mean {metrics.get('latent/gate_mean', 0.0):.4f}; "
-        f"windows {metrics.get('data/update_windows', 0.0):.0f}",
+        f"chunks {metrics.get('data/update_chunks', 0.0):.0f}",
     )
     line("Checkpoint", str(checkpoint))
     tracking_mode = tracking.get("effective_mode")

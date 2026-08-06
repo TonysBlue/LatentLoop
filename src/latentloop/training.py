@@ -5,7 +5,6 @@ import random
 import subprocess
 import time
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -25,110 +24,7 @@ from latentloop.data import EpisodeShardReader, SyntheticEpisodeDataset
 from latentloop.losses import compute_losses
 from latentloop.model import StreamingLatentLoop
 from latentloop.tracking import Tracker
-from latentloop.types import Episode, RecurrentState, SpeechControl, StreamUnit
-
-
-@dataclass(frozen=True, slots=True)
-class TrainingWindow:
-    """A replayable target window and its preceding causal warmup."""
-
-    episode_index: int
-    start: int
-    end: int
-    kind: str
-    speech_frames: int
-    boundary_frames: int
-
-
-def _window_for_episode(
-    episode_index: int, episode: Episode, start: int, window_units: int
-) -> TrainingWindow:
-    end = min(start + window_units, len(episode.units))
-    target = episode.units[start:end]
-    speech_frames = sum(int(unit.speech_mask.sum().item()) for unit in target)
-    boundary_frames = sum(
-        int(
-            unit.speech_control_mask.item()
-            and int(unit.control_target.speech.item())
-            in (int(SpeechControl.START), int(SpeechControl.STOP))
-        )
-        for unit in target
-    )
-    if boundary_frames:
-        kind = "boundary"
-    elif speech_frames:
-        kind = "talking"
-    else:
-        kind = "silent"
-    return TrainingWindow(episode_index, start, end, kind, speech_frames, boundary_frames)
-
-
-def build_balanced_windows(
-    episodes: Sequence[Episode], config: ProjectConfig, epoch: int
-) -> list[TrainingWindow]:
-    """Build a deterministic 8/2/6 window schedule for one data epoch.
-
-    Windows are sampled with replacement from fixed pools.  This both keeps
-    every optimizer update at exactly ``gradient_accumulation_steps`` windows
-    and gives sparse START/STOP and speech frames enough exposure.
-    """
-    pools: dict[str, list[TrainingWindow]] = {"talking": [], "boundary": [], "silent": []}
-    for episode_index, episode in enumerate(episodes):
-        for start in range(0, len(episode.units), config.training.window_units):
-            window = _window_for_episode(
-                episode_index, episode, start, config.training.window_units
-            )
-            pools[window.kind].append(window)
-    if not any(pools.values()):
-        raise RuntimeError("balanced training source produced no windows")
-
-    counts = {
-        "talking": config.training.talking_windows_per_update,
-        "boundary": config.training.boundary_windows_per_update,
-        "silent": config.training.silent_windows_per_update,
-    }
-    windows_per_update = sum(counts.values())
-    if windows_per_update != config.training.gradient_accumulation_steps:
-        raise ValueError("balanced sampling window counts must equal gradient_accumulation_steps")
-    candidate_count = sum(len(pool) for pool in pools.values())
-    updates = max(1, (candidate_count + windows_per_update - 1) // windows_per_update)
-    rng = random.Random(config.data.seed + epoch * 1_000_003)
-
-    def draw(kind: str, count: int) -> list[TrainingWindow]:
-        if count == 0:
-            return []
-        pool = pools[kind]
-        if not pool:
-            # A split may legitimately have no boundary or no pure silent;
-            # Fall back to talking, then any available window.
-            pool = pools["talking"] or pools["boundary"] or pools["silent"]
-        weights = [max(window.speech_frames + window.boundary_frames, 1) for window in pool]
-        return rng.choices(pool, weights=weights, k=count)
-
-    schedule: list[TrainingWindow] = []
-    for _ in range(updates):
-        batch = draw("talking", counts["talking"])
-        batch.extend(draw("boundary", counts["boundary"]))
-        batch.extend(draw("silent", counts["silent"]))
-        if config.training.min_speech_frames_per_update:
-            speech_pool = pools["talking"] or pools["boundary"] or pools["silent"]
-            for _ in range(len(batch) * 2):
-                if (
-                    sum(window.speech_frames for window in batch)
-                    >= config.training.min_speech_frames_per_update
-                ):
-                    break
-                if not speech_pool:
-                    break
-                replacement = max(speech_pool, key=lambda window: window.speech_frames)
-                replace_at = next(
-                    (index for index, window in enumerate(batch) if window.kind == "silent"),
-                    min(range(len(batch)), key=lambda index: batch[index].speech_frames),
-                )
-                batch[replace_at] = replacement
-        rng.shuffle(batch)
-        schedule.extend(batch)
-    return schedule
+from latentloop.types import Episode, RecurrentState, StreamUnit
 
 
 def _loss_denominators(units: Sequence[StreamUnit]) -> dict[str, float]:
@@ -183,10 +79,10 @@ def _loss_denominators(units: Sequence[StreamUnit]) -> dict[str, float]:
     }
 
 
-def _aggregate_window_metrics(
+def _aggregate_update_metrics(
     records: list[dict[str, Any]], config: ProjectConfig
 ) -> dict[str, float]:
-    """Aggregate losses and codec accuracy over every window in one update."""
+    """Aggregate losses and codec accuracy over chunks in one optimizer update."""
     names = (
         "total",
         "speech",
@@ -241,7 +137,7 @@ def _aggregate_window_metrics(
             "speech/control_start_count": float(sum(item["start_count"] for item in records)),
             "speech/control_stop_count": float(sum(item["stop_count"] for item in records)),
             "data/update_units": float(target_units),
-            "data/update_windows": float(len(records)),
+            "data/update_chunks": float(len(records)),
             "latent/gate_mean": float(
                 sum(item["gate_sum"] for item in records)
                 / max(sum(item["gate_count"] for item in records), 1)
@@ -249,188 +145,6 @@ def _aggregate_window_metrics(
         }
     )
     return metrics
-
-
-def _run_balanced_loop(
-    *,
-    config: ProjectConfig,
-    model: Any,
-    accelerator: Accelerator,
-    optimizer: torch.optim.Optimizer,
-    scheduler: Any,
-    tracker: Tracker,
-    checkpoint_manager: CheckpointManager,
-    train_state: dict[str, Any],
-    cursor: DataCursor,
-    parent_sha256: str | None,
-    speech_control_weights: torch.Tensor,
-    target_updates: int,
-    last_checkpoint_update: int,
-) -> tuple[dict[str, Any], DataCursor, str | None, dict[str, float], int]:
-    """Train independent causal windows with deterministic balanced replay."""
-    last_metrics: dict[str, float] = {}
-    epoch = int(train_state.get("epoch", cursor.epoch))
-    window_index = int(train_state.get("window_index", 0))
-    pending: list[dict[str, Any]] = []
-    while train_state["update"] < target_updates:
-        episodes = list(build_episodes(config))
-        schedule = build_balanced_windows(episodes, config, epoch)
-        if window_index >= len(schedule):
-            epoch += 1
-            window_index = 0
-            train_state.update({"epoch": epoch, "window_index": 0})
-            continue
-        for index in range(window_index, len(schedule)):
-            if train_state["update"] >= target_updates:
-                break
-            window = schedule[index]
-            episode = episodes[window.episode_index]
-            device = accelerator.device
-            state = accelerator.unwrap_model(model).initial_state(1, device)
-            warmup_start = max(0, window.start - config.training.warmup_units)
-            with torch.no_grad():
-                for raw_unit in episode.units[warmup_start : window.start]:
-                    warm = raw_unit.to(device)
-                    state = model(warm, state, warm.speech_codes).state.detach()
-            target_units = [raw.to(device) for raw in episode.units[window.start : window.end]]
-            with accelerator.accumulate(model):
-                window_losses: dict[str, torch.Tensor] = {}
-                window_numerators: dict[str, torch.Tensor] = {}
-                window_denoms: dict[str, float] = {
-                    name: 0.0
-                    for name in (
-                        "total",
-                        "speech",
-                        "action_type",
-                        "action_confidence",
-                        "action_coord",
-                        "action_scroll",
-                        "action_duration",
-                        "action_text",
-                        "action_keys",
-                        "control_speech",
-                        "control_action",
-                        "control_cognitive",
-                        "memory",
-                        "latent_write",
-                    )
-                }
-                speech_correct = torch.zeros(
-                    config.model.speech_codebooks, dtype=torch.long, device=device
-                )
-                speech_valid = 0
-                gate_sum = 0.0
-                boundary_frames = start_count = stop_count = 0
-                sampling_probability = scheduled_sampling_probability(train_state["update"], config)
-                output = None
-                for unit in target_units:
-                    use_teacher = (
-                        sampling_probability <= 0 or random.random() >= sampling_probability
-                    )
-                    output = model(unit, state, unit.speech_codes if use_teacher else None)
-                    state = output.state
-                    losses = compute_losses(
-                        output,
-                        unit,
-                        speech_control_weights,
-                        config.training.speech_control_loss_weight,
-                        config.training.latent_write_loss_weight,
-                    )
-                    for name, value in losses.items():
-                        window_losses[name] = (
-                            window_losses.get(name, torch.zeros_like(value)) + value
-                        )
-                    unit_denoms = _loss_denominators([unit])
-                    for name, value in losses.items():
-                        window_numerators[name] = (
-                            window_numerators.get(name, torch.zeros_like(value))
-                            + value * unit_denoms[name]
-                        )
-                        window_denoms[name] += unit_denoms[name]
-                    valid = unit.speech_mask[:, :, None]
-                    speech_correct += (
-                        output.speech_logits.detach().argmax(dim=-1).eq(unit.speech_codes) & valid
-                    ).sum(dim=(0, 1))
-                    speech_valid += int(unit.speech_mask.sum().item())
-                    control = int(unit.control_target.speech.item())
-                    boundary_frames += int(
-                        bool(unit.speech_control_mask.item()) and control in (1, 4)
-                    )
-                    start_count += int(bool(unit.speech_control_mask.item()) and control == 1)
-                    stop_count += int(bool(unit.speech_control_mask.item()) and control == 4)
-                    gate_sum += float(output.latent_gate.detach().float().sum().item())
-                assert output is not None
-                losses = {name: value / len(target_units) for name, value in window_losses.items()}
-                accelerator.backward(losses["total"])
-                sync = accelerator.sync_gradients
-            train_state["consumed_units"] = train_state.get("consumed_units", 0) + len(target_units)
-            train_state.update({"epoch": epoch, "window_index": index + 1})
-            cursor = DataCursor(epoch=epoch, episode=window.episode_index, unit=window.end)
-            pending.append(
-                {
-                    "losses": {
-                        name: float(value.detach().float().item())
-                        for name, value in window_numerators.items()
-                    },
-                    "denoms": window_denoms,
-                    "speech_correct": speech_correct.detach().cpu(),
-                    "speech_valid": speech_valid,
-                    "target_units": len(target_units),
-                    "gate_sum": gate_sum,
-                    "gate_count": len(target_units) * config.model.latent_slots,
-                    "boundary_frames": boundary_frames,
-                    "start_count": start_count,
-                    "stop_count": stop_count,
-                }
-            )
-            if not sync:
-                continue
-            accelerator.clip_grad_norm_(model.parameters(), config.training.max_grad_norm)
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad(set_to_none=True)
-            train_state["update"] += 1
-            last_metrics = _aggregate_window_metrics(pending, config)
-            last_metrics.update(
-                {
-                    "stream/kv_tokens": float(output.state.layer_kv[0].key.shape[2]),
-                    "data/epoch": float(epoch),
-                    "data/window": float(index + 1),
-                    "train/learning_rate": float(scheduler.get_last_lr()[0]),
-                    "speech/scheduled_sampling": sampling_probability,
-                }
-            )
-            pending = []
-            if (
-                accelerator.is_main_process
-                and train_state["update"] % config.training.log_every == 0
-            ):
-                tracker.log(last_metrics, train_state["update"])
-            if (
-                accelerator.is_main_process
-                and train_state["update"] % config.training.checkpoint_every == 0
-            ):
-                path, digest = checkpoint_manager.save(
-                    f"step-{train_state['update']:08d}",
-                    model=accelerator.unwrap_model(model),
-                    optimizer=optimizer,
-                    scheduler=scheduler,
-                    scaler=accelerator.scaler,
-                    recurrent_state=None,
-                    train_state=train_state,
-                    data_cursor=cursor,
-                    metadata=_checkpoint_metadata(config, parent_sha256),
-                    config=config.as_dict(),
-                )
-                parent_sha256 = digest
-                last_checkpoint_update = train_state["update"]
-                tracker.record_checkpoint(path, digest, train_state["update"])
-        if train_state["update"] >= target_updates:
-            break
-        epoch += 1
-        window_index = 0
-        train_state.update({"epoch": epoch, "window_index": 0})
-    return train_state, cursor, parent_sha256, last_metrics, last_checkpoint_update
 
 
 def seed_everything(seed: int) -> None:
@@ -582,28 +296,6 @@ def train(
     last_checkpoint_update = 0
     tracking: dict[str, str | None] = {}
     try:
-        if config.training.balanced_sampling:
-            (
-                train_state,
-                cursor,
-                parent_sha256,
-                last_metrics,
-                last_checkpoint_update,
-            ) = _run_balanced_loop(
-                config=config,
-                model=model,
-                accelerator=accelerator,
-                optimizer=optimizer,
-                scheduler=scheduler,
-                tracker=tracker,
-                checkpoint_manager=checkpoint_manager,
-                train_state=train_state,
-                cursor=cursor,
-                parent_sha256=parent_sha256,
-                speech_control_weights=speech_control_weights,
-                target_updates=target_updates,
-                last_checkpoint_update=last_checkpoint_update,
-            )
         epoch = cursor.epoch
         while train_state["update"] < target_updates:
             yielded = False
@@ -809,7 +501,7 @@ def train(
                             ),
                         }
                     )
-                    last_metrics = _aggregate_window_metrics(pending_update_metrics, config)
+                    last_metrics = _aggregate_update_metrics(pending_update_metrics, config)
                     pending_update_metrics = []
                     last_metrics.update(
                         {

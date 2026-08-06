@@ -730,6 +730,54 @@ def _select_sources(
     return selected
 
 
+_TRAINING_CATEGORY_ORDER = (
+    "synthetic_dialogue",
+    "adjacent_turns",
+    "screen_task",
+    "public_speech",
+)
+
+
+def _interleave_categories(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Interleave categories while preserving each category's input order.
+
+    The training reader is intentionally sequential so episode state can carry
+    across TBPTT chunks.  A source-grouped manifest can therefore hide all
+    assistant supervision behind a long public-speech prefix.  Deterministic
+    round-robin ordering exposes every available category early without
+    duplicating, splitting, or otherwise changing any episode.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {category: [] for category in CATEGORIES}
+    unknown: list[dict[str, Any]] = []
+    for record in records:
+        category = str(record.get("category", ""))
+        if category in grouped:
+            grouped[category].append(record)
+        else:
+            unknown.append(record)
+
+    # Keep an explicit order for the known production categories.  Unknown
+    # categories are retained after the round-robin sequence rather than being
+    # silently dropped from a manifest.
+    ordered_categories = [
+        category for category in _TRAINING_CATEGORY_ORDER if grouped[category]
+    ]
+    ordered: list[dict[str, Any]] = []
+    index = 0
+    while ordered_categories:
+        next_categories: list[str] = []
+        for category in ordered_categories:
+            bucket = grouped[category]
+            if index < len(bucket):
+                ordered.append(bucket[index])
+            if index + 1 < len(bucket):
+                next_categories.append(category)
+        ordered_categories = next_categories
+        index += 1
+    ordered.extend(unknown)
+    return ordered
+
+
 def build_pilot_manifest(
     root: str | Path,
     *,
@@ -772,10 +820,21 @@ def build_pilot_manifest(
     _calibrate_split_durations(root, dataset, records)
     _verify_isolation(records)
     destination = root / "manifests" / dataset
+    # Keep the global and split manifests in the same deterministic training
+    # order.  The order is part of the streaming data contract: short runs
+    # must observe speech-positive and silent episodes alike.
+    records = [
+        record
+        for split in SPLITS
+        for record in _interleave_categories(
+            [candidate for candidate in records if candidate["split"] == split]
+        )
+    ]
     for split in SPLITS:
-        write_jsonl(destination / f"{split}.jsonl", [r for r in records if r["split"] == split])
+        split_records = [r for r in records if r["split"] == split]
+        write_jsonl(destination / f"{split}.jsonl", split_records)
     manifest_path = destination / "episodes.jsonl"
-    write_jsonl(manifest_path, sorted(records, key=lambda value: value["episode_id"]))
+    write_jsonl(manifest_path, records)
     quota = defaultdict(float)
     for record in records:
         samples = read_mono(Path(record["mic_audio"])).size

@@ -57,13 +57,6 @@ training:
   codec_scheduled_sampling: 0.0
   codec_scheduled_sampling_start: 0.7
   backbone_train_mode: all
-  balanced_sampling: true
-  window_units: 2
-  warmup_units: 2
-  talking_windows_per_update: 1
-  boundary_windows_per_update: 0
-  silent_windows_per_update: 0
-  min_speech_frames_per_update: 1
 tracking:
   enabled: false
   project: latentloop

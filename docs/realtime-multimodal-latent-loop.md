@@ -584,7 +584,7 @@ MVP 配置：
 ```text
 unit = 500 ms
 W = 16--32
-近期精确历史 = 8--16 秒
+近期精确历史 = 60 秒（当前正式 profile）
 ```
 
 模型以 unit 边界淘汰缓存，保持音频、视觉和时间对齐结构完整。
@@ -1042,7 +1042,7 @@ Latent Updater + Action/Control Heads：小于 0.1B
 视觉语义编码：1--2 FPS
 音频块：250--500 ms
 主干 tick：2 Hz
-近期 KV：8--16 秒
+近期 KV：60 秒（当前正式 profile）
 Z_t：8--16 slots，512--1024 dim
 batch size：1 + gradient accumulation
 FP16 + activation checkpointing
