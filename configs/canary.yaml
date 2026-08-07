@@ -56,7 +56,7 @@ training:
   mixed_precision: fp16
   max_grad_norm: 1.0
   checkpoint_every: 250
-  log_every: 10
+  log_every: 1
   head_learning_rate: 0.0001
   backbone_learning_rate: 0.00003
   warmup_ratio: 0.03
