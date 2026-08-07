@@ -17,15 +17,16 @@ def main() -> None:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--socket", type=Path, required=True)
+    parser.add_argument("--dataset", choices=("canary", "pilot"), required=True)
     args = parser.parse_args()
     config = load_config(args.config)
     client = codec_client(config, args.socket)
     client.health()
-    mimi = check_mimi_decode(args.root, dataset="canary", client=client)
+    mimi = check_mimi_decode(args.root, dataset=args.dataset, client=client)
     audit_pilot_data(
-        args.root, dataset="canary", mimi_report=mimi["path"]
+        args.root, dataset=args.dataset, mimi_report=mimi["path"]
     )
-    encode_pilot_shards(args.root, dataset="canary", config=config, client=client)
+    encode_pilot_shards(args.root, dataset=args.dataset, config=config, client=client)
 
 
 if __name__ == "__main__":

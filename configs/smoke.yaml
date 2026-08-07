@@ -25,6 +25,7 @@ model:
   dropout: 0.0
   activation_checkpointing: false
 data:
+  dataset: synthetic
   source: synthetic
   schema_version: 2
   audio_sample_rate: 4000
@@ -43,7 +44,6 @@ data:
   seed: 17
 training:
   max_updates: 4
-  learning_rate: 0.001
   weight_decay: 0.01
   gradient_accumulation_steps: 1
   tbptt_units: 2

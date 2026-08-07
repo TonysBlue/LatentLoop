@@ -21,6 +21,7 @@ from latentloop.checkpoint import (
 )
 from latentloop.config import ProjectConfig
 from latentloop.data import EpisodeShardReader, SyntheticEpisodeDataset
+from latentloop.data.curation.readiness import check_readiness
 from latentloop.losses import compute_losses
 from latentloop.model import StreamingLatentLoop
 from latentloop.tracking import Tracker
@@ -205,6 +206,21 @@ def train(
 ) -> dict[str, Any]:
     if resume and init_from:
         raise ValueError("resume and init_from are mutually exclusive")
+    if config.data.dataset != "synthetic":
+        require_initial = (
+            config.training.backbone_train_mode in {"frozen", "selective"}
+            and config.data.dataset != "direct-speech-overfit"
+        )
+        check_readiness(
+            config.runtime.data_path(),
+            config=config,
+            require_checkpoint=init_from if require_initial else None,
+        )
+        if require_initial and not (init_from or resume):
+            raise ValueError(
+                "frozen/selective real-data training requires --init-from with a "
+                "compatible checkpoint"
+            )
     seed_everything(config.data.seed)
     accelerator = Accelerator(
         mixed_precision=config.training.mixed_precision,
@@ -255,15 +271,17 @@ def train(
     unwrapped_model = accelerator.unwrap_model(model)
     tracker = Tracker(
         config,
-        stage="speech",
         model_name=f"{unwrapped_model.parameter_count()}p",
         parameter_count=unwrapped_model.parameter_count(),
         data_identity=_data_identity(config),
+        parent_checkpoint_sha256=(
+            file_sha256(resume or init_from) if (resume or init_from) else None
+        ),
     )
     train_state: dict[str, Any] = {"update": 0, "epoch": 0, "episode": 0, "unit": 0}
     cursor = DataCursor()
     recurrent: RecurrentState | None = None
-    parent_sha256: str | None = None
+    parent_sha256: str | None = file_sha256(init_from) if init_from else None
     if resume:
         parent_sha256 = file_sha256(resume)
         train_state, cursor, recurrent, _ = checkpoint_manager.load(

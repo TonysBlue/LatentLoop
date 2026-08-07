@@ -26,6 +26,7 @@ model:
   dropout: 0.1
   activation_checkpointing: false
 data:
+  dataset: pilot
   source: webdataset
   shards: ~/latentloop-data/datasets/pilot/v1/shards/processed/train/train-*.tar
   manifest: ~/latentloop-data/datasets/pilot/v1/shards/processed/train/train-manifest.jsonl
@@ -46,7 +47,6 @@ data:
   seed: 17
 training:
   max_updates: 100000
-  learning_rate: 0.0003
   weight_decay: 0.1
   gradient_accumulation_steps: 16
   tbptt_units: 16
@@ -74,4 +74,4 @@ tracking:
   media_stop_gb: 50
 runtime:
   data_root: ~/latentloop-data/datasets
-  experiment_root: ~/latentloop-data/experiments/pilot/default
+  experiment_root: ~/latentloop-data/experiments/pilot/standalone

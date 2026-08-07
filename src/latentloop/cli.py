@@ -25,15 +25,16 @@ from latentloop.data.curation import (
     audit_pilot_data,
     build_pilot_manifest,
     build_pilot_text,
-    check_pilot_readiness,
+    check_readiness,
     fetch_pilot_data,
     prepare_pilot_data,
     select_pilot_voices,
     synthesize_pilot,
 )
-from latentloop.evaluation import evaluate_canary_checkpoint, evaluate_overfit_checkpoint
+from latentloop.evaluation import build_evaluation_report, evaluate_checkpoint
 from latentloop.model import StreamingLatentLoop
 from latentloop.ray_jobs import generate_synthetic_with_ray, write_ray_report
+from latentloop.recipe import run_recipe
 from latentloop.speech_metrics import benchmark_decoder
 from latentloop.training import train
 
@@ -309,12 +310,12 @@ def prepare_pilot_data_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def check_pilot_readiness_command(args: argparse.Namespace) -> int:
+def check_readiness_command(args: argparse.Namespace) -> int:
     config = _load(args)
-    result = check_pilot_readiness(
+    result = check_readiness(
         _pilot_root(args, config),
         config=config,
-        dataset=args.dataset,
+        dataset=config.data.dataset,
         require_checkpoint=args.checkpoint,
         require_encoded=not args.allow_unencoded,
     )
@@ -385,26 +386,19 @@ def benchmark_stream(args: argparse.Namespace) -> int:
     )
 
 
-def evaluate_overfit(args: argparse.Namespace) -> int:
+def evaluate(args: argparse.Namespace) -> int:
     config = _load(args)
-    result = evaluate_overfit_checkpoint(
+    result = evaluate_checkpoint(
         config,
         args.checkpoint,
+        split=args.split,
         device=args.device,
         codec_threshold=args.codec_threshold,
         control_f1_threshold=args.control_f1_threshold,
     )
-    _emit_json_report(asdict(result), args.report)
-    return int(not result.passed)
-
-
-def evaluate_canary(args: argparse.Namespace) -> int:
-    config = _load(args)
-    result = evaluate_canary_checkpoint(
-        config, args.checkpoint, split=args.split, device=args.device
-    )
-    _emit_json_report(asdict(result), args.report)
-    return 0
+    report = build_evaluation_report(config, args.checkpoint, args.split, result)
+    _emit_json_report(report, args.report)
+    return int(report.get("passed") is False)
 
 
 def train_command(args: argparse.Namespace) -> int:
@@ -417,6 +411,15 @@ def train_command(args: argparse.Namespace) -> int:
             "tracking": result["tracking"],
         },
         args.report,
+    )
+    return 0
+
+
+def run_recipe_command(args: argparse.Namespace) -> int:
+    print(
+        json.dumps(
+            run_recipe(args.recipe, args.overrides, run_id=args.run_id), indent=2, default=str
+        )
     )
     return 0
 
@@ -537,14 +540,13 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_pilot_parser.set_defaults(handler=prepare_pilot_data_command)
 
     readiness_parser = subparsers.add_parser(
-        "check-pilot-readiness", help="Verify automatic gates before Pilot training"
+        "check-readiness", help="Verify automatic gates before real-data training"
     )
     _config_arguments(readiness_parser)
     readiness_parser.add_argument("--root", help="Shared dataset artifact root")
-    readiness_parser.add_argument("--dataset", choices=("canary", "pilot"), default="pilot")
     readiness_parser.add_argument("--checkpoint", help="Optional initial checkpoint")
     readiness_parser.add_argument("--allow-unencoded", action="store_true")
-    readiness_parser.set_defaults(handler=check_pilot_readiness_command)
+    readiness_parser.set_defaults(handler=check_readiness_command)
 
     codec_parser = subparsers.add_parser("benchmark-codec")
     _config_arguments(codec_parser)
@@ -560,24 +562,15 @@ def build_parser() -> argparse.ArgumentParser:
     stream_parser.add_argument("--warmup", type=int, default=10)
     stream_parser.set_defaults(handler=benchmark_stream)
 
-    evaluation_parser = subparsers.add_parser("evaluate-overfit")
+    evaluation_parser = subparsers.add_parser("evaluate")
     _config_arguments(evaluation_parser)
     evaluation_parser.add_argument("--checkpoint", required=True)
+    evaluation_parser.add_argument("--split", choices=("validation", "test"), default="validation")
     evaluation_parser.add_argument("--device")
     evaluation_parser.add_argument("--codec-threshold", type=float, default=0.9)
     evaluation_parser.add_argument("--control-f1-threshold", type=float, default=0.9)
     evaluation_parser.add_argument("--report", help="Optional JSON report path")
-    evaluation_parser.set_defaults(handler=evaluate_overfit)
-
-    canary_evaluation_parser = subparsers.add_parser("evaluate-canary")
-    _config_arguments(canary_evaluation_parser)
-    canary_evaluation_parser.add_argument("--checkpoint", required=True)
-    canary_evaluation_parser.add_argument(
-        "--split", choices=("validation", "test"), default="validation"
-    )
-    canary_evaluation_parser.add_argument("--device")
-    canary_evaluation_parser.add_argument("--report", help="Optional JSON report path")
-    canary_evaluation_parser.set_defaults(handler=evaluate_canary)
+    evaluation_parser.set_defaults(handler=evaluate)
 
     train_parser = subparsers.add_parser("train")
     _config_arguments(train_parser)
@@ -585,6 +578,13 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--init-from", help="Warm-start compatible base weights")
     train_parser.add_argument("--report", help="Optional JSON report path")
     train_parser.set_defaults(handler=train_command)
+    recipe_parser = subparsers.add_parser(
+        "run-recipe", help="Run a multi-stage training recipe with shared gates and evaluation"
+    )
+    recipe_parser.add_argument("--recipe", required=True)
+    recipe_parser.add_argument("--run-id", help="Unique artifact namespace (default: generated)")
+    recipe_parser.add_argument("--set", action="append", default=[], dest="overrides")
+    recipe_parser.set_defaults(handler=run_recipe_command)
     return parser
 
 

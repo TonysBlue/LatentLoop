@@ -44,6 +44,9 @@ class ModelConfig:
 
 @dataclass(slots=True)
 class DataConfig:
+    # Identifies the dataset contract used by readiness, training and eval.
+    # ``synthetic`` is an explicit local-development exemption.
+    dataset: str = "synthetic"
     source: str = "synthetic"
     shards: str | None = None
     manifest: str | None = None
@@ -67,7 +70,6 @@ class DataConfig:
 @dataclass(slots=True)
 class TrainingConfig:
     max_updates: int = 10_000
-    learning_rate: float = 3e-4
     weight_decay: float = 0.1
     gradient_accumulation_steps: int = 16
     tbptt_units: int = 16
@@ -102,6 +104,9 @@ class TrackingConfig:
 class RuntimeConfig:
     data_root: str = "~/latentloop-data/datasets"
     experiment_root: str = "~/latentloop-data/experiments/local"
+    run_name: str = "train"
+    recipe_name: str | None = None
+    stage_name: str | None = None
 
     def root_path(self) -> Path:
         return Path(self.experiment_root).expanduser().resolve()
@@ -140,8 +145,21 @@ class ProjectConfig:
             raise ValueError("kv_units must exactly cover kv_window_ms at the configured unit_ms")
         if self.model.action_text_tokens < 1 or self.model.action_key_vocab_size < 1:
             raise ValueError("action text and key dimensions must be positive")
+        if self.data.dataset not in {
+            "synthetic",
+            "canary",
+            "pilot",
+            "production",
+            "direct-speech-overfit",
+        }:
+            raise ValueError(
+                "data.dataset must be synthetic, canary, pilot, production, "
+                "or direct-speech-overfit"
+            )
         if self.data.source not in {"synthetic", "webdataset"}:
             raise ValueError("data.source must be synthetic or webdataset")
+        if self.data.dataset != "synthetic" and self.data.source != "webdataset":
+            raise ValueError("real and gate datasets must use webdataset data.source")
         if self.data.source == "webdataset" and not self.data.shards:
             raise ValueError("data.shards is required for webdataset")
         if not self.data.codec_id or not self.data.codec_weight_hash:
@@ -187,7 +205,18 @@ class ProjectConfig:
 
 def load_config(path: str | Path, overrides: list[str] | None = None) -> ProjectConfig:
     schema = OmegaConf.structured(ProjectConfig)
-    loaded = OmegaConf.load(Path(path))
+    config_path = Path(path).expanduser().resolve()
+    loaded = OmegaConf.load(config_path)
+    defaults = loaded.pop("defaults", []) if "defaults" in loaded else []
+    base_configs = []
+    for default in defaults:
+        if default in {"_self_", None}:
+            continue
+        default_path = Path(str(default))
+        if default_path.suffix != ".yaml":
+            default_path = default_path.with_suffix(".yaml")
+        base_configs.append(OmegaConf.load((config_path.parent / default_path).resolve()))
+    loaded = OmegaConf.merge(*base_configs, loaded)
     merged = OmegaConf.merge(schema, loaded, OmegaConf.from_dotlist(overrides or []))
     raw = OmegaConf.to_container(merged, resolve=True)
     assert isinstance(raw, dict)

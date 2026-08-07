@@ -25,9 +25,8 @@ model:
   dropout: 0.1
   activation_checkpointing: true
 data:
-  source: webdataset
-  shards: ~/latentloop-data/datasets/research/v1/shards/processed/train/train-{000000..000999}.tar
-  manifest: ~/latentloop-data/datasets/research/v1/shards/processed/train/train-manifest.jsonl
+  dataset: synthetic
+  source: synthetic
   schema_version: 2
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
@@ -45,7 +44,6 @@ data:
   seed: 17
 training:
   max_updates: 100000
-  learning_rate: 0.0002
   weight_decay: 0.1
   gradient_accumulation_steps: 16
   tbptt_units: 16

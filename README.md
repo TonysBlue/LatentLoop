@@ -21,11 +21,11 @@ uv run pytest
 
 ```bash
 uv run latentloop inspect-model --config configs/smoke.yaml
-uv run latentloop inspect-model --config configs/local-25m.yaml
+uv run latentloop inspect-model --config configs/local-dev.yaml
 uv run latentloop inspect-model --config configs/research-0.2b.yaml
 ```
 
-当前档位参数量为 0.0003B、0.0496B 和 0.2391B。0.0496B 与 0.2391B 档位均已在
+当前档位参数量约为 0.0003B、0.0507B 和 0.2424B。0.0507B 与 0.2424B 档位均已在
 RTX 2080 SUPER 8GB 上完成 FP16 反向和 AdamW 更新；实际长期训练仍应以运行时记录的
 `runtime/peak_memory_*` 指标为准。
 
@@ -104,14 +104,15 @@ Canary/Pilot 数据准备、外部语料许可证锁、CosyVoice/ASR/屏幕适�
 使用统一入口，完整说明见 [`docs/canary-runbook.md`](docs/canary-runbook.md)：
 
 ```bash
-CANARY_MAX_UPDATES=5 CANARY_TRACKING_MODE=offline scripts/run-canary.sh all
+scripts/prepare-data.sh canary all
+scripts/run-training.sh --recipe configs/recipes/canary.yaml --run-id canary-001
 ```
 
 ```bash
-uv run latentloop fetch-pilot-data --config configs/local-25m.yaml --fixture
-uv run latentloop select-pilot-voices --config configs/local-25m.yaml --fixture
-uv run latentloop build-pilot-text --config configs/local-25m.yaml --dataset canary --fixture
-uv run latentloop synthesize-pilot --config configs/local-25m.yaml --dataset canary --fixture
-uv run latentloop build-pilot-manifest --config configs/local-25m.yaml --dataset canary --fixture
-uv run latentloop audit-pilot-data --config configs/local-25m.yaml --dataset canary --fixture
+uv run latentloop fetch-pilot-data --config configs/local-dev.yaml --fixture
+uv run latentloop select-pilot-voices --config configs/local-dev.yaml --fixture
+uv run latentloop build-pilot-text --config configs/local-dev.yaml --dataset canary --fixture
+uv run latentloop synthesize-pilot --config configs/local-dev.yaml --dataset canary --fixture
+uv run latentloop build-pilot-manifest --config configs/local-dev.yaml --dataset canary --fixture
+uv run latentloop audit-pilot-data --config configs/local-dev.yaml --dataset canary --fixture
 ```

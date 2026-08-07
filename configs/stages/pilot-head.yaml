@@ -1,0 +1,10 @@
+# Pilot speech-head warm-up. Replace the initial checkpoint in the recipe.
+defaults:
+  - ../pilot
+  - _self_
+
+training:
+  backbone_train_mode: frozen
+  max_updates: 50000
+runtime:
+  run_name: pilot-head

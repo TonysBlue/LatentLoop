@@ -1,0 +1,7 @@
+# One-stage end-to-end Canary training.
+defaults:
+  - ../canary
+  - _self_
+
+runtime:
+  run_name: canary

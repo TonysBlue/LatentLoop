@@ -25,6 +25,7 @@ model:
   dropout: 0.0
   activation_checkpointing: false
 data:
+  dataset: direct-speech-overfit
   source: webdataset
   shards: ~/latentloop-data/datasets/gates/direct-speech-overfit/v1/shards/processed/train/train-*.tar
   manifest: ~/latentloop-data/datasets/gates/direct-speech-overfit/v1/shards/processed/train/train-manifest.jsonl
@@ -45,7 +46,6 @@ data:
   seed: 17
 training:
   max_updates: 256
-  learning_rate: 0.001
   weight_decay: 0.01
   gradient_accumulation_steps: 1
   tbptt_units: 16

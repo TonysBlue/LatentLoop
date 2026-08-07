@@ -47,11 +47,11 @@ class Tracker:
     def __init__(
         self,
         config: ProjectConfig,
-        stage: str,
         model_name: str,
         *,
         parameter_count: int,
         data_identity: str,
+        parent_checkpoint_sha256: str | None = None,
     ) -> None:
         self.config = config
         self.run: wandb.sdk.wandb_run.Run | None = None
@@ -76,6 +76,7 @@ class Tracker:
                 "git_commit": _git_short_sha(),
                 "git_dirty": _git_dirty(),
                 "parameter_count": parameter_count,
+                "parent_checkpoint_sha256": parent_checkpoint_sha256,
                 "python": platform.python_version(),
                 "torch": torch.__version__,
                 "cuda_runtime": torch.version.cuda,
@@ -88,7 +89,7 @@ class Tracker:
             self.run = wandb.init(
                 project=config.tracking.project,
                 name=(
-                    f"{stage}-{model_name}-"
+                    f"{config.runtime.run_name}-{model_name}-"
                     f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{_git_short_sha()}"
                 ),
                 config=run_config,

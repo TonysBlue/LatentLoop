@@ -12,7 +12,6 @@ def test_tracker_falls_back_to_offline_without_server(
     smoke_config.tracking.base_url = "http://127.0.0.1:1"
     tracker = Tracker(
         smoke_config,
-        "test",
         "smoke",
         parameter_count=1,
         data_identity="test-data",

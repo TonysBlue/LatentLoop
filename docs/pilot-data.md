@@ -39,7 +39,7 @@ fixture 不下载公开语料、不冒充 CosyVoice，也不代表模型质量�
 
 ```bash
 ROOT="$HOME/latentloop-data/datasets-fixture"
-CFG=configs/local-25m.yaml
+CFG=configs/local-dev.yaml
 
 uv run latentloop fetch-pilot-data --config "$CFG" --root "$ROOT" --fixture
 uv run latentloop select-pilot-voices --config "$CFG" --root "$ROOT" --fixture
@@ -119,17 +119,15 @@ uv run latentloop prepare-pilot-data --config "$CFG" --root "$ROOT" \
 训练前最后执行 fail-closed 检查：
 
 ```bash
-uv run latentloop check-pilot-readiness --config "$CFG" --root "$ROOT" \
-  --dataset pilot --checkpoint "$HOME/latentloop-data/checkpoints/state-loop.pt"
+uv run latentloop check-readiness --config configs/pilot.yaml --root "$ROOT" \
+  --checkpoint "$HOME/latentloop-data/checkpoints/base/state-loop.pt"
 ```
 
 该检查确认 audit、三个 split 的 manifest/shard、编码状态、Mimi 报告、初始 checkpoint 和磁盘
 空间；失败时不会进入训练。
 
-编码完成后可以直接使用 `configs/pilot.yaml` 训练（必要时用 `--set` 覆盖根目录）：
+编码完成后统一使用 Pilot recipe 训练：
 
 ```bash
-uv run latentloop train --config configs/pilot.yaml \
-  --set data.shards="$ROOT/pilot/v1/shards/processed/train/train-*.tar" \
-  --set data.manifest="$ROOT/pilot/v1/shards/processed/train/train-manifest.jsonl"
+scripts/run-training.sh --recipe configs/recipes/pilot.yaml
 ```

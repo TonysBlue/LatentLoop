@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 
 import torch
@@ -52,6 +53,56 @@ class CanaryEvaluation:
     autoregressive_speech_control_accuracy: float
     autoregressive_speech_control_per_class_f1: list[float]
     autoregressive_speech_control_confusion: list[list[int]]
+
+
+def build_evaluation_report(
+    config: ProjectConfig,
+    checkpoint: str | Path,
+    split: str,
+    result: CanaryEvaluation | OverfitEvaluation,
+) -> dict[str, object]:
+    """Return one lineage-bearing report shape for every public evaluation path."""
+    checkpoint_path = Path(checkpoint).expanduser().resolve()
+    payload: dict[str, object] = {
+        "dataset": config.data.dataset,
+        "split": split,
+        "evaluation_kind": (
+            "direct-speech-overfit"
+            if config.data.dataset == "direct-speech-overfit"
+            else "streaming"
+        ),
+        "checkpoint": str(checkpoint_path),
+        "checkpoint_sha256": file_sha256(checkpoint_path),
+        "data_identity": None,
+        **(
+            asdict(result)
+            if is_dataclass(result)
+            else dict(getattr(result, "__dict__", {}))
+        ),
+    }
+    if config.data.dataset in {"canary", "pilot", "production"}:
+        manifest = (
+            config.runtime.data_path()
+            / config.data.dataset
+            / "v1"
+            / "shards"
+            / "processed"
+            / split
+            / f"{split}-manifest.jsonl"
+        )
+    else:
+        manifest = Path(config.data.manifest).expanduser() if config.data.manifest else None
+        if manifest and not manifest.is_absolute():
+            manifest = config.runtime.data_path() / manifest
+    if manifest and manifest.is_file():
+        payload["data_identity"] = file_sha256(manifest)
+    if "passed" not in payload:
+        # Streaming Canary/Pilot/Production reports expose measurements but do not
+        # claim a quality gate until thresholds are configured for that dataset.
+        payload["passed"] = None
+    else:
+        payload["passed"] = bool(payload["passed"])
+    return payload
 
 
 class _ClassificationCounts:
@@ -293,3 +344,39 @@ def evaluate_canary_checkpoint(
         autoregressive_speech_control_per_class_f1=autoregressive_control.f1()[0].tolist(),
         autoregressive_speech_control_confusion=autoregressive_control.matrix.tolist(),
     )
+
+
+def evaluate_checkpoint(
+    config: ProjectConfig,
+    checkpoint: str | Path,
+    *,
+    split: str = "validation",
+    device: str | torch.device | None = None,
+    codec_threshold: float = 0.9,
+    control_f1_threshold: float = 0.9,
+) -> CanaryEvaluation | OverfitEvaluation:
+    """Evaluate any configured dataset using the shared public entry point."""
+    if config.data.dataset == "direct-speech-overfit":
+        return evaluate_overfit_checkpoint(
+            config,
+            checkpoint,
+            device=device,
+            codec_threshold=codec_threshold,
+            control_f1_threshold=control_f1_threshold,
+        )
+    if config.data.dataset in {"canary", "pilot", "production"}:
+        evaluation_config = deepcopy(config)
+        split_root = (
+            evaluation_config.runtime.data_path()
+            / evaluation_config.data.dataset
+            / "v1"
+            / "shards"
+            / "processed"
+            / split
+        )
+        evaluation_config.data.shards = str(split_root / f"{split}-*.tar")
+        evaluation_config.data.manifest = str(split_root / f"{split}-manifest.jsonl")
+        return evaluate_canary_checkpoint(
+            evaluation_config, checkpoint, split=split, device=device
+        )
+    raise ValueError(f"evaluation is not defined for dataset={config.data.dataset!r}")

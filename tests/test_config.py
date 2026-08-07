@@ -13,6 +13,14 @@ def test_load_config_with_override() -> None:
     assert config.data.codec_frame_rate == 12.5
 
 
+def test_local_dev_and_production_profiles_are_explicit() -> None:
+    local = load_config("configs/local-dev.yaml")
+    production = load_config("configs/production.yaml")
+    assert local.data.dataset == "synthetic"
+    assert production.data.dataset == "production"
+    assert production.model.model_dim == 896
+
+
 def test_config_rejects_incompatible_attention_width() -> None:
     with pytest.raises(ValueError, match="divisible"):
         load_config("configs/smoke.yaml", ["model.model_dim=63"])

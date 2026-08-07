@@ -27,11 +27,11 @@ scripts/download-mimi.sh
 scripts/codec-worker.sh
 
 uv run latentloop benchmark-codec \
-  --config configs/local-25m.yaml \
+  --config configs/local-dev.yaml \
   --socket ~/latentloop-data/runtime/sockets/mimi.sock
 
 uv run latentloop benchmark-stream \
-  --config configs/local-25m.yaml \
+  --config configs/local-dev.yaml \
   --socket ~/latentloop-data/runtime/sockets/mimi.sock
 ```
 
@@ -89,18 +89,18 @@ Schema v2 episode 包含：
 
 ```bash
 uv run latentloop import-speech \
-  --config configs/local-25m.yaml \
+  --config configs/local-dev.yaml \
   --manifest '~/latentloop-data/datasets/generated/direct-speech/sources/direct-speech-10h.jsonl' \
   --output '~/latentloop-data/datasets/generated/direct-speech/staging/train/train-%06d.tar'
 
 uv run latentloop encode-speech \
-  --config configs/local-25m.yaml \
+  --config configs/local-dev.yaml \
   --shards '~/latentloop-data/datasets/generated/direct-speech/staging/train/train-*.tar' \
   --output '~/latentloop-data/datasets/generated/direct-speech/processed/train/train-%06d.tar' \
   --socket ~/latentloop-data/runtime/sockets/mimi.sock
 
 uv run latentloop validate-data \
-  --config configs/local-25m.yaml \
+  --config configs/local-dev.yaml \
   --shards '~/latentloop-data/datasets/generated/direct-speech/processed/train/train-*.tar'
 ```
 
@@ -145,7 +145,7 @@ uv run latentloop encode-speech \
 uv run latentloop validate-data --config configs/direct-speech-overfit.yaml
 uv run latentloop train --config configs/direct-speech-overfit.yaml
 
-uv run latentloop evaluate-overfit \
+uv run latentloop evaluate \
   --config configs/direct-speech-overfit.yaml \
   --checkpoint '~/latentloop-data/experiments/gates/direct-speech-overfit/default/checkpoints/step-00000256.pt' \
   --report '~/latentloop-data/experiments/gates/direct-speech-overfit/default/reports/evaluation.json'
@@ -168,7 +168,7 @@ scheduled sampling 或 sequence-level distillation，并把自由生成指标作
 - SpeechControl macro-F1 不低于 0.90，边界误差不超过 80 ms。
 - 受控回复准确率至少 80%，中文 CER 不高于 25%，英文 WER 不高于 30%。
 - 连续 10 分钟无帧漂移、NaN、削波或队列增长；边界突变 p95 不超过内部差分基线 6 dB。
-- 0.0496B 本地主模型加 CUDA codec worker 峰值显存低于 7.5 GiB，codec RTF 小于 1，单帧 p95 小于 80 ms。
+- 0.0507B 本地主模型加 CUDA codec worker 峰值显存低于 7.5 GiB，codec RTF 小于 1，单帧 p95 小于 80 ms。
 - 推理依赖图中不存在文本生成、TTS、额外音频通道、SelfSpeechTrace 或 codec token 回灌。
 
 这些是直接流式语音的完成门槛。通用开放域对话能力依赖后续 MiniCPM 迁移，不以本机从零训练模型冒充。

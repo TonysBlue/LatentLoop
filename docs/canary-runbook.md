@@ -25,25 +25,28 @@
 
 ## 一键执行
 
-首次运行先用 5 个 update 验证完整闭环。离线 tracking 不要求 W&B 登录：
+首次运行先把 Canary recipe 的 `max_updates` 临时覆盖为 5，验证完整闭环。离线 tracking 不要求 W&B 登录：
 
 ```bash
 cd ~/LatentLoop
-CANARY_MAX_UPDATES=5 CANARY_TRACKING_MODE=offline scripts/run-canary.sh all
+scripts/prepare-data.sh canary all
+scripts/run-training.sh --recipe configs/recipes/canary.yaml --run-id canary-001 \
+  --set training.max_updates=5 --set training.checkpoint_every=5 \
+  --set tracking.mode=offline
 ```
 
-每个阶段都有内容哈希和收据，可以安全重跑。中断后执行同一命令会复用已验证的下载、
-规范化音频、TTS 缓存和 episode。脚本会按阶段启动和关闭 worker，失败时也会清理当前
+每个数据阶段都有内容哈希和收据，可以安全重跑。使用同一 `--run-id` 重试会复用已验证的
+checkpoint；更换 run ID 会创建隔离实验。中断后执行同一命令会复用已验证的下载、规范化音频、
+TTS 缓存和 episode。脚本会按阶段启动和关闭 worker，失败时也会清理当前
 worker。
 
-终端只显示阶段任务、运行时间和关键指标。各子命令的完整 stdout/stderr 保存到本次运行目录：
+训练 recipe 会为每个 stage 保存独立 checkpoint、validation 和最终 test 报告。完整日志保存到本次实验目录：
 
 ```text
-~/latentloop-data/experiments/canary/default/logs/<UTC 时间>-<PID>/
-  prepare.log
-  encode.log
-  train.log
-  evaluate.log
+~/latentloop-data/experiments/canary/<run-id>/end-to-end/
+  checkpoints/
+  reports/
+  recipe-report.json
 ```
 
 长阶段每 30 秒打印一次 elapsed time。阶段失败时，终端会自动打印对应日志的最后 60 行；
@@ -55,22 +58,24 @@ worker。
 
 ```bash
 # 1. 下载并校验真实语料、CosyVoice2 和 SenseVoice
-scripts/run-canary.sh bootstrap
+scripts/prepare-data.sh canary bootstrap
 
 # 2. 规范化、生成计划、CosyVoice2 合成、SenseVoice CER/WER 门禁、构造 manifest
-scripts/run-canary.sh prepare
+scripts/prepare-data.sh canary prepare
 
 # 3. Mimi decode 门禁、正式审计和三个 split 的 codec 编码
-scripts/run-canary.sh encode
+scripts/prepare-data.sh canary encode
 
 # 4. 训练 5 update 并评测 validation/test
-CANARY_MAX_UPDATES=5 CANARY_TRACKING_MODE=offline scripts/run-canary.sh train
+scripts/run-training.sh --recipe configs/recipes/canary.yaml --run-id canary-001 \
+  --set training.max_updates=5 --set training.checkpoint_every=5 \
+  --set tracking.mode=offline
 ```
 
 W&B Local 已登录时可把最后一条的 tracking 切成在线：
 
 ```bash
-CANARY_MAX_UPDATES=5 CANARY_TRACKING_MODE=online scripts/run-canary.sh train
+scripts/run-training.sh --recipe configs/recipes/canary.yaml --run-id canary-001
 ```
 
 ## 正式 Canary 训练
@@ -78,18 +83,15 @@ CANARY_MAX_UPDATES=5 CANARY_TRACKING_MODE=online scripts/run-canary.sh train
 短闭环成功后运行配置中的 2000 updates：
 
 ```bash
-CANARY_RUN_ID=canary-2000 \
-CANARY_MAX_UPDATES=2000 \
-CANARY_TRACKING_MODE=online \
-scripts/run-canary.sh train
+scripts/run-training.sh --recipe configs/recipes/canary.yaml --run-id canary-001
 ```
 
 没有兼容的状态闭环基础 checkpoint 时，这会从随机初始化训练全部主干，用于验证训练系统和观察
-Canary 拟合曲线；有兼容 checkpoint 时设置：
+Canary 拟合曲线。需要使用兼容基础 checkpoint 时，把固定路径写入 recipe 的
+`initial_checkpoint`，并保持 stage 配置与该 checkpoint 的模型结构、codec 身份一致：
 
 ```bash
-CANARY_INIT_CHECKPOINT="$HOME/latentloop-data/checkpoints/base/state-loop.pt" \
-CANARY_MAX_UPDATES=2000 scripts/run-canary.sh train
+scripts/run-training.sh --recipe configs/recipes/pilot.yaml --run-id pilot-001
 ```
 
 Canary 与正式训练使用同一条连续 episode TBPTT 路径：按时间顺序处理每个 episode，跨 chunk
@@ -107,10 +109,10 @@ chunk 计算梯度，chunk 之间 detach 状态。Canary 只缩小数据量和 u
 ```text
 ~/latentloop-data/datasets/canary/v1/reports/{audit,codec-benchmark,readiness}.json
 ~/latentloop-data/datasets/canary/v1/shards/processed/{train,validation,test}/*.tar
-~/latentloop-data/experiments/canary/default/checkpoints/step-00000005.pt
-~/latentloop-data/experiments/canary/default/runs/training.json
-~/latentloop-data/experiments/canary/default/runs/validation-evaluation.json
-~/latentloop-data/experiments/canary/default/runs/test-evaluation.json
+~/latentloop-data/experiments/canary/<run-id>/end-to-end/checkpoints/step-00000005.pt
+~/latentloop-data/experiments/canary/<run-id>/end-to-end/reports/validation.json
+~/latentloop-data/experiments/canary/<run-id>/end-to-end/reports/test.json
+~/latentloop-data/experiments/canary/<run-id>/recipe-report.json
 ```
 
 `canary-audit.json` 必须为 `passed: true`，readiness 必须没有失败项，validation/test
@@ -128,8 +130,6 @@ LATENTLOOP_DATA_ROOT=/data/latentloop/datasets \
 LATENTLOOP_ASSET_ROOT=/data/latentloop/assets \
 LATENTLOOP_EXPERIMENT_ROOT=/data/latentloop/experiments \
 LATENTLOOP_RUNTIME_ROOT=/data/latentloop/runtime \
-CANARY_RUN_ID=canary-001 \
-CANARY_MAX_UPDATES=5 \
-CANARY_TRACKING_MODE=offline \
-scripts/run-canary.sh all
+scripts/prepare-data.sh canary all
+scripts/run-training.sh --recipe configs/recipes/canary.yaml --run-id canary-001
 ```
