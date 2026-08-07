@@ -1,0 +1,271 @@
+# LatentLoop Agent Instructions
+
+This file is the repository-level operating contract for coding agents and
+developers. Read it before changing code, configuration, data tooling, or
+training scripts. More specific `AGENTS.md` files, if added later, override
+this file only for their directory. System, developer, and user instructions
+always take precedence over this document.
+
+## Project Mission
+
+LatentLoop is a research and training harness for an always-on, real-time,
+full-duplex multimodal agent. The model consumes one mixed microphone stream,
+screen frames, and recurrent state; it directly predicts speech codec tokens
+and has an independent action head. The surrounding harness is responsible
+for workers, playback, computer control, and deployment integration.
+
+The repository is a research implementation, not a product UI. Prefer
+reproducibility, explicit contracts, measurable gates, and small reversible
+changes over convenience abstractions.
+
+## Core Principle: Same Code Path
+
+Canary, Pilot, and Production must use the same training implementation.
+Differences belong in YAML configuration, recipe composition, data scale, and
+initial checkpoints, not in copied Python or shell training loops.
+
+- All optimizer training goes through `src/latentloop/training.py::train`.
+- Multi-stage execution goes through `src/latentloop/recipe.py::run_recipe`.
+- The public orchestration wrapper is `scripts/run-training.sh`.
+- Evaluation goes through `latentloop evaluate` and
+  `src/latentloop/evaluation.py::evaluate_checkpoint`.
+- Data preparation goes through `scripts/prepare-data.sh` and the shared
+  curation modules.
+- Do not add `run-canary.sh`, `train-pilot.py`, `production_training.py`, or
+  another stage-specific code path.
+- E1/E2 and similar milestone labels are process terminology only. Do not put
+  them in source filenames, package names, configuration keys, artifact
+  directories, or CLI commands. They may appear in a design document's plan.
+
+When a stage needs new behavior, first add a configuration field or a shared
+capability with tests. Only add stage-specific branching when the data/model
+contract genuinely differs, and document why in the design documentation.
+
+## Repository Map
+
+- `src/latentloop/model/`: streaming model, encoders, attention, speech head,
+  and action head. Keep model math here; do not put orchestration here.
+- `src/latentloop/training.py`: the single training loop, optimizer groups,
+  TBPTT, recurrent state, checkpoint cadence, metrics, and readiness call.
+- `src/latentloop/recipe.py`: recipe loading, stage chaining, run IDs,
+  checkpoint identity checks, and validation/test orchestration.
+- `src/latentloop/data/`: synthetic data, WebDataset readers, speech import,
+  codec targets, and curation APIs.
+- `src/latentloop/data/curation/`: source locks, manifests, synthesis,
+  audits, Mimi checks, readiness, and encoded shard preparation.
+- `src/latentloop/evaluation.py`: shared validation/test evaluation and
+  lineage-bearing reports.
+- `src/latentloop/checkpoint.py`: atomic checkpoint save/load and identity
+  validation. Do not bypass it for normal training.
+- `src/latentloop/tracking.py`: W&B Local/online/offline integration.
+- `configs/`: model/data/training profiles, stage configs, and recipes.
+- `scripts/`: thin, fail-fast wrappers around `uv run` commands and workers.
+- `tools/`: external adapters and dataset utilities. Keep external model
+  environments isolated in their existing subprojects.
+- `tests/`: unit, contract, integration, checkpoint, curation, and training
+  tests.
+- `docs/`: architecture, local platform, data runbooks, and experiment notes.
+
+## Architecture Contracts
+
+Do not silently change these invariants:
+
+- Stream clock: one unit is 80 ms, 24 kHz audio, and exactly one Mimi frame.
+- Codec identity: `mimi-24khz-8x2048`, eight codebooks, vocabulary 2048,
+  with the configured revision and weight SHA-256.
+- Context: the production profile retains 60 seconds (`750` units) of bounded
+  per-layer KV state. KV is bounded and oldest context is evicted according to
+  the model implementation; do not introduce unbounded cache growth.
+- State: recurrent KV, latent slots, audio cache, and speech-local state are
+  carried across TBPTT chunks within an episode and detached between chunks.
+  State resets at episode/session boundaries, not at every sampling window.
+- Inputs: training examples use the single mixed microphone signal plus screen
+  input. Do not add privileged source stems, playback-reference channels, or
+  inference-only labels to the model input contract.
+- Outputs: speech is direct codec-token prediction. TTS is a data-preparation
+  adapter only; it is not a second runtime speech target. Actions remain an
+  independent action head.
+- `latent_write_loss_weight` is intentionally zero in the current profiles.
+  Change it only with an explicit objective, supervision definition, and
+  regression evidence.
+- Do not reintroduce balanced-window training or per-window state reset. If
+  speech supervision is sparse, fix the dataset composition and report the
+  resulting supervision density.
+
+## Configurations and Recipes
+
+Use the existing profiles rather than creating ad hoc command-line model
+definitions:
+
+- `configs/smoke.yaml`: fast synthetic development and tests.
+- `configs/local-dev.yaml`: local synthetic GPU profile.
+- `configs/canary.yaml`: real Canary profile.
+- `configs/pilot.yaml`: Pilot profile.
+- `configs/production.yaml`: formal production model/data contract.
+- `configs/direct-speech-overfit.yaml`: deterministic speech gate.
+- `configs/stages/*.yaml`: complete stage configurations inherited from a
+  profile.
+- `configs/recipes/*.yaml`: ordered stage composition and evaluation policy.
+
+Canary, Pilot, and Production recipes must keep validation after each stage
+and test after the final stage unless a documented experiment explicitly says
+otherwise. Use fixed `max_updates` for reproducible runs. Configuration
+overrides are for experiments and short regressions, not for hiding a changed
+production contract.
+
+## Data and External Assets
+
+The default data root is `~/latentloop-data/datasets`; generated datasets,
+audio, model weights, sockets, checkpoints, and W&B state do not belong in the
+Git repository.
+
+Data preparation is fail-closed:
+
+```bash
+scripts/prepare-data.sh canary all
+uv run latentloop check-readiness --config configs/canary.yaml
+```
+
+Real Canary/Pilot assets must have locked source versions, licenses, archive
+hashes, manifests, audit reports, encoded shards, and Mimi reports. Production
+data is an external production asset; never fabricate it or silently fall
+back to a fixture. Fixture data is allowed only for explicit local tests and
+must remain visibly marked as fixture.
+
+Readiness must verify the configured train manifest and shards belong to the
+selected dataset and that Mimi identity and manifest hashes match. Do not
+weaken a gate to make a run pass. If a real asset is unavailable, report the
+missing asset and keep the failure explicit.
+
+## Runs, Checkpoints, and Lineage
+
+Use an explicit run ID for anything that may be resumed or compared:
+
+```bash
+scripts/run-training.sh \
+  --recipe configs/recipes/canary.yaml \
+  --run-id canary-001 \
+  --set training.max_updates=5 \
+  --set tracking.mode=offline
+```
+
+Artifacts are isolated under:
+
+```text
+<experiment-root>/<recipe>/<run-id>/<stage>/
+```
+
+Reuse a run ID only when intentionally resuming the exact same stage. A
+changed config, model shape, data manifest, codec revision, or codec weight
+must use a new run ID. The recipe runner rejects incompatible checkpoints;
+never work around this by deleting metadata or manually loading weights.
+
+Pilot and Production stages using `frozen` or `selective` backbone training
+must receive a compatible initial checkpoint through the recipe's
+`initial_checkpoint`, or resume a compatible stage checkpoint. Canary may run
+from random initialization when it is explicitly being used as a small,
+end-to-end training run.
+
+## W&B Local and Experiment Tracking
+
+W&B Local is the default tracking target at `http://127.0.0.1:8080`.
+
+- Use `tracking.mode=online` only when the local server is healthy and the CLI
+  credentials are configured.
+- Use `tracking.mode=offline` for reproducible runs without the server.
+- Use `tracking.mode=disabled` only for tests or deliberately untracked smoke
+  runs.
+- Do not put API keys, `.netrc`, database files, or W&B media in Git.
+- Preserve config hash, data identity, codec identity, Git state, run ID,
+  stage name, and parent checkpoint hash in tracking metadata.
+- Metrics must be logged at the configured update cadence. Do not add a second
+  logging loop in a stage script.
+
+## Development Workflow
+
+Before editing, inspect the relevant config, implementation, tests, and docs.
+Keep a change scoped to the requested behavior. Do not revert unrelated user
+changes or rewrite generated artifacts.
+
+For Python changes, use `apply_patch`, preserve type hints and existing local
+patterns, and keep comments limited to non-obvious invariants. Prefer
+structured parsers and APIs over ad hoc string parsing. Use ASCII for new code
+unless the surrounding document intentionally uses another character set.
+
+For shell changes:
+
+- start with `set -euo pipefail`;
+- quote paths and variables;
+- fail on missing required arguments and external assets;
+- keep wrappers thin and delegate behavior to Python modules or existing
+  worker scripts;
+- ensure cleanup traps stop workers on success, failure, and interruption.
+
+Do not add dependencies without updating `pyproject.toml`/the relevant
+subproject lockfile and explaining why the existing stack is insufficient.
+
+## Verification Commands
+
+Run the narrowest relevant tests while iterating, then run the full gate before
+finishing:
+
+```bash
+uv run pytest -q
+uv run ruff check src tests tools/curation
+uv run python -m compileall -q src tools/curation
+bash -n scripts/*.sh scripts/lib/*.sh
+git diff --check
+```
+
+For configuration or data-contract changes also run:
+
+```bash
+uv run latentloop inspect-model --config configs/smoke.yaml
+uv run latentloop check-readiness --config configs/canary.yaml
+```
+
+For a real-data end-to-end regression, use a unique run ID and a small update
+count. The validation/test pass may take several minutes because it replays
+the full split on the GPU; do not mistake a slow evaluation for a hung process
+without checking GPU/process activity.
+
+Expected real Canary artifacts include a passed readiness report, processed
+train/validation/test shards, a checkpoint, and validation/test reports with
+non-zero episode and speech-frame counts. Report runtime, update count,
+consumed units, supervision density, peak memory, and W&B mode when summarizing
+the run.
+
+## Tests and Regression Expectations
+
+Add or update tests with behavior changes:
+
+- config validation for new fields and invariants;
+- recipe tests for stage chaining, run isolation, resume, and incompatible
+  checkpoint rejection;
+- readiness tests for missing assets, wrong dataset paths, codec mismatch,
+  failed Mimi segments, and hash mismatch;
+- checkpoint tests for atomic save/load and identity checks;
+- model/training tests for state continuity, TBPTT detach behavior, metrics,
+  and gradient accumulation;
+- CLI/script tests for public command names and failure modes.
+
+Do not assert that a short Canary run has converged. A short Canary run proves
+the data, codec, training, checkpoint, and evaluation pipeline is executable;
+quality claims require a documented update budget and meaningful metrics.
+
+## Git and Completion Checklist
+
+Before declaring work complete:
+
+1. Confirm the requested behavior is implemented through the shared code path.
+2. Confirm no stage-specific duplicate loop or obsolete command was added.
+3. Add/update focused tests and run the full verification commands.
+4. Check that no data, checkpoint, secret, socket, W&B database, or generated
+   cache is staged.
+5. Review `git diff --check` and the final status.
+6. Summarize changed files, verification results, and any external assets or
+   long-running checks that were not available.
+
+Commits should be focused and use an imperative subject, for example:
+`Unify training stages through shared recipe path`. Do not amend or rewrite
+existing commits unless the user explicitly asks for it.
