@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -99,10 +100,21 @@ class TrackingConfig:
 
 @dataclass(slots=True)
 class RuntimeConfig:
-    data_root: str = "~/latentloop-data"
+    data_root: str = "~/latentloop-data/datasets"
+    experiment_root: str = "~/latentloop-data/experiments/local"
 
     def root_path(self) -> Path:
+        return Path(self.experiment_root).expanduser().resolve()
+
+    def data_path(self) -> Path:
         return Path(self.data_root).expanduser().resolve()
+
+    def tracking_path(self) -> Path:
+        """Return the shared W&B SDK directory, separate from experiment artifacts."""
+        value = os.environ.get("LATENTLOOP_TRACKING_ROOT")
+        if value:
+            return Path(value).expanduser().resolve()
+        return self.data_path().parent / "tracking"
 
 
 @dataclass(slots=True)

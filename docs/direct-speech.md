@@ -28,11 +28,11 @@ scripts/codec-worker.sh
 
 uv run latentloop benchmark-codec \
   --config configs/local-25m.yaml \
-  --socket ~/latentloop-data/run/mimi.sock
+  --socket ~/latentloop-data/runtime/sockets/mimi.sock
 
 uv run latentloop benchmark-stream \
   --config configs/local-25m.yaml \
-  --socket ~/latentloop-data/run/mimi.sock
+  --socket ~/latentloop-data/runtime/sockets/mimi.sock
 ```
 
 worker 重启后，runtime 用最近最多 250 个输出帧执行 reset 和重放，恢复 decoder 的局部连续状态。CPU `rustymimi` 可用于离线检查，但本机测得 `RTF=1.53`，不作为实时后端。
@@ -90,18 +90,18 @@ Schema v2 episode 包含：
 ```bash
 uv run latentloop import-speech \
   --config configs/local-25m.yaml \
-  --manifest '~/latentloop-data/sources/direct-speech-10h.jsonl' \
-  --output '~/latentloop-data/staging/train-%06d.tar'
+  --manifest '~/latentloop-data/datasets/generated/direct-speech/sources/direct-speech-10h.jsonl' \
+  --output '~/latentloop-data/datasets/generated/direct-speech/staging/train/train-%06d.tar'
 
 uv run latentloop encode-speech \
   --config configs/local-25m.yaml \
-  --shards '~/latentloop-data/staging/train-*.tar' \
-  --output '~/latentloop-data/processed/train-%06d.tar' \
-  --socket ~/latentloop-data/run/mimi.sock
+  --shards '~/latentloop-data/datasets/generated/direct-speech/staging/train/train-*.tar' \
+  --output '~/latentloop-data/datasets/generated/direct-speech/processed/train/train-%06d.tar' \
+  --socket ~/latentloop-data/runtime/sockets/mimi.sock
 
 uv run latentloop validate-data \
   --config configs/local-25m.yaml \
-  --shards '~/latentloop-data/processed/train-*.tar'
+  --shards '~/latentloop-data/datasets/generated/direct-speech/processed/train/train-*.tar'
 ```
 
 编码完成后，把生成的 `train-manifest.jsonl` 配置为 `data.manifest`，并把
@@ -132,23 +132,23 @@ SpeechControl 能否闭环，不代表自然语音或开放域对话能力。
 ```bash
 uv run latentloop build-overfit-data \
   --config configs/direct-speech-overfit.yaml \
-  --output '~/latentloop-data/direct-speech-overfit/staging/train-%06d.tar'
+  --output '~/latentloop-data/datasets/gates/direct-speech-overfit/v1/shards/staging/train/train-%06d.tar'
 
 scripts/codec-worker.sh
 
 uv run latentloop encode-speech \
   --config configs/direct-speech-overfit.yaml \
-  --shards '~/latentloop-data/direct-speech-overfit/staging/train-*.tar' \
-  --output '~/latentloop-data/direct-speech-overfit/processed/train-%06d.tar' \
-  --socket ~/latentloop-data/run/mimi.sock
+  --shards '~/latentloop-data/datasets/gates/direct-speech-overfit/v1/shards/staging/train/train-*.tar' \
+  --output '~/latentloop-data/datasets/gates/direct-speech-overfit/v1/shards/processed/train/train-%06d.tar' \
+  --socket ~/latentloop-data/runtime/sockets/mimi.sock
 
 uv run latentloop validate-data --config configs/direct-speech-overfit.yaml
 uv run latentloop train --config configs/direct-speech-overfit.yaml
 
 uv run latentloop evaluate-overfit \
   --config configs/direct-speech-overfit.yaml \
-  --checkpoint '~/latentloop-data/direct-speech-overfit-run/checkpoints/step-00000256.pt' \
-  --report '~/latentloop-data/direct-speech-overfit-run/runs/evaluation.json'
+  --checkpoint '~/latentloop-data/experiments/gates/direct-speech-overfit/default/checkpoints/step-00000256.pt' \
+  --report '~/latentloop-data/experiments/gates/direct-speech-overfit/default/reports/evaluation.json'
 ```
 
 本机实测 256 updates 用时 264.3 秒，训练峰值为 969 MB allocated、1000 MB

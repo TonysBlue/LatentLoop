@@ -190,7 +190,7 @@ def _data_identity(config: ProjectConfig) -> str:
     if config.data.manifest:
         manifest_path = Path(config.data.manifest).expanduser()
         if not manifest_path.is_absolute():
-            manifest_path = config.runtime.root_path() / manifest_path
+            manifest_path = config.runtime.data_path() / manifest_path
         return file_sha256(manifest_path)
     return config_hash(config.as_dict()["data"])
 

@@ -14,9 +14,11 @@ from latentloop.data.curation.common import (
     CATEGORIES,
     LANGUAGES,
     SPLITS,
+    dataset_path,
     ensure_tree,
     read_json,
     read_jsonl,
+    registry_path,
     require_sha256,
     sha256_file,
     stable_hash,
@@ -206,7 +208,7 @@ def _automatic_quality_report(
 
 
 def _validate_text_plan(root: Path, dataset: str, fixture: bool) -> dict[str, Any]:
-    path = root / "text" / f"{dataset}-plans.json"
+    path = dataset_path(root, dataset, "text", "plans.json")
     payload = read_json(path)
     if payload.get("dataset") != dataset or int(payload.get("schema_version", -1)) != 1:
         raise ValueError(f"{dataset} text plan schema or dataset is invalid")
@@ -251,7 +253,9 @@ def _mimi_report(
     root: Path, dataset: str, fixture: bool, path: str | Path | None
 ) -> dict[str, Any]:
     report_path = (
-        Path(path).expanduser() if path else root / "reports" / f"{dataset}-mimi-decode.json"
+        Path(path).expanduser()
+        if path
+        else dataset_path(root, dataset, "reports", "mimi-decode.json")
     )
     if fixture and not report_path.exists():
         return {"required": False, "checked_segments": 0, "path": str(report_path)}
@@ -272,10 +276,10 @@ def _mimi_report(
 
 
 def _check_canary_exclusion(root: Path, records: list[dict[str, Any]]) -> None:
-    path = root / "manifests" / "canary" / "episodes.jsonl"
+    path = dataset_path(root, "canary", "manifests", "episodes.jsonl")
     if not path.is_file():
         raise ValueError("Pilot audit requires an audited Canary manifest")
-    audit_path = root / "reports" / "canary-audit.json"
+    audit_path = dataset_path(root, "canary", "reports", "audit.json")
     if not audit_path.is_file():
         raise ValueError("Pilot audit requires a Canary audit report")
     audit = read_json(audit_path)
@@ -309,7 +313,7 @@ def audit_pilot_data(
 ) -> dict[str, Any]:
     root = Path(root).expanduser().resolve()
     ensure_tree(root)
-    manifest_path = root / "manifests" / dataset / "episodes.jsonl"
+    manifest_path = dataset_path(root, dataset, "manifests", "episodes.jsonl")
     records = read_jsonl(manifest_path)
     if not records:
         raise ValueError("Pilot manifest is empty")
@@ -387,7 +391,7 @@ def audit_pilot_data(
     stops = sum(int(row["stops"]) for row in quality_rows)
     if not fixture and dataset == "pilot" and (starts < 2_000 or stops < 2_000):
         raise ValueError("Pilot requires at least 2,000 START and STOP labels")
-    synthesis_path = root / "synthesized" / f"{dataset}-utterances.jsonl"
+    synthesis_path = dataset_path(root, dataset, "synthesized", "utterances.jsonl")
     synthesis = read_jsonl(synthesis_path)
     scores: dict[str, list[float]] = defaultdict(list)
     for receipt in synthesis:
@@ -408,7 +412,7 @@ def audit_pilot_data(
         raise ValueError("aggregate synthetic CER/WER exceeds 8%")
     text_plan = _validate_text_plan(root, dataset, fixture)
     if not fixture:
-        fetch_report = read_json(root / "reports" / "fetch-report.json")
+        fetch_report = read_json(registry_path(root, "reports", "fetch-report.json"))
         for source in fetch_report.get("sources", []):
             require_sha256(source.get("archive_sha256"), "source archive")
             require_sha256(source.get("license_sha256"), "source license")
@@ -429,7 +433,7 @@ def audit_pilot_data(
             "license_sha256": record["license_sha256"],
             "redistribution_allowed": record["redistribution_allowed"],
         }
-    reports = root / "reports" / dataset
+    reports = dataset_path(root, dataset, "reports")
     reports.mkdir(parents=True, exist_ok=True)
     license_report = {"licenses": list(license_records.values())}
     quota_report = {"dataset": dataset, "total_seconds": total, "buckets": quota_rows}
@@ -473,5 +477,5 @@ def audit_pilot_data(
         "reports": str(reports),
         "passed": True,
     }
-    write_json(root / "reports" / f"{dataset}-audit.json", result)
+    write_json(dataset_path(root, dataset, "reports", "audit.json"), result)
     return result

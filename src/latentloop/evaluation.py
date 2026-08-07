@@ -113,7 +113,7 @@ def load_evaluation_model(
     if require_data_identity and config.data.manifest:
         manifest = Path(config.data.manifest).expanduser()
         if not manifest.is_absolute():
-            manifest = config.runtime.root_path() / manifest
+            manifest = config.runtime.data_path() / manifest
         if metadata.get("data_identity") != file_sha256(manifest):
             raise ValueError("checkpoint data identity does not match the evaluation manifest")
     model = StreamingLatentLoop(config.model)

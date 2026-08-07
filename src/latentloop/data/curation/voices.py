@@ -8,6 +8,7 @@ from latentloop.data.curation.audio import fixture_voice, write_flac
 from latentloop.data.curation.common import (
     ensure_tree,
     read_json,
+    registry_path,
     relative_to_root,
     sha256_file,
     stable_hash,
@@ -31,7 +32,7 @@ def _validate_voice(record: dict[str, Any], root: Path) -> dict[str, Any]:
     suffix = path.suffix.lower()
     if suffix not in {".flac", ".wav"}:
         raise ValueError("voice prompt must be FLAC or WAV")
-    stored = root / "voices" / "prompts" / f"{record['voice_id']}-{actual[:12]}{suffix}"
+    stored = registry_path(root, "voices", "prompts", f"{record['voice_id']}-{actual[:12]}{suffix}")
     stored.parent.mkdir(parents=True, exist_ok=True)
     if not stored.exists() or sha256_file(stored) != actual:
         shutil.copy2(path, stored)
@@ -59,7 +60,7 @@ def select_pilot_voices(
             for split in ("train", "validation", "test")
         )
         for index, (voice_id, language, role, split) in enumerate(voice_specs):
-            prompt = root / "voices" / "fixture" / f"{voice_id}.flac"
+            prompt = registry_path(root, "voices", "fixture", f"{voice_id}.flac")
             write_flac(prompt, fixture_voice(voice_id, index))
             voices.append(
                 {
@@ -108,6 +109,6 @@ def select_pilot_voices(
         "voices": voices,
     }
     registry["registry_sha256"] = stable_hash(registry)
-    path = root / "voices" / "registry.json"
+    path = registry_path(root, "voices", "registry.json")
     write_json(path, registry)
     return {"path": str(path), "voices": len(voices), "sha256": sha256_file(path)}

@@ -59,7 +59,7 @@ class Tracker:
         if not config.tracking.enabled or config.tracking.mode == "disabled":
             return
         os.environ["WANDB_BASE_URL"] = config.tracking.base_url
-        wandb_directory = config.runtime.root_path() / "runs" / "wandb"
+        wandb_directory = config.runtime.tracking_path() / "wandb"
         wandb_directory.mkdir(parents=True, exist_ok=True)
         effective_mode = config.tracking.mode
         if effective_mode == "online" and not _server_is_healthy(config.tracking.base_url):
@@ -141,7 +141,7 @@ class Tracker:
     def media_allowed(self) -> bool:
         if self.run is None and self._effective_mode is None:
             return False
-        volume = self.config.runtime.root_path() / "runs" / "wandb"
+        volume = self.config.runtime.tracking_path() / "wandb"
         total_bytes = sum(path.stat().st_size for path in volume.rglob("*") if path.is_file())
         return total_bytes < self.config.tracking.media_stop_gb * 1024**3
 

@@ -70,4 +70,5 @@ tracking:
   media_warning_gb: 40
   media_stop_gb: 50
 runtime:
-  data_root: ~/latentloop-data
+  data_root: ~/latentloop-data/datasets
+  experiment_root: ~/latentloop-data/experiments/local-25m/default

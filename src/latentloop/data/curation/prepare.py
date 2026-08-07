@@ -13,9 +13,11 @@ from latentloop.data.codec_targets import encode_target_speech
 from latentloop.data.curation.audit import audit_pilot_data
 from latentloop.data.curation.common import (
     SPLITS,
+    dataset_path,
     ensure_tree,
     read_json,
     read_jsonl,
+    registry_root,
     sha256_file,
     write_json,
 )
@@ -55,7 +57,7 @@ def check_mimi_decode(
 ) -> dict[str, Any]:
     """Encode/decode target segments and write the report consumed by the audit gate."""
     root = Path(root).expanduser().resolve()
-    manifest_path = root / "manifests" / dataset / "episodes.jsonl"
+    manifest_path = dataset_path(root, dataset, "manifests", "episodes.jsonl")
     records = read_jsonl(manifest_path)
     manifest_hash = sha256_file(manifest_path)
     checked = 0
@@ -108,7 +110,7 @@ def check_mimi_decode(
         "codec_revision": client.identity.revision,
         "fixture": fixture,
     }
-    path = root / "reports" / f"{dataset}-mimi-decode.json"
+    path = dataset_path(root, dataset, "reports", "mimi-decode.json")
     write_json(path, report)
     return {**report, "path": str(path)}
 
@@ -123,9 +125,9 @@ def encode_pilot_shards(
     root = Path(root).expanduser().resolve()
     results: list[dict[str, Any]] = []
     for split in SPLITS:
-        manifest = root / "manifests" / dataset / f"{split}.jsonl"
-        staging = root / "staging" / dataset / split / f"{split}-%06d.tar"
-        processed = root / "processed" / dataset / split / f"{split}-%06d.tar"
+        manifest = dataset_path(root, dataset, "manifests", f"{split}.jsonl")
+        staging = dataset_path(root, dataset, "shards", "staging", split, f"{split}-%06d.tar")
+        processed = dataset_path(root, dataset, "shards", "processed", split, f"{split}-%06d.tar")
         write_episode_shards(
             import_speech_manifest(manifest, config.data, config.model), staging
         )
@@ -158,7 +160,7 @@ def encode_pilot_shards(
             }
         )
     report = {"dataset": dataset, "splits": results, "codec_id": config.data.codec_id}
-    write_json(root / "reports" / f"{dataset}-encoded-report.json", report)
+    write_json(dataset_path(root, dataset, "reports", "encoded.json"), report)
     return report
 
 
@@ -227,9 +229,13 @@ def prepare_pilot_data(
             )
             mimi_path = str(mimi["path"])
         else:
-            report_dir = Path(mimi_report_dir).expanduser() if mimi_report_dir else root / "reports"
-            candidate = report_dir / f"{dataset_name}-mimi-decode.json"
-            manifest_path = root / "manifests" / dataset_name / "episodes.jsonl"
+            report_dir = (
+                Path(mimi_report_dir).expanduser()
+                if mimi_report_dir
+                else dataset_path(root, dataset_name, "reports")
+            )
+            candidate = report_dir / "mimi-decode.json"
+            manifest_path = dataset_path(root, dataset_name, "manifests", "episodes.jsonl")
             current_manifest_hash = sha256_file(manifest_path)
             provided = False
             if candidate.is_file():
@@ -266,5 +272,5 @@ def prepare_pilot_data(
         "inventory": inventory,
         "datasets": datasets,
     }
-    write_json(root / "reports" / "prepare-report.json", result)
+    write_json(registry_root(root) / "prepare.json", result)
     return result

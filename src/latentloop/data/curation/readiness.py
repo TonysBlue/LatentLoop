@@ -7,7 +7,7 @@ from typing import Any
 import torch
 
 from latentloop.config import ProjectConfig
-from latentloop.data.curation.common import SPLITS, read_json, read_jsonl, write_json
+from latentloop.data.curation.common import SPLITS, dataset_path, read_json, read_jsonl, write_json
 
 
 def _required(path: Path, label: str, missing: list[str]) -> None:
@@ -27,17 +27,17 @@ def check_pilot_readiness(
     root = Path(root).expanduser().resolve()
     missing: list[str] = []
     invalid: list[str] = []
-    audit_path = root / "reports" / f"{dataset}-audit.json"
+    audit_path = dataset_path(root, dataset, "reports", "audit.json")
     _required(audit_path, "audit report", missing)
     if audit_path.is_file() and not read_json(audit_path).get("passed"):
         invalid.append(f"audit report is not passed: {audit_path}")
     manifest_paths: dict[str, Path] = {}
     shard_paths: dict[str, list[Path]] = {}
     for split in SPLITS:
-        manifest = root / "manifests" / dataset / f"{split}.jsonl"
+        manifest = dataset_path(root, dataset, "manifests", f"{split}.jsonl")
         manifest_paths[split] = manifest
         _required(manifest, f"{split} manifest", missing)
-        processed = root / "processed" / dataset / split
+        processed = dataset_path(root, dataset, "shards", "processed", split)
         shards = sorted(processed.glob(f"{split}-*.tar"))
         shard_paths[split] = shards
         if require_encoded:
@@ -53,7 +53,9 @@ def check_pilot_readiness(
             if not manifest_paths[split].is_file():
                 continue
             source_entries = read_jsonl(manifest_paths[split])
-            processed_manifest = root / "processed" / dataset / split / f"{split}-manifest.jsonl"
+            processed_manifest = dataset_path(
+                root, dataset, "shards", "processed", split, f"{split}-manifest.jsonl"
+            )
             if processed_manifest.is_file():
                 encoded_entries = read_jsonl(processed_manifest)
                 if {entry["episode_id"] for entry in source_entries} != {
@@ -64,7 +66,7 @@ def check_pilot_readiness(
                     invalid.append(f"{split} processed manifest contains unencoded speech")
     mimi_reports = {}
     for split in (dataset,):
-        report = root / "reports" / f"{split}-mimi-decode.json"
+        report = dataset_path(root, dataset, "reports", "mimi-decode.json")
         _required(report, f"{split} Mimi decode report", missing)
         if report.is_file():
             mimi_reports[split] = read_json(report)
@@ -100,7 +102,7 @@ def check_pilot_readiness(
         "mimi_reports": mimi_reports,
         "free_disk_bytes": disk.free,
     }
-    write_json(root / "reports" / f"{dataset}-readiness.json", result)
+    write_json(dataset_path(root, dataset, "reports", "readiness.json"), result)
     if not result["passed"]:
         problems = "; ".join(missing + invalid)
         raise ValueError(f"Pilot training readiness failed: {problems}")

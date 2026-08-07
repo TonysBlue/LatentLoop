@@ -2,9 +2,11 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ROOT="${LATENTLOOP_DATA_ROOT:-$HOME/latentloop-data/datasets}"
+STORAGE_ROOT="${LATENTLOOP_STORAGE_ROOT:-$HOME/latentloop-data}"
+ROOT="${LATENTLOOP_DATA_ROOT:-$STORAGE_ROOT/datasets}"
 CFG="${CANARY_CONFIG:-$REPO/configs/canary.yaml}"
-RUN_ROOT="${CANARY_RUN_ROOT:-$HOME/latentloop-data/canary-run}"
+RUN_ID="${CANARY_RUN_ID:-default}"
+RUN_ROOT="${LATENTLOOP_EXPERIMENT_ROOT:-$STORAGE_ROOT/experiments}/canary/$RUN_ID"
 INIT_CHECKPOINT="${CANARY_INIT_CHECKPOINT:-}"
 MAX_UPDATES="${CANARY_MAX_UPDATES:-2000}"
 TRACKING_MODE="${CANARY_TRACKING_MODE:-online}"
@@ -29,9 +31,9 @@ readiness=(
 train=(
   uv run latentloop train
   --config "$CFG"
-  --set "data.shards=$ROOT/processed/canary/train/train-*.tar"
-  --set "data.manifest=$ROOT/processed/canary/train/train-manifest.jsonl"
-  --set "runtime.data_root=$RUN_ROOT"
+  --set "data.shards=$ROOT/canary/v1/shards/processed/train/train-*.tar"
+  --set "data.manifest=$ROOT/canary/v1/shards/processed/train/train-manifest.jsonl"
+  --set "runtime.experiment_root=$RUN_ROOT"
   --set "training.max_updates=$MAX_UPDATES"
   --set "training.checkpoint_every=$MAX_UPDATES"
   --set "tracking.mode=$TRACKING_MODE"
@@ -64,8 +66,8 @@ run_evaluation() {
   for split in validation test; do
     uv run latentloop evaluate-canary \
       --config "$CFG" \
-      --set "data.shards=$ROOT/processed/canary/$split/$split-*.tar" \
-      --set "data.manifest=$ROOT/processed/canary/$split/$split-manifest.jsonl" \
+      --set "data.shards=$ROOT/canary/v1/shards/processed/$split/$split-*.tar" \
+      --set "data.manifest=$ROOT/canary/v1/shards/processed/$split/$split-manifest.jsonl" \
       --checkpoint "$LATEST" --split "$split" \
       --report "$RUN_ROOT/runs/${split}-evaluation.json"
   done

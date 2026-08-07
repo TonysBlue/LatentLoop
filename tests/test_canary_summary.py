@@ -18,9 +18,10 @@ def run_summary(*args: str) -> str:
 
 
 def test_prepare_summary_reports_key_counts(tmp_path: Path) -> None:
-    reports = tmp_path / "reports"
+    reports = tmp_path / "canary" / "v1" / "reports"
+    registry = tmp_path / "registry"
     write_json(
-        reports / "prepare-report.json",
+        registry / "prepare.json",
         {
             "fetch": {
                 "sources": [
@@ -32,11 +33,11 @@ def test_prepare_summary_reports_key_counts(tmp_path: Path) -> None:
         },
     )
     write_json(
-        reports / "canary-synthesis-report.json",
+        reports / "synthesis.json",
         {"utterances": 12, "rejected": 1},
     )
     write_json(
-        reports / "canary-manifest-report.json",
+        reports / "manifest.json",
         {"episodes": 4, "quotas": [{"actual_seconds": 90.0}]},
     )
 

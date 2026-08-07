@@ -26,8 +26,8 @@ model:
   activation_checkpointing: true
 data:
   source: webdataset
-  shards: ~/latentloop-data/processed/train-{000000..000999}.tar
-  manifest: ~/latentloop-data/processed/train-manifest.jsonl
+  shards: ~/latentloop-data/datasets/research/v1/shards/processed/train/train-{000000..000999}.tar
+  manifest: ~/latentloop-data/datasets/research/v1/shards/processed/train/train-manifest.jsonl
   schema_version: 2
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
@@ -72,4 +72,5 @@ tracking:
   media_warning_gb: 40
   media_stop_gb: 50
 runtime:
-  data_root: ~/latentloop-data
+  data_root: ~/latentloop-data/datasets
+  experiment_root: ~/latentloop-data/experiments/research-0.2b/default

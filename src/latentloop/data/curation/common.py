@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 DATASETS = ("canary", "pilot")
+DATASET_VERSION = "v1"
 SPLITS = ("train", "validation", "test")
 CATEGORIES = ("public_speech", "synthetic_dialogue", "adjacent_turns", "screen_task")
 LANGUAGES = ("zh", "en")
@@ -18,22 +19,47 @@ def data_root(value: str | Path) -> Path:
     return Path(value).expanduser().resolve()
 
 
+def asset_root(root: str | Path) -> Path:
+    root = Path(root).expanduser().resolve()
+    value = os.environ.get("LATENTLOOP_ASSET_ROOT", root.parent / "assets")
+    return Path(value).expanduser().resolve()
+
+
+def source_root(root: str | Path) -> Path:
+    return asset_root(root) / "sources"
+
+
+def registry_root(root: str | Path) -> Path:
+    return Path(root).expanduser().resolve() / "registry"
+
+
+def registry_path(root: str | Path, *parts: str) -> Path:
+    return registry_root(root).joinpath(*parts)
+
+
+def dataset_root(root: str | Path, dataset: str) -> Path:
+    return Path(root).expanduser().resolve() / dataset / DATASET_VERSION
+
+
+def dataset_path(root: str | Path, dataset: str, *parts: str) -> Path:
+    return dataset_root(root, dataset).joinpath(*parts)
+
+
 def ensure_tree(root: Path) -> None:
-    for relative in (
-        "raw",
-        "licenses",
-        "text",
-        "voices",
-        "normalized",
-        "synthesized",
-        "reports",
-    ):
-        (root / relative).mkdir(parents=True, exist_ok=True)
+    registry_root(root).mkdir(parents=True, exist_ok=True)
+    for relative in ("licenses", "normalized", "voices", "reports", "synthesis-cache"):
+        registry_path(root, relative).mkdir(parents=True, exist_ok=True)
     for dataset in DATASETS:
-        (root / "manifests" / dataset).mkdir(parents=True, exist_ok=True)
+        dataset_root(root, dataset).mkdir(parents=True, exist_ok=True)
+        for relative in ("text", "synthesized", "normalized", "manifests", "reports"):
+            dataset_path(root, dataset, relative).mkdir(parents=True, exist_ok=True)
         for split in SPLITS:
-            (root / "staging" / dataset / split).mkdir(parents=True, exist_ok=True)
-            (root / "processed" / dataset / split).mkdir(parents=True, exist_ok=True)
+            dataset_path(root, dataset, "shards", "staging", split).mkdir(
+                parents=True, exist_ok=True
+            )
+            dataset_path(root, dataset, "shards", "processed", split).mkdir(
+                parents=True, exist_ok=True
+            )
 
 
 def sha256_file(path: str | Path) -> str:

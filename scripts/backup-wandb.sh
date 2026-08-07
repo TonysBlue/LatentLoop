@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-backup_root="${LATENTLOOP_STORAGE_ROOT:-$HOME/latentloop-data}/backups"
+backup_root="${LATENTLOOP_STORAGE_ROOT:-$HOME/latentloop-data}/backups/wandb"
 mkdir -p "$backup_root"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 target="$backup_root/wandb-local-$timestamp.tar.gz"

@@ -15,7 +15,7 @@ from latentloop.data.curation import (
     select_pilot_voices,
     synthesize_pilot,
 )
-from latentloop.data.curation.common import read_jsonl, sha256_file
+from latentloop.data.curation.common import dataset_path, read_jsonl, registry_path, sha256_file
 from latentloop.data.curation.manifest import _duration_subset
 from latentloop.data.curation.prepare import prepare_pilot_data
 from latentloop.types import SpeechControl
@@ -41,15 +41,15 @@ def test_fixture_pipeline_is_resumable_and_isolates_canary(tmp_path: Path) -> No
     _fixture_pipeline(root, "canary")
     _fixture_pipeline(root, "pilot")
 
-    canary = read_jsonl(root / "manifests" / "canary" / "episodes.jsonl")
-    pilot = read_jsonl(root / "manifests" / "pilot" / "episodes.jsonl")
+    canary = read_jsonl(dataset_path(root, "canary", "manifests", "episodes.jsonl"))
+    pilot = read_jsonl(dataset_path(root, "pilot", "manifests", "episodes.jsonl"))
     canary_sources = {source for record in canary for source in record["source_utterance_ids"]}
     pilot_sources = {source for record in pilot for source in record["source_utterance_ids"]}
     assert canary_sources.isdisjoint(pilot_sources)
     assert {record["plan_id"] for record in canary if record.get("plan_id")}.isdisjoint(
         {record["plan_id"] for record in pilot if record.get("plan_id")}
     )
-    manifest = root / "manifests" / "pilot" / "episodes.jsonl"
+    manifest = dataset_path(root, "pilot", "manifests", "episodes.jsonl")
     before = sha256_file(manifest)
 
     second = fetch_pilot_data(root, fixture=True)
@@ -57,10 +57,10 @@ def test_fixture_pipeline_is_resumable_and_isolates_canary(tmp_path: Path) -> No
 
     assert first["inventory_sha256"] == second["inventory_sha256"]
     assert sha256_file(manifest) == before
-    assert (root / "reports" / "pilot" / "data-card.md").is_file()
-    assert (root / "reports" / "pilot" / "license-report.json").is_file()
-    assert (root / "reports" / "pilot" / "quota-report.json").is_file()
-    assert (root / "reports" / "pilot" / "quality-report.json").is_file()
+    assert (dataset_path(root, "pilot", "reports") / "data-card.md").is_file()
+    assert (dataset_path(root, "pilot", "reports") / "license-report.json").is_file()
+    assert (dataset_path(root, "pilot", "reports") / "quota-report.json").is_file()
+    assert (dataset_path(root, "pilot", "reports") / "quality-report.json").is_file()
 
 
 def test_automatic_prepare_does_not_require_review_ledger(tmp_path: Path) -> None:
@@ -69,10 +69,10 @@ def test_automatic_prepare_does_not_require_review_ledger(tmp_path: Path) -> Non
     assert result["datasets"]["canary"]["audit"]["passed"]
     assert result["datasets"]["pilot"]["audit"]["passed"]
     quality = json.loads(
-        (root / "reports" / "pilot" / "quality-report.json").read_text(encoding="utf-8")
+        (dataset_path(root, "pilot", "reports") / "quality-report.json").read_text(encoding="utf-8")
     )
     assert quality["automatic_quality"]["mode"] == "automatic"
-    assert not (root / "reports" / "reviews" / "pilot.jsonl").exists()
+    assert not (root / "reviews" / "pilot.jsonl").exists()
 
 
 def test_pilot_manifest_import_has_segment_aware_training_masks(
@@ -82,7 +82,7 @@ def test_pilot_manifest_import_has_segment_aware_training_masks(
     fetch_pilot_data(root, fixture=True)
     select_pilot_voices(root, fixture=True)
     _fixture_pipeline(root, "canary")
-    records = read_jsonl(root / "manifests" / "canary" / "episodes.jsonl")
+    records = read_jsonl(dataset_path(root, "canary", "manifests", "episodes.jsonl"))
     public_record = next(record for record in records if record["category"] == "public_speech")
     dialogue_record = next(
         record for record in records if record["category"] == "synthetic_dialogue"
@@ -118,7 +118,7 @@ def test_manifest_interleaves_supervision_categories_deterministically(tmp_path:
     synthesize_pilot(root, dataset="canary", fixture=True)
     build_pilot_manifest(root, dataset="canary", fixture=True)
 
-    train_path = root / "manifests" / "canary" / "train.jsonl"
+    train_path = dataset_path(root, "canary", "manifests", "train.jsonl")
     first = read_jsonl(train_path)
     first_hash = sha256_file(train_path)
     categories = [str(record["category"]) for record in first]
@@ -139,7 +139,7 @@ def test_manifest_interleaves_supervision_categories_deterministically(tmp_path:
 def test_production_fetch_requires_locked_source_lock(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires --lock"):
         fetch_pilot_data(tmp_path / "datasets")
-    assert (tmp_path / "datasets" / "raw" / "source-lock.template.json").is_file()
+    assert registry_path(tmp_path / "datasets", "source-lock.template.json").is_file()
 
 
 def test_production_text_plan_meets_scale_and_duration_mix(tmp_path: Path) -> None:

@@ -4,7 +4,11 @@
 
 canary_init_logs() {
   local default_root
-  default_root="${CANARY_RUN_ROOT:-$HOME/latentloop-data/canary-run}/logs"
+  local storage_root experiment_root run_id
+  storage_root="${LATENTLOOP_STORAGE_ROOT:-$HOME/latentloop-data}"
+  experiment_root="${LATENTLOOP_EXPERIMENT_ROOT:-$storage_root/experiments}"
+  run_id="${CANARY_RUN_ID:-default}"
+  default_root="$experiment_root/canary/$run_id/logs"
   if [[ -z "${CANARY_LOG_DIR:-}" ]]; then
     CANARY_LOG_DIR="${CANARY_LOG_ROOT:-$default_root}/$(date -u +%Y%m%dT%H%M%SZ)-$$"
   fi

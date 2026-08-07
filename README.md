@@ -36,11 +36,11 @@ RTX 2080 SUPER 8GB 上完成 FP16 反向和 AdamW 更新；实际长期训练仍
 ```bash
 uv run latentloop generate-data \
   --config configs/smoke.yaml \
-  --output "$HOME/latentloop-data/processed/train-%06d.tar"
+  --output "$HOME/latentloop-data/datasets/generated/train-%06d.tar"
 
 uv run latentloop validate-data \
   --config configs/smoke.yaml \
-  --shards "$HOME/latentloop-data/processed/train-*.tar"
+  --shards "$HOME/latentloop-data/datasets/generated/train-*.tar"
 ```
 
 32 轨迹真实 Mimi 过拟合门禁使用 `configs/direct-speech-overfit.yaml`，完整命令和本机
@@ -51,7 +51,7 @@ uv run latentloop validate-data \
 ```bash
 uv run latentloop generate-data \
   --config configs/smoke.yaml \
-  --output "$HOME/latentloop-data/processed/train-%06d.tar" \
+  --output "$HOME/latentloop-data/datasets/generated/train-%06d.tar" \
   --ray
 ```
 
@@ -61,11 +61,11 @@ uv run latentloop generate-data \
 uv run latentloop train --config configs/smoke.yaml
 uv run latentloop train \
   --config configs/smoke.yaml \
-  --resume "$HOME/latentloop-data/checkpoints/step-00000002.pt"
+  --resume "$HOME/latentloop-data/checkpoints/smoke/step-00000002.pt"
 ```
 
-训练数据默认写入 `~/latentloop-data/datasets`；checkpoint、W&B 离线 run 和 Ray 报告默认写入
-`~/latentloop-data` 下的独立目录，均不进入 Git。
+训练数据默认写入 `~/latentloop-data/datasets`；实验、稳定 checkpoint、W&B 和运行时文件分别
+写入 `experiments/`、`checkpoints/`、`tracking/` 和 `runtime/`。
 
 ## W&B Local
 
@@ -91,7 +91,7 @@ uv run latentloop train \
 scripts/wandb-local.sh logs
 scripts/backup-wandb.sh
 scripts/wandb-local.sh down
-scripts/restore-wandb.sh ~/latentloop-data/backups/wandb-local-<timestamp>.tar.gz
+scripts/restore-wandb.sh ~/latentloop-data/backups/wandb/wandb-local-<timestamp>.tar.gz
 ```
 直接流式语音使用 80 ms 主时钟与 Mimi 24 kHz codec。实现和运行命令见
 [`docs/direct-speech.md`](docs/direct-speech.md)。

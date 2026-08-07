@@ -139,7 +139,7 @@ def write_item(
     license_sha256: str,
 ) -> dict[str, Any]:
     meta = SOURCE_META[source_id]
-    output = root / "normalized" / "sources" / source_id / f"{item_id}.flac"
+    output = root / "registry" / "normalized" / "sources" / source_id / f"{item_id}.flac"
     output.parent.mkdir(parents=True, exist_ok=True)
     normalized = normalize(resample(waveform, rate)[: 15 * SAMPLE_RATE])
     sf.write(output, normalized, SAMPLE_RATE, format="FLAC", subtype="PCM_16")
@@ -190,8 +190,8 @@ def main() -> None:
     request = json.loads(args.request.read_text(encoding="utf-8"))
     if request.get("operation") != "index-and-normalize":
         raise ValueError("unsupported normalizer operation")
-    root = Path(request["raw_root"]).resolve().parent
-    fetch = json.loads((root / "reports" / "fetch-report.json").read_text())
+    root = Path(request["data_root"]).resolve()
+    fetch = json.loads((root / "registry" / "reports" / "fetch-report.json").read_text())
     paths = source_paths(fetch, root)
     licenses = {
         source["source_id"]: source["license_sha256"] for source in fetch["sources"]
@@ -297,7 +297,7 @@ def main() -> None:
     with args.output.open("w", encoding="utf-8") as handle:
         for record in sorted(records, key=lambda value: value["source_item_id"]):
             handle.write(json.dumps(record, sort_keys=True) + "\n")
-    assistant_prompt = root / "voices" / "bootstrap" / "zero_shot_prompt.wav"
+    assistant_prompt = root / "registry" / "voices" / "bootstrap" / "zero_shot_prompt.wav"
     if not assistant_prompt.is_file():
         raise FileNotFoundError(f"assistant prompt is absent: {assistant_prompt}")
     library = [
@@ -337,7 +337,7 @@ def main() -> None:
                     "prompt_text": prompt["text"],
                 }
             )
-    library_path = root / "voices" / "voice-library.json"
+    library_path = root / "registry" / "voices" / "voice-library.json"
     library_path.parent.mkdir(parents=True, exist_ok=True)
     library_path.write_text(
         json.dumps(library, indent=2, ensure_ascii=False, sort_keys=True) + "\n",

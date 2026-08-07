@@ -26,11 +26,8 @@ Canary 清单并拒绝任何 source 或 plan 复用。episode 时长是完整时
 默认根目录为 `~/latentloop-data/datasets`，也可以给每个命令传 `--root`：
 
 ```text
-raw/ licenses/ text/ voices/ normalized/ synthesized/
-manifests/{canary,pilot}/{train,validation,test,episodes}.jsonl
-staging/{canary,pilot}/{train,validation,test}/
-processed/{canary,pilot}/{train,validation,test}/
-reports/{canary,pilot}/
+registry/{source-lock.json,licenses/,normalized/,voices/,reports/}
+{canary,pilot}/v1/{text/,synthesized/,normalized/,manifests/,shards/,reports/}
 ```
 
 运行期音频、shard、模型和审计报告都在该根目录，不进入 Git。
@@ -90,8 +87,8 @@ mask 在 Pilot 保持 false，`PAUSE` 不使用。
 ```bash
 uv run latentloop audit-pilot-data --config "$CFG" --root "$ROOT" --dataset pilot
 uv run latentloop import-speech --config "$CFG" \
-  --manifest "$ROOT/manifests/pilot/train.jsonl" \
-  --output "$ROOT/staging/pilot/train/train-%06d.tar"
+  --manifest "$ROOT/pilot/v1/manifests/train.jsonl" \
+  --output "$ROOT/pilot/v1/shards/staging/train/train-%06d.tar"
 ```
 
 审计拒绝重复 ID、跨 split speaker/session/template/scenario、时间戳和音频错误、错误的
@@ -105,14 +102,14 @@ ROOT="$HOME/latentloop-data/datasets"
 CFG=configs/pilot.yaml
 
 uv run latentloop prepare-pilot-data --config "$CFG" --root "$ROOT" \
-  --lock "$ROOT/raw/source-lock.json" --download --extract \
-  --library "$ROOT/voices/voice-library.json" \
+  --lock "$ROOT/registry/source-lock.json" --download --extract \
+  --library "$ROOT/registry/voices/voice-library.json" \
   --synth-command 'path/to/cosyvoice-adapter' \
   --asr-command 'path/to/asr-adapter' \
   --model-sha256 '<64-char-cosyvoice-model-sha256>' \
   --normalize-command 'path/to/normalizer-adapter' \
   --screen-command 'path/to/screen-adapter' \
-  --socket "$HOME/latentloop-data/run/mimi.sock" --encode
+  --socket "$HOME/latentloop-data/runtime/sockets/mimi.sock" --encode
 ```
 
 `prepare-pilot-data` 会先完成 Canary 并通过自动审计，再构建排除 Canary 的 Pilot；`--encode`
@@ -133,6 +130,6 @@ uv run latentloop check-pilot-readiness --config "$CFG" --root "$ROOT" \
 
 ```bash
 uv run latentloop train --config configs/pilot.yaml \
-  --set data.shards="$ROOT/processed/pilot/train/train-*.tar" \
-  --set data.manifest="$ROOT/processed/pilot/train/train-manifest.jsonl"
+  --set data.shards="$ROOT/pilot/v1/shards/processed/train/train-*.tar" \
+  --set data.manifest="$ROOT/pilot/v1/shards/processed/train/train-manifest.jsonl"
 ```

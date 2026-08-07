@@ -21,9 +21,11 @@ from latentloop.data.curation.common import (
     CATEGORIES,
     LANGUAGES,
     SPLITS,
+    dataset_path,
     ensure_tree,
     read_json,
     read_jsonl,
+    registry_path,
     relative_to_root,
     sha256_file,
     stable_hash,
@@ -50,9 +52,9 @@ def build_source_inventory(command: str, root: str | Path) -> dict[str, Any]:
     """Build the normalized public-source inventory before synthesis starts."""
     root = Path(root).expanduser().resolve()
     ensure_tree(root)
-    output = root / "normalized" / "source-items.jsonl"
-    receipt_path = root / "normalized" / "source-items.receipt.json"
-    fetch_report = root / "reports" / "fetch-report.json"
+    output = registry_path(root, "normalized", "source-items.jsonl")
+    receipt_path = registry_path(root, "normalized", "source-items.receipt.json")
+    fetch_report = registry_path(root, "reports", "fetch-report.json")
     adapter_files = {}
     for argument in shlex.split(command):
         candidate = Path(argument).expanduser()
@@ -79,8 +81,9 @@ def build_source_inventory(command: str, root: str | Path) -> dict[str, Any]:
         json.dump(
             {
                 **recipe,
-                "raw_root": str(root / "raw"),
-                "licenses_root": str(root / "licenses"),
+                "raw_root": str(root.parent / "assets" / "sources"),
+                "licenses_root": str(registry_path(root, "licenses")),
+                "data_root": str(root),
                 "output": str(output),
             },
             request_file,
@@ -115,10 +118,10 @@ def _load_assets(
 ) -> tuple[
     list[dict[str, Any]], dict[str, Any], dict[tuple[str, str], dict[str, Any]], dict[str, Any]
 ]:
-    source_path = root / "normalized" / "source-items.jsonl"
-    plans_path = root / "text" / f"{dataset}-plans.json"
-    synthesis_path = root / "synthesized" / f"{dataset}-utterances.jsonl"
-    voices_path = root / "voices" / "registry.json"
+    source_path = registry_path(root, "normalized", "source-items.jsonl")
+    plans_path = dataset_path(root, dataset, "text", "plans.json")
+    synthesis_path = dataset_path(root, dataset, "synthesized", "utterances.jsonl")
+    voices_path = registry_path(root, "voices", "registry.json")
     for path in (source_path, plans_path, synthesis_path, voices_path):
         if not path.is_file():
             raise FileNotFoundError(f"required Pilot asset is absent: {path}")
@@ -158,10 +161,10 @@ def _load_assets(
 def _excluded(root: Path, dataset: str, fixture: bool) -> tuple[set[str], set[str]]:
     if dataset == "canary":
         return set(), set()
-    path = root / "manifests" / "canary" / "episodes.jsonl"
+    path = dataset_path(root, "canary", "manifests", "episodes.jsonl")
     if not path.is_file():
         raise ValueError("build and audit Canary before constructing the Pilot dataset")
-    audit_path = root / "reports" / "canary-audit.json"
+    audit_path = dataset_path(root, "canary", "reports", "audit.json")
     if not audit_path.is_file():
         raise ValueError("audit Canary before constructing the Pilot dataset")
     audit = read_json(audit_path)
@@ -217,7 +220,7 @@ def _write_episode_audio(
 
 
 def _record_path(root: Path, dataset: str, episode_id: str) -> Path:
-    return root / "normalized" / "episodes" / dataset / f"{episode_id}.json"
+    return dataset_path(root, dataset, "normalized", "episodes", f"{episode_id}.json")
 
 
 def _minimum_episode_ticks(record: dict[str, Any]) -> int:
@@ -342,7 +345,7 @@ def _screens(
     fixture: bool,
     screen_command: str | None,
 ) -> str:
-    output = root / "normalized" / "screens" / dataset / f"{episode_id}.npz"
+    output = dataset_path(root, dataset, "normalized", "screens", f"{episode_id}.npz")
     receipt_path = output.with_suffix(".json")
     output.parent.mkdir(parents=True, exist_ok=True)
     recipe = {
@@ -426,7 +429,7 @@ def _compose_plan(
             "timeline_calibration_version": TIMELINE_CALIBRATION_VERSION,
         }
     )
-    audio_dir = root / "normalized" / "episodes" / dataset
+    audio_dir = dataset_path(root, dataset, "normalized", "episodes")
     record_path = audio_dir / f"{episode_id}.json"
     cached = _cached_episode(record_path, recipe_hash)
     if cached is not None:
@@ -479,7 +482,7 @@ def _compose_plan(
     target_path = audio_dir / f"{episode_id}-target.flac"
     _write_episode_audio(mic_path, target_path, mic, target)
     source_license = "internal-generated-plans; CosyVoice example voices"
-    license_hash = sha256_file(root / "voices" / "registry.json")
+    license_hash = sha256_file(registry_path(root, "voices", "registry.json"))
     record = {
         "episode_id": episode_id,
         "plan_id": plan["plan_id"],
@@ -542,7 +545,7 @@ def _compose_source(
             "fixture": fixture,
         }
     )
-    audio_dir = root / "normalized" / "episodes" / dataset
+    audio_dir = dataset_path(root, dataset, "normalized", "episodes")
     record_path = audio_dir / f"{episode_id}.json"
     cached = _cached_episode(record_path, recipe_hash)
     if cached is not None:
@@ -791,8 +794,8 @@ def build_pilot_manifest(
     if normalize_command:
         build_source_inventory(normalize_command, root)
     elif not fixture:
-        inventory = root / "normalized" / "source-items.jsonl"
-        receipt = root / "normalized" / "source-items.receipt.json"
+        inventory = registry_path(root, "normalized", "source-items.jsonl")
+        receipt = registry_path(root, "normalized", "source-items.receipt.json")
         if not inventory.is_file() or not receipt.is_file():
             raise ValueError(
                 "production manifest construction requires --normalize-command on first run"
@@ -819,7 +822,7 @@ def build_pilot_manifest(
         raise ValueError("episode IDs are duplicated")
     _calibrate_split_durations(root, dataset, records)
     _verify_isolation(records)
-    destination = root / "manifests" / dataset
+    destination = dataset_path(root, dataset, "manifests")
     # Keep the global and split manifests in the same deterministic training
     # order.  The order is part of the streaming data contract: short runs
     # must observe speech-positive and silent episodes alike.
@@ -860,5 +863,5 @@ def build_pilot_manifest(
             for split in SPLITS
         ],
     }
-    write_json(root / "reports" / f"{dataset}-manifest-report.json", report)
+    write_json(dataset_path(root, dataset, "reports", "manifest.json"), report)
     return report

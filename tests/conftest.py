@@ -12,7 +12,8 @@ def smoke_config(tmp_path: Path) -> ProjectConfig:
     return load_config(
         "configs/smoke.yaml",
         [
-            f"runtime.data_root={tmp_path}",
+            f"runtime.data_root={tmp_path / 'datasets'}",
+            f"runtime.experiment_root={tmp_path / 'experiment'}",
             "tracking.enabled=false",
             "tracking.mode=disabled",
         ],

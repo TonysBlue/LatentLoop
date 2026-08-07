@@ -111,15 +111,28 @@ LatentLoop/
 
 ```text
 ~/latentloop-data/
-├── datasets/                 Canary/Pilot 数据集、shards 与 manifest
-├── checkpoints/              模型训练状态
-├── runs/                     离线 run、评测报告和临时产物
-└── backups/                  W&B Local 与关键 manifest 备份
+├── assets/                   原始源、模型权重和外部源码
+├── datasets/                 版本化 Canary/Pilot 数据集
+├── experiments/              每次训练的配置、checkpoint、评测和日志
+├── checkpoints/              稳定基础/发布 checkpoint
+├── runtime/                  worker socket 与服务日志
+├── tracking/                 W&B SDK 本地文件
+└── archive/                  已结束实验归档
 ```
 
 不把训练数据放在 `/mnt/c` 或 `/mnt/d`，避免跨 Windows 文件系统处理大量小文件时的元数据和 I/O 开销。数据集路径通过
-`LATENTLOOP_DATA_ROOT` 或命令的 `--root` 覆盖；checkpoint、runs 和 backups 使用
-`LATENTLOOP_STORAGE_ROOT` 管理，不在 Python 代码中写死。
+`LATENTLOOP_DATA_ROOT` 或命令的 `--root` 覆盖；外部资产、实验、运行时和追踪目录分别由
+`LATENTLOOP_ASSET_ROOT`、`LATENTLOOP_EXPERIMENT_ROOT`、`LATENTLOOP_RUNTIME_ROOT` 和
+`LATENTLOOP_TRACKING_ROOT` 管理，不在 Python 代码中写死。
+
+如果从旧版单根目录升级，使用仓库内的幂等迁移器。它会移动资产和历史实验、重写清单路径，并在
+修改 shard 元数据后重新计算 `content_sha256`：
+
+```bash
+uv run python tools/migrate_storage_layout.py --storage-root "$HOME/latentloop-data"
+```
+
+迁移完成后，用 Canary readiness 和 `validate-data` 验证数据可读，再启动训练。
 
 ## 4. 依赖与复现
 

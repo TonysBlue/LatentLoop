@@ -4,7 +4,13 @@ import random
 from pathlib import Path
 from typing import Any
 
-from latentloop.data.curation.common import ensure_tree, sha256_file, stable_hash, write_json
+from latentloop.data.curation.common import (
+    dataset_path,
+    ensure_tree,
+    sha256_file,
+    stable_hash,
+    write_json,
+)
 from latentloop.data.curation.spec import (
     LANGUAGE_FRACTIONS,
     SPLIT_FRACTIONS,
@@ -376,7 +382,7 @@ def build_pilot_text(
             )
     if not fixture:
         _calibrate_plan_mix(plans, dataset)
-    path = root / "text" / f"{dataset}-plans.json"
+    path = dataset_path(root, dataset, "text", "plans.json")
     value = {
         "schema_version": 1,
         "dataset": dataset,
@@ -396,5 +402,5 @@ def build_pilot_text(
         "languages": language_counts,
         "quality_status": "generated",
     }
-    write_json(root / "reports" / f"{dataset}-text-report.json", report)
+    write_json(dataset_path(root, dataset, "reports", "text.json"), report)
     return report

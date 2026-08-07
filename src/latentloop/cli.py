@@ -142,10 +142,10 @@ def doctor(args: argparse.Namespace) -> int:
 
 def generate_data(args: argparse.Namespace) -> int:
     config = _load(args)
-    output = args.output or str(config.runtime.root_path() / "processed" / "train-%06d.tar")
+    output = args.output or str(config.runtime.data_path() / "generated" / "train-%06d.tar")
     if args.ray:
         manifest = generate_synthetic_with_ray(config, output)
-        write_ray_report(config.runtime.root_path() / "runs" / "ray-generate.json", manifest)
+        write_ray_report(config.runtime.data_path() / "generated" / "ray-report.json", manifest)
     else:
         manifest = write_episode_shards(SyntheticEpisodeDataset(config.data, config.model), output)
     print(json.dumps({"episodes": len(manifest), "output": output}, indent=2))
@@ -207,7 +207,7 @@ def _pilot_root(args: argparse.Namespace, config: ProjectConfig) -> Path:
         return Path(args.root).expanduser().resolve()
     if value := os.environ.get("LATENTLOOP_DATA_ROOT"):
         return Path(value).expanduser().resolve()
-    return config.runtime.root_path() / "datasets"
+    return config.runtime.data_path()
 
 
 def fetch_pilot_data_command(args: argparse.Namespace) -> int:

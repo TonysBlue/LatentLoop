@@ -118,7 +118,7 @@ def test_webdataset_resume_across_shards_matches_continuous_training(
     smoke_config.data.episode_units = 4
     smoke_config.data.train_episodes = 2
     episodes = list(SyntheticEpisodeDataset(smoke_config.data, smoke_config.model))
-    data_dir = smoke_config.runtime.root_path() / "processed"
+    data_dir = smoke_config.runtime.data_path() / "generated"
     write_episode_shards(episodes, data_dir / "train-%06d.tar", max_size=1)
     smoke_config.data.source = "webdataset"
     smoke_config.data.shards = str(data_dir / "train-*.tar")

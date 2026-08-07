@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from latentloop.data.curation.common import dataset_path, registry_path
+
 
 def read_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
@@ -24,10 +26,10 @@ def gibibytes(value: float | int) -> str:
 
 
 def prepare_summary(root: Path) -> None:
-    reports = root / "reports"
-    prepared = read_json(reports / "prepare-report.json")
-    synthesis = read_json(reports / "canary-synthesis-report.json")
-    manifest = read_json(reports / "canary-manifest-report.json")
+    reports = dataset_path(root, "canary", "reports")
+    prepared = read_json(registry_path(root, "prepare.json"))
+    synthesis = read_json(reports / "synthesis.json")
+    manifest = read_json(reports / "manifest.json")
     sources = prepared.get("fetch", {}).get("sources", [])
     source_ids = {item.get("source_id") for item in sources if item.get("source_id")}
     duration = sum(float(item.get("actual_seconds", 0.0)) for item in manifest["quotas"])
@@ -40,12 +42,12 @@ def prepare_summary(root: Path) -> None:
 
 
 def encode_summary(root: Path) -> None:
-    reports = root / "reports"
-    benchmark = read_json(reports / "canary-codec-benchmark.json")
-    mimi = read_json(reports / "canary-mimi-decode.json")
-    audit = read_json(reports / "canary-audit.json")
-    encoded = read_json(reports / "canary-encoded-report.json")
-    readiness = read_json(reports / "canary-readiness.json")
+    reports = dataset_path(root, "canary", "reports")
+    benchmark = read_json(reports / "codec-benchmark.json")
+    mimi = read_json(reports / "mimi-decode.json")
+    audit = read_json(reports / "audit.json")
+    encoded = read_json(reports / "encoded.json")
+    readiness = read_json(reports / "readiness.json")
     health = benchmark["health"]
     metrics = benchmark["benchmark"]
     identity = health["identity"]

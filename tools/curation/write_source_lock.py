@@ -18,7 +18,7 @@ def main() -> None:
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
     cache = args.cache.expanduser().resolve()
-    licenses = root / "raw" / "license-records"
+    licenses = root / "registry" / "licenses"
     revisions = {
         "aishell1": "bbe295d530192a4cd41644b711c9aecd087df653",
         "librispeech": "71cacbfb7e2354c4226d01e70d77d5fca3d04ba1",
@@ -126,7 +126,7 @@ def main() -> None:
         "dailytalk": cache,
     }
     for source_id, record in records.items():
-        destination = root / "raw" / source_id
+        destination = root.parent / "assets" / "sources" / source_id
         destination.mkdir(parents=True, exist_ok=True)
         for item in record["archives"]:
             source = source_files[source_id] / item["filename"]

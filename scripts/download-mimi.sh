@@ -2,7 +2,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET="${MIMI_MODEL_DIR:-$HOME/latentloop-data/models/mimi}"
+STORAGE_ROOT="${LATENTLOOP_STORAGE_ROOT:-$HOME/latentloop-data}"
+ASSET_ROOT="${LATENTLOOP_ASSET_ROOT:-$STORAGE_ROOT/assets}"
+TARGET="$ASSET_ROOT/models/mimi"
 EXPECTED="09b782f0629851a271227fb9d36db65c041790365f11bbe5d3d59369cf863f50"
 FILENAME="tokenizer-e351c8d8-checkpoint125.safetensors"
 MODELSCOPE_URL="https://modelscope.cn/models/kyutai/moshika-pytorch-bf16/resolve/285b678e2a0f44edf2a058d4beb62601e5bf86b2/$FILENAME"

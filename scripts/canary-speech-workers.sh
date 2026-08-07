@@ -2,10 +2,13 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MODEL_ROOT="${LATENTLOOP_MODEL_ROOT:-$HOME/latentloop-data/models}"
-SOURCE_ROOT="${LATENTLOOP_VENDOR_ROOT:-$HOME/latentloop-data/vendor}"
-RUN_DIR="${LATENTLOOP_RUN_DIR:-$HOME/latentloop-data/run}"
-LOG_DIR="${LATENTLOOP_LOG_DIR:-$HOME/latentloop-data/logs}"
+STORAGE_ROOT="${LATENTLOOP_STORAGE_ROOT:-$HOME/latentloop-data}"
+ASSET_ROOT="${LATENTLOOP_ASSET_ROOT:-$STORAGE_ROOT/assets}"
+RUNTIME_ROOT="${LATENTLOOP_RUNTIME_ROOT:-$STORAGE_ROOT/runtime}"
+MODEL_ROOT="$ASSET_ROOT/models"
+SOURCE_ROOT="$ASSET_ROOT/vendor"
+RUN_DIR="$RUNTIME_ROOT/sockets"
+LOG_DIR="$RUNTIME_ROOT/logs"
 ACTION="${1:-start}"
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 

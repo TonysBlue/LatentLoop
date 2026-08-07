@@ -10,9 +10,11 @@ from latentloop.data.curation.audio import fixture_voice, write_flac
 from latentloop.data.curation.common import (
     ensure_tree,
     read_json,
+    registry_path,
     relative_to_root,
     require_sha256,
     sha256_file,
+    source_root,
     stable_hash,
     write_json,
     write_jsonl,
@@ -47,7 +49,7 @@ def _download(url: str, destination: Path) -> None:
 def _fixture(root: Path) -> dict[str, Any]:
     license_records = []
     for source_id, source in SOURCE_CATALOG.items():
-        path = root / "licenses" / f"{source_id}.txt"
+        path = registry_path(root, "licenses", f"{source_id}.txt")
         path.write_text(
             f"Fixture-only license record for {source_id}: {source['license']}\n",
             encoding="utf-8",
@@ -62,7 +64,7 @@ def _fixture(root: Path) -> dict[str, Any]:
             }
         )
     records = []
-    fixture_dir = root / "normalized" / "fixture-sources"
+    fixture_dir = registry_path(root, "normalized", "fixture-sources")
     mapping = {
         ("public_speech", "zh"): "aishell1",
         ("public_speech", "en"): "librispeech_train_clean_100",
@@ -108,7 +110,7 @@ def _fixture(root: Path) -> dict[str, Any]:
                         "fixture": True,
                     }
                 )
-    inventory = root / "normalized" / "source-items.jsonl"
+    inventory = registry_path(root, "normalized", "source-items.jsonl")
     write_jsonl(inventory, records)
     report = {
         "fixture": True,
@@ -117,7 +119,7 @@ def _fixture(root: Path) -> dict[str, Any]:
         "inventory_sha256": sha256_file(inventory),
         "license_records": license_records,
     }
-    write_json(root / "reports" / "fetch-report.json", report)
+    write_json(registry_path(root, "reports", "fetch-report.json"), report)
     return report
 
 
@@ -143,9 +145,9 @@ def fetch_pilot_data(
             }
             for source_id, source in SOURCE_CATALOG.items()
         }
-        write_json(root / "raw" / "source-lock.template.json", template)
+        write_json(registry_path(root, "source-lock.template.json"), template)
         raise ValueError(
-            "production fetch requires --lock; a source-lock template was written under raw/"
+            "production fetch requires --lock; a source-lock template was written under registry/"
         )
     lock = read_json(Path(lock_path).expanduser())
     if set(lock) != set(SOURCE_CATALOG):
@@ -159,7 +161,9 @@ def fetch_pilot_data(
         license_path = Path(record["license_path"]).expanduser().resolve()
         if not license_path.is_file() or sha256_file(license_path) != expected_license:
             raise ValueError(f"{source_id} license record is missing or has the wrong hash")
-        stored_license = root / "licenses" / f"{source_id}{license_path.suffix or '.txt'}"
+        stored_license = registry_path(
+            root, "licenses", f"{source_id}{license_path.suffix or '.txt'}"
+        )
         shutil.copy2(license_path, stored_license)
         archives = record.get("archives")
         if archives is None:
@@ -174,7 +178,7 @@ def fetch_pilot_data(
                 archive.get("archive_sha256"), f"{source_id} archive {archive_index}"
             )
             filename = str(archive.get("filename") or Path(url).name)
-            destination = root / "raw" / source_id / filename
+            destination = source_root(root) / source_id / filename
             if not destination.exists():
                 if not download:
                     raise FileNotFoundError(
@@ -185,13 +189,13 @@ def fetch_pilot_data(
             if actual_archive != expected_archive:
                 raise ValueError(f"{source_id} archive {archive_index} SHA-256 mismatch")
             if extract and _is_tar_archive(destination):
-                _safe_extract(destination, root / "raw" / source_id / "extracted")
+                _safe_extract(destination, source_root(root) / source_id / "extracted")
             results.append(
                 {
                     "source_id": source_id,
                     "source_version": expected["source_version"],
                     "source_url": url,
-                    "archive": relative_to_root(destination, root),
+                    "archive": str(destination.resolve()),
                     "archive_sha256": actual_archive,
                     "license": expected["license"],
                     "license_path": relative_to_root(stored_license, root),
@@ -200,5 +204,5 @@ def fetch_pilot_data(
                 }
             )
     report = {"fixture": False, "sources": results}
-    write_json(root / "reports" / "fetch-report.json", report)
+    write_json(registry_path(root, "reports", "fetch-report.json"), report)
     return report

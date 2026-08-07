@@ -10,8 +10,10 @@ from typing import Any
 
 from latentloop.data.curation.audio import fixture_voice, quality_metrics, write_flac
 from latentloop.data.curation.common import (
+    dataset_path,
     ensure_tree,
     read_json,
+    registry_path,
     relative_to_root,
     require_sha256,
     sha256_file,
@@ -95,7 +97,7 @@ def _cached_synthesis(
         )
     }
     cache_key = stable_hash(content_recipe)
-    cache_audio = root / "synthesized" / "cache" / f"{cache_key}.flac"
+    cache_audio = registry_path(root, "synthesis-cache", f"{cache_key}.flac")
     cache_receipt = cache_audio.with_suffix(".json")
     if not cache_audio.is_file() or not cache_receipt.is_file():
         return None
@@ -132,7 +134,7 @@ def _store_synthesis_cache(
         )
     }
     cache_key = stable_hash(content_recipe)
-    cache_audio = root / "synthesized" / "cache" / f"{cache_key}.flac"
+    cache_audio = registry_path(root, "synthesis-cache", f"{cache_key}.flac")
     cache_audio.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(output, cache_audio)
     shutil.copy2(output.with_suffix(".metrics.json"), cache_audio.with_suffix(".metrics.json"))
@@ -159,10 +161,10 @@ def synthesize_pilot(
 ) -> dict[str, Any]:
     root = Path(root).expanduser().resolve()
     ensure_tree(root)
-    plans_path = root / "text" / f"{dataset}-plans.json"
-    registry_path = root / "voices" / "registry.json"
+    plans_path = dataset_path(root, dataset, "text", "plans.json")
+    voice_registry_path = registry_path(root, "voices", "registry.json")
     plans = read_json(plans_path)
-    registry = read_json(registry_path)
+    registry = read_json(voice_registry_path)
     if plans.get("dataset") != dataset:
         raise ValueError("text plan dataset does not match the requested dataset")
     stale = [
@@ -219,7 +221,9 @@ def synthesize_pilot(
                 "model_sha256": model_hash,
             }
             recipe_hash = stable_hash(recipe)
-            output = root / "synthesized" / dataset / plan["plan_id"] / f"{turn['turn_id']}.flac"
+            output = dataset_path(
+                root, dataset, "synthesized", plan["plan_id"], f"{turn['turn_id']}.flac"
+            )
             receipt_path = output.with_suffix(".json")
             if output.is_file() and receipt_path.is_file():
                 old = read_json(receipt_path)
@@ -281,7 +285,7 @@ def synthesize_pilot(
                     )
             write_json(receipt_path, receipt)
             receipts.append(receipt)
-    source_inventory = root / "normalized" / "source-items.jsonl"
+    source_inventory = registry_path(root, "normalized", "source-items.jsonl")
     if source_inventory.exists():
         from latentloop.data.curation.common import read_jsonl
 
@@ -308,12 +312,12 @@ def synthesize_pilot(
                 "model_sha256": model_hash,
             }
             recipe_hash = stable_hash(recipe)
-            output = (
-                root
-                / "synthesized"
-                / dataset
-                / "source-responses"
-                / f"{item['source_item_id']}.flac"
+            output = dataset_path(
+                root,
+                dataset,
+                "synthesized",
+                "source-responses",
+                f"{item['source_item_id']}.flac",
             )
             receipt_path = output.with_suffix(".json")
             if output.is_file() and receipt_path.is_file():
@@ -374,7 +378,7 @@ def synthesize_pilot(
                     )
             write_json(receipt_path, receipt)
             receipts.append(receipt)
-    path = root / "synthesized" / f"{dataset}-utterances.jsonl"
+    path = dataset_path(root, dataset, "synthesized", "utterances.jsonl")
     write_jsonl(path, receipts)
     report = {
         "dataset": dataset,
@@ -384,7 +388,7 @@ def synthesize_pilot(
         "manifest": str(path),
         "manifest_sha256": sha256_file(path),
         "tts_model_sha256": model_hash,
-        "prompt_registry_sha256": sha256_file(registry_path),
+        "prompt_registry_sha256": sha256_file(voice_registry_path),
     }
-    write_json(root / "reports" / f"{dataset}-synthesis-report.json", report)
+    write_json(dataset_path(root, dataset, "reports", "synthesis.json"), report)
     return report

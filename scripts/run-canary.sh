@@ -2,11 +2,13 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ROOT="${LATENTLOOP_DATA_ROOT:-$HOME/latentloop-data/datasets}"
+STORAGE_ROOT="${LATENTLOOP_STORAGE_ROOT:-$HOME/latentloop-data}"
+ROOT="${LATENTLOOP_DATA_ROOT:-$STORAGE_ROOT/datasets}"
 CFG="${CANARY_CONFIG:-$REPO/configs/canary.yaml}"
-LOCK="${LATENTLOOP_SOURCE_LOCK:-$ROOT/raw/source-lock.json}"
-VOICES="${LATENTLOOP_VOICE_LIBRARY:-$ROOT/voices/voice-library.json}"
-RUN_DIR="${LATENTLOOP_RUN_DIR:-$HOME/latentloop-data/run}"
+LOCK="${LATENTLOOP_SOURCE_LOCK:-$ROOT/registry/source-lock.json}"
+VOICES="${LATENTLOOP_VOICE_LIBRARY:-$ROOT/registry/voices/voice-library.json}"
+RUNTIME_ROOT="${LATENTLOOP_RUNTIME_ROOT:-$STORAGE_ROOT/runtime}"
+RUN_DIR="$RUNTIME_ROOT/sockets"
 SUMMARY="$REPO/tools/curation/summarize_canary.py"
 TTS_HASH="b144ef55b51ce8cfb79a73c90dbba0bdaba4e451c0ebcfab20f769264f84a608"
 NORMALIZER="uv run --project $REPO/tools/curation python $REPO/tools/curation/normalize_adapter.py"
@@ -40,7 +42,7 @@ encode_and_audit() {
   "$REPO/scripts/canary-mimi-worker.sh" start
   trap '"$REPO/scripts/canary-mimi-worker.sh" stop' EXIT
   uv run latentloop benchmark-codec --config "$CFG" --socket "$RUN_DIR/mimi.sock" \
-    --report "$ROOT/reports/canary-codec-benchmark.json"
+    --report "$ROOT/canary/v1/reports/codec-benchmark.json"
   uv run python "$REPO/tools/curation/finalize_canary.py" \
     --config "$CFG" --root "$ROOT" --socket "$RUN_DIR/mimi.sock"
   uv run latentloop check-pilot-readiness --config "$CFG" --root "$ROOT" --dataset canary

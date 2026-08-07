@@ -2,12 +2,14 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ROOT="${LATENTLOOP_DATA_ROOT:-$HOME/latentloop-data/datasets}"
-CACHE="${CANARY_SOURCE_CACHE:-$HOME/latentloop-data/canary-sources}"
-LOCK="${LATENTLOOP_SOURCE_LOCK:-$ROOT/raw/source-lock.json}"
-LICENSES="$ROOT/raw/license-records"
+STORAGE_ROOT="${LATENTLOOP_STORAGE_ROOT:-$HOME/latentloop-data}"
+ROOT="${LATENTLOOP_DATA_ROOT:-$STORAGE_ROOT/datasets}"
+ASSET_ROOT="${LATENTLOOP_ASSET_ROOT:-$STORAGE_ROOT/assets}"
+CACHE="$ASSET_ROOT/sources"
+LOCK="$ROOT/registry/source-lock.json"
+LICENSES="$ROOT/registry/licenses"
 
-mkdir -p "$ROOT/raw" "$LICENSES" "$CACHE"
+mkdir -p "$ROOT/registry" "$LICENSES" "$CACHE"
 
 download() {
   local url="$1" output="$2" expected="$3"
@@ -83,7 +85,7 @@ download "$DAILYTALK_BASE/README.md" "$LICENSES/dailytalk.md" \
   "ab5460cb0e68d63f0edd0794d92f3b368dc636f04af59ebdb10e97061c77e607"
 download \
   "https://raw.githubusercontent.com/FunAudioLLM/CosyVoice/074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc/asset/zero_shot_prompt.wav" \
-  "$ROOT/voices/bootstrap/zero_shot_prompt.wav" \
+  "$ROOT/registry/voices/bootstrap/zero_shot_prompt.wav" \
   "c7b31d6dbe7cc6a716dded00550db5b50940bf209e424e4ad207b12e657c8ff6"
 
 uv run --project "$REPO/tools/curation" python "$REPO/tools/curation/write_source_lock.py" \

@@ -15,11 +15,12 @@
 默认产物位于：
 
 ```text
-~/latentloop-data/canary-sources/  固定公开数据下载缓存
-~/latentloop-data/models/          CosyVoice2、SenseVoice、Mimi 权重
-~/latentloop-data/vendor/          固定 revision 的 CosyVoice 源码
-~/latentloop-data/datasets/        Canary/Pilot 中间产物、manifest 和 shard
-~/latentloop-data/canary-run/      checkpoint、评测、日志和 W&B run
+~/latentloop-data/assets/sources/  固定公开数据下载缓存
+~/latentloop-data/assets/models/   CosyVoice2、SenseVoice、Mimi 权重
+~/latentloop-data/assets/vendor/   固定 revision 的 CosyVoice 源码
+~/latentloop-data/datasets/        版本化 Canary/Pilot 数据集
+~/latentloop-data/experiments/     checkpoint、评测、日志和 W&B run
+~/latentloop-data/runtime/         worker socket 与服务日志
 ```
 
 ## 一键执行
@@ -38,7 +39,7 @@ worker。
 终端只显示阶段任务、运行时间和关键指标。各子命令的完整 stdout/stderr 保存到本次运行目录：
 
 ```text
-~/latentloop-data/canary-run/logs/<UTC 时间>-<PID>/
+~/latentloop-data/experiments/canary/default/logs/<UTC 时间>-<PID>/
   prepare.log
   encode.log
   train.log
@@ -77,7 +78,7 @@ CANARY_MAX_UPDATES=5 CANARY_TRACKING_MODE=online scripts/run-canary.sh train
 短闭环成功后运行配置中的 2000 updates：
 
 ```bash
-CANARY_RUN_ROOT="$HOME/latentloop-data/canary-run-2000" \
+CANARY_RUN_ID=canary-2000 \
 CANARY_MAX_UPDATES=2000 \
 CANARY_TRACKING_MODE=online \
 scripts/run-canary.sh train
@@ -87,7 +88,7 @@ scripts/run-canary.sh train
 Canary 拟合曲线；有兼容 checkpoint 时设置：
 
 ```bash
-CANARY_INIT_CHECKPOINT="$HOME/latentloop-data/checkpoints/state-loop.pt" \
+CANARY_INIT_CHECKPOINT="$HOME/latentloop-data/checkpoints/base/state-loop.pt" \
 CANARY_MAX_UPDATES=2000 scripts/run-canary.sh train
 ```
 
@@ -104,14 +105,12 @@ chunk 计算梯度，chunk 之间 detach 状态。Canary 只缩小数据量和 u
 成功的一键短闭环至少包含：
 
 ```text
-~/latentloop-data/datasets/reports/canary-audit.json
-~/latentloop-data/datasets/reports/canary-codec-benchmark.json
-~/latentloop-data/datasets/reports/canary-readiness.json
-~/latentloop-data/datasets/processed/canary/{train,validation,test}/*.tar
-~/latentloop-data/canary-run/checkpoints/step-00000005.pt
-~/latentloop-data/canary-run/runs/training.json
-~/latentloop-data/canary-run/runs/validation-evaluation.json
-~/latentloop-data/canary-run/runs/test-evaluation.json
+~/latentloop-data/datasets/canary/v1/reports/{audit,codec-benchmark,readiness}.json
+~/latentloop-data/datasets/canary/v1/shards/processed/{train,validation,test}/*.tar
+~/latentloop-data/experiments/canary/default/checkpoints/step-00000005.pt
+~/latentloop-data/experiments/canary/default/runs/training.json
+~/latentloop-data/experiments/canary/default/runs/validation-evaluation.json
+~/latentloop-data/experiments/canary/default/runs/test-evaluation.json
 ```
 
 `canary-audit.json` 必须为 `passed: true`，readiness 必须没有失败项，validation/test
@@ -124,12 +123,12 @@ checkpoint 和评测链路可运行；此时 codec accuracy、macro-F1 等质量
 所有运行目录都可以通过环境变量覆盖：
 
 ```bash
-LATENTLOOP_DATA_ROOT=/data/datasets \
 LATENTLOOP_STORAGE_ROOT=/data/latentloop \
-CANARY_SOURCE_CACHE=/data/canary-sources \
-LATENTLOOP_MODEL_ROOT=/data/models \
-LATENTLOOP_VENDOR_ROOT=/data/vendor \
-CANARY_RUN_ROOT=/data/canary-run \
+LATENTLOOP_DATA_ROOT=/data/latentloop/datasets \
+LATENTLOOP_ASSET_ROOT=/data/latentloop/assets \
+LATENTLOOP_EXPERIMENT_ROOT=/data/latentloop/experiments \
+LATENTLOOP_RUNTIME_ROOT=/data/latentloop/runtime \
+CANARY_RUN_ID=canary-001 \
 CANARY_MAX_UPDATES=5 \
 CANARY_TRACKING_MODE=offline \
 scripts/run-canary.sh all
