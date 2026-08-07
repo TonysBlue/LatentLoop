@@ -64,7 +64,8 @@ uv run latentloop train \
   --resume "$HOME/latentloop-data/checkpoints/step-00000002.pt"
 ```
 
-训练数据、checkpoint、W&B 离线 run 和 Ray 报告默认写入 `~/latentloop-data`，不进入 Git。
+训练数据默认写入 `~/latentloop-data/datasets`；checkpoint、W&B 离线 run 和 Ray 报告默认写入
+`~/latentloop-data` 下的独立目录，均不进入 Git。
 
 ## W&B Local
 

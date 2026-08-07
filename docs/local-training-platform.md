@@ -111,14 +111,15 @@ LatentLoop/
 
 ```text
 ~/latentloop-data/
-├── raw/                       原始录制和外部数据
-├── processed/                 WebDataset shards 与 manifest
-├── checkpoints/               模型训练状态
-├── runs/                      离线 run、评测报告和临时产物
-└── backups/                   W&B Local 与关键 manifest 备份
+├── datasets/                 Canary/Pilot 数据集、shards 与 manifest
+├── checkpoints/              模型训练状态
+├── runs/                     离线 run、评测报告和临时产物
+└── backups/                  W&B Local 与关键 manifest 备份
 ```
 
-不把训练数据放在 `/mnt/c` 或 `/mnt/d`，避免跨 Windows 文件系统处理大量小文件时的元数据和 I/O 开销。路径通过 `runtime.data_root` 配置覆盖，不在 Python 代码中写死。
+不把训练数据放在 `/mnt/c` 或 `/mnt/d`，避免跨 Windows 文件系统处理大量小文件时的元数据和 I/O 开销。数据集路径通过
+`LATENTLOOP_DATA_ROOT` 或命令的 `--root` 覆盖；checkpoint、runs 和 backups 使用
+`LATENTLOOP_STORAGE_ROOT` 管理，不在 Python 代码中写死。
 
 ## 4. 依赖与复现
 

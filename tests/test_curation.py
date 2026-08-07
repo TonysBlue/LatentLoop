@@ -35,7 +35,7 @@ def test_duration_subset_finds_a_quota_fit_that_greedy_order_misses() -> None:
 
 
 def test_fixture_pipeline_is_resumable_and_isolates_canary(tmp_path: Path) -> None:
-    root = tmp_path / "pilot-data"
+    root = tmp_path / "datasets"
     first = fetch_pilot_data(root, fixture=True)
     select_pilot_voices(root, fixture=True)
     _fixture_pipeline(root, "canary")
@@ -64,7 +64,7 @@ def test_fixture_pipeline_is_resumable_and_isolates_canary(tmp_path: Path) -> No
 
 
 def test_automatic_prepare_does_not_require_review_ledger(tmp_path: Path) -> None:
-    root = tmp_path / "pilot-data"
+    root = tmp_path / "datasets"
     result = prepare_pilot_data(root, config=ProjectConfig(), fixture=True)
     assert result["datasets"]["canary"]["audit"]["passed"]
     assert result["datasets"]["pilot"]["audit"]["passed"]
@@ -78,7 +78,7 @@ def test_automatic_prepare_does_not_require_review_ledger(tmp_path: Path) -> Non
 def test_pilot_manifest_import_has_segment_aware_training_masks(
     tmp_path: Path,
 ) -> None:
-    root = tmp_path / "pilot-data"
+    root = tmp_path / "datasets"
     fetch_pilot_data(root, fixture=True)
     select_pilot_voices(root, fixture=True)
     _fixture_pipeline(root, "canary")
@@ -111,7 +111,7 @@ def test_pilot_manifest_import_has_segment_aware_training_masks(
 
 
 def test_manifest_interleaves_supervision_categories_deterministically(tmp_path: Path) -> None:
-    root = tmp_path / "pilot-data"
+    root = tmp_path / "datasets"
     fetch_pilot_data(root, fixture=True)
     select_pilot_voices(root, fixture=True)
     build_pilot_text(root, dataset="canary", fixture=True)
@@ -138,12 +138,12 @@ def test_manifest_interleaves_supervision_categories_deterministically(tmp_path:
 
 def test_production_fetch_requires_locked_source_lock(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires --lock"):
-        fetch_pilot_data(tmp_path / "pilot-data")
-    assert (tmp_path / "pilot-data" / "raw" / "source-lock.template.json").is_file()
+        fetch_pilot_data(tmp_path / "datasets")
+    assert (tmp_path / "datasets" / "raw" / "source-lock.template.json").is_file()
 
 
 def test_production_text_plan_meets_scale_and_duration_mix(tmp_path: Path) -> None:
-    root = tmp_path / "pilot-data"
+    root = tmp_path / "datasets"
     report = build_pilot_text(root, dataset="pilot")
     plans = json.loads(Path(report["path"]).read_text(encoding="utf-8"))["plans"]
 

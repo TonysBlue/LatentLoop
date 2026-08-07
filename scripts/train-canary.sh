@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ROOT="${PILOT_DATA_ROOT:-$HOME/latentloop-data/pilot-data}"
+ROOT="${LATENTLOOP_DATA_ROOT:-$HOME/latentloop-data/datasets}"
 CFG="${CANARY_CONFIG:-$REPO/configs/canary.yaml}"
 RUN_ROOT="${CANARY_RUN_ROOT:-$HOME/latentloop-data/canary-run}"
 INIT_CHECKPOINT="${CANARY_INIT_CHECKPOINT:-}"

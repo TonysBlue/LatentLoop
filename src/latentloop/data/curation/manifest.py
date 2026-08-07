@@ -489,7 +489,7 @@ def _compose_plan(
         "target_speech_sha256": sha256_file(target_path),
         "source": "generated-computer-dialogue",
         "source_version": "pilot-plan-v1",
-        "source_url": "internal://pilot-data/text-plans",
+        "source_url": "internal://datasets/text-plans",
         "source_utterance_ids": [plan["plan_id"]],
         "source_license": source_license,
         "redistribution_allowed": False,

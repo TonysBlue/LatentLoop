@@ -23,7 +23,7 @@ Canary 清单并拒绝任何 source 或 plan 复用。episode 时长是完整时
 
 ## 产物树
 
-默认根目录为 `~/latentloop-data/pilot-data`，也可以给每个命令传 `--root`：
+默认根目录为 `~/latentloop-data/datasets`，也可以给每个命令传 `--root`：
 
 ```text
 raw/ licenses/ text/ voices/ normalized/ synthesized/
@@ -41,7 +41,7 @@ fixture 不下载公开语料、不冒充 CosyVoice，也不代表模型质量�
 和门禁：
 
 ```bash
-ROOT="$HOME/latentloop-data/pilot-data-fixture"
+ROOT="$HOME/latentloop-data/datasets-fixture"
 CFG=configs/local-25m.yaml
 
 uv run latentloop fetch-pilot-data --config "$CFG" --root "$ROOT" --fixture
@@ -101,7 +101,7 @@ Mimi decode-check 的正式 Pilot。通过后再使用既有 `encode-speech` 生
 不需要人工 review ledger。可以用编排命令自动完成所有数据准备阶段：
 
 ```bash
-ROOT="$HOME/latentloop-data/pilot-data"
+ROOT="$HOME/latentloop-data/datasets"
 CFG=configs/pilot.yaml
 
 uv run latentloop prepare-pilot-data --config "$CFG" --root "$ROOT" \

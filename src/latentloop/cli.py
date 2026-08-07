@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from dataclasses import asdict
@@ -204,7 +205,9 @@ def import_speech(args: argparse.Namespace) -> int:
 def _pilot_root(args: argparse.Namespace, config: ProjectConfig) -> Path:
     if args.root:
         return Path(args.root).expanduser().resolve()
-    return config.runtime.root_path() / "pilot-data"
+    if value := os.environ.get("LATENTLOOP_DATA_ROOT"):
+        return Path(value).expanduser().resolve()
+    return config.runtime.root_path() / "datasets"
 
 
 def fetch_pilot_data_command(args: argparse.Namespace) -> int:
@@ -461,7 +464,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     fetch_pilot_parser = subparsers.add_parser("fetch-pilot-data")
     _config_arguments(fetch_pilot_parser)
-    fetch_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    fetch_pilot_parser.add_argument("--root", help="Shared dataset artifact root")
     fetch_pilot_parser.add_argument("--lock", help="Locked production source JSON")
     fetch_pilot_parser.add_argument("--download", action="store_true")
     fetch_pilot_parser.add_argument("--extract", action="store_true")
@@ -470,7 +473,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     text_pilot_parser = subparsers.add_parser("build-pilot-text")
     _config_arguments(text_pilot_parser)
-    text_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    text_pilot_parser.add_argument("--root", help="Shared dataset artifact root")
     text_pilot_parser.add_argument("--dataset", choices=("canary", "pilot"), required=True)
     text_pilot_parser.add_argument("--seed", type=int, default=17)
     text_pilot_parser.add_argument("--fixture", action="store_true")
@@ -478,14 +481,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     voices_pilot_parser = subparsers.add_parser("select-pilot-voices")
     _config_arguments(voices_pilot_parser)
-    voices_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    voices_pilot_parser.add_argument("--root", help="Shared dataset artifact root")
     voices_pilot_parser.add_argument("--library", help="Authorized CosyVoice voice JSON")
     voices_pilot_parser.add_argument("--fixture", action="store_true")
     voices_pilot_parser.set_defaults(handler=select_pilot_voices_command)
 
     synthesize_pilot_parser = subparsers.add_parser("synthesize-pilot")
     _config_arguments(synthesize_pilot_parser)
-    synthesize_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    synthesize_pilot_parser.add_argument("--root", help="Shared dataset artifact root")
     synthesize_pilot_parser.add_argument("--dataset", choices=("canary", "pilot"), required=True)
     synthesize_pilot_parser.add_argument("--synth-command")
     synthesize_pilot_parser.add_argument("--asr-command")
@@ -495,7 +498,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     manifest_pilot_parser = subparsers.add_parser("build-pilot-manifest")
     _config_arguments(manifest_pilot_parser)
-    manifest_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    manifest_pilot_parser.add_argument("--root", help="Shared dataset artifact root")
     manifest_pilot_parser.add_argument("--dataset", choices=("canary", "pilot"), required=True)
     manifest_pilot_parser.add_argument("--normalize-command")
     manifest_pilot_parser.add_argument("--screen-command")
@@ -504,7 +507,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit_pilot_parser = subparsers.add_parser("audit-pilot-data")
     _config_arguments(audit_pilot_parser)
-    audit_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    audit_pilot_parser.add_argument("--root", help="Shared dataset artifact root")
     audit_pilot_parser.add_argument("--dataset", choices=("canary", "pilot"), required=True)
     audit_pilot_parser.add_argument("--mimi-report")
     audit_pilot_parser.add_argument("--fixture", action="store_true")
@@ -514,7 +517,7 @@ def build_parser() -> argparse.ArgumentParser:
         "prepare-pilot-data", help="Run automatic Canary/Pilot preparation and gates"
     )
     _config_arguments(prepare_pilot_parser)
-    prepare_pilot_parser.add_argument("--root", help="Pilot artifact root")
+    prepare_pilot_parser.add_argument("--root", help="Shared dataset artifact root")
     prepare_pilot_parser.add_argument("--lock", help="Locked production source JSON")
     prepare_pilot_parser.add_argument("--download", action="store_true")
     prepare_pilot_parser.add_argument("--extract", action="store_true")
@@ -537,7 +540,7 @@ def build_parser() -> argparse.ArgumentParser:
         "check-pilot-readiness", help="Verify automatic gates before Pilot training"
     )
     _config_arguments(readiness_parser)
-    readiness_parser.add_argument("--root", help="Pilot artifact root")
+    readiness_parser.add_argument("--root", help="Shared dataset artifact root")
     readiness_parser.add_argument("--dataset", choices=("canary", "pilot"), default="pilot")
     readiness_parser.add_argument("--checkpoint", help="Optional initial checkpoint")
     readiness_parser.add_argument("--allow-unencoded", action="store_true")

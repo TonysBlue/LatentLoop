@@ -8,6 +8,6 @@ fi
 
 uv python install 3.11
 uv sync --extra ray
-mkdir -p "${LATENTLOOP_DATA_ROOT:-$HOME/latentloop-data}"/{raw,processed,checkpoints,runs,backups}
+mkdir -p "${LATENTLOOP_DATA_ROOT:-$HOME/latentloop-data/datasets}" \
+  "${LATENTLOOP_STORAGE_ROOT:-$HOME/latentloop-data}"/{checkpoints,runs,backups}
 uv run latentloop inspect-model --config configs/smoke.yaml
-

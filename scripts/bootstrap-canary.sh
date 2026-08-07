@@ -2,9 +2,9 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ROOT="${PILOT_DATA_ROOT:-$HOME/latentloop-data/pilot-data}"
+ROOT="${LATENTLOOP_DATA_ROOT:-$HOME/latentloop-data/datasets}"
 CACHE="${CANARY_SOURCE_CACHE:-$HOME/latentloop-data/canary-sources}"
-LOCK="${PILOT_SOURCE_LOCK:-$ROOT/raw/source-lock.json}"
+LOCK="${LATENTLOOP_SOURCE_LOCK:-$ROOT/raw/source-lock.json}"
 LICENSES="$ROOT/raw/license-records"
 
 mkdir -p "$ROOT/raw" "$LICENSES" "$CACHE"

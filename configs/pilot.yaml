@@ -27,8 +27,8 @@ model:
   activation_checkpointing: false
 data:
   source: webdataset
-  shards: ~/latentloop-data/pilot-data/processed/pilot/train/train-*.tar
-  manifest: ~/latentloop-data/pilot-data/processed/pilot/train/train-manifest.jsonl
+  shards: ~/latentloop-data/datasets/processed/pilot/train/train-*.tar
+  manifest: ~/latentloop-data/datasets/processed/pilot/train/train-manifest.jsonl
   schema_version: 2
   audio_sample_rate: 24000
   codec_frame_rate: 12.5

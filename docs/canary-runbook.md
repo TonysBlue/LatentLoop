@@ -18,7 +18,7 @@
 ~/latentloop-data/canary-sources/  固定公开数据下载缓存
 ~/latentloop-data/models/          CosyVoice2、SenseVoice、Mimi 权重
 ~/latentloop-data/vendor/          固定 revision 的 CosyVoice 源码
-~/latentloop-data/pilot-data/      Canary 中间产物、manifest 和 shard
+~/latentloop-data/datasets/        Canary/Pilot 中间产物、manifest 和 shard
 ~/latentloop-data/canary-run/      checkpoint、评测、日志和 W&B run
 ```
 
@@ -104,10 +104,10 @@ chunk 计算梯度，chunk 之间 detach 状态。Canary 只缩小数据量和 u
 成功的一键短闭环至少包含：
 
 ```text
-~/latentloop-data/pilot-data/reports/canary-audit.json
-~/latentloop-data/pilot-data/reports/canary-codec-benchmark.json
-~/latentloop-data/pilot-data/reports/canary-readiness.json
-~/latentloop-data/pilot-data/processed/canary/{train,validation,test}/*.tar
+~/latentloop-data/datasets/reports/canary-audit.json
+~/latentloop-data/datasets/reports/canary-codec-benchmark.json
+~/latentloop-data/datasets/reports/canary-readiness.json
+~/latentloop-data/datasets/processed/canary/{train,validation,test}/*.tar
 ~/latentloop-data/canary-run/checkpoints/step-00000005.pt
 ~/latentloop-data/canary-run/runs/training.json
 ~/latentloop-data/canary-run/runs/validation-evaluation.json
@@ -124,7 +124,8 @@ checkpoint 和评测链路可运行；此时 codec accuracy、macro-F1 等质量
 所有运行目录都可以通过环境变量覆盖：
 
 ```bash
-PILOT_DATA_ROOT=/data/pilot-data \
+LATENTLOOP_DATA_ROOT=/data/datasets \
+LATENTLOOP_STORAGE_ROOT=/data/latentloop \
 CANARY_SOURCE_CACHE=/data/canary-sources \
 LATENTLOOP_MODEL_ROOT=/data/models \
 LATENTLOOP_VENDOR_ROOT=/data/vendor \
