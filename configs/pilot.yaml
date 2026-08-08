@@ -26,7 +26,7 @@ data:
   source: webdataset
   shards: ~/latentloop-data/datasets/pilot/v1/shards/processed/train/train-*.tar
   manifest: ~/latentloop-data/datasets/pilot/v1/shards/processed/train/train-manifest.jsonl
-  schema_version: 3
+  schema_version: 4
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
   codec_id: mimi-24khz-8x2048
@@ -42,7 +42,9 @@ data:
   train_episodes: 10000
   seed: 17
 training:
-  max_updates: 100000
+  stage: pretrain
+  objective: supervised
+  max_updates: 50000
   weight_decay: 0.1
   gradient_accumulation_steps: 16
   tbptt_units: 750
@@ -55,11 +57,26 @@ training:
   warmup_ratio: 0.03
   codec_scheduled_sampling: 0.25
   codec_scheduled_sampling_start: 0.7
-  backbone_train_mode: frozen
+  backbone_train_mode: all
   speech_loss_weight: 1.0
   action_loss_weight: 1.0
   memory_horizon_units: 750
   min_learning_rate_ratio: 0.1
+  rl:
+    group_size: 8
+    clip_epsilon: 0.2
+    reference_kl_beta: 0.02
+    rollout_horizon_units: 750
+    groups_per_update: 1
+    environment_workers: 4
+    environment_socket: ~/latentloop-data/runtime/pilot/environment.sock
+    environment_id: isolated-desktop-v1
+    environment_version: "1"
+    environment_protocol_version: "1"
+    task_manifest: ~/latentloop-data/datasets/pilot/v1/rl/tasks.jsonl
+    reward_spec_id: realtime-v1
+    sampling_temperature: 0.8
+    sampling_top_k: 250
 tracking:
   enabled: true
   project: latentloop

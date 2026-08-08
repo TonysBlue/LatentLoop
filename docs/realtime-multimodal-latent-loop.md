@@ -4,6 +4,7 @@
 > 日期：2026-08-08
 > 目标：构建持续接收真实混合麦克风和屏幕流、直接生成语音并控制电脑的 always-on 全双工多模态模型。
 > 专项协议：[直接流式语音实施说明](direct-speech.md) · [统一电脑动作输出协议](unified-action.md)
+> 训练协议：[统一三阶段训练架构](three-stage-training.md) · [Online GRPO 与真实隔离电脑环境](online-grpo-training.md)
 
 ## 1. 方案概述
 
@@ -57,6 +58,7 @@ H_t 是主干经过 final normalization 后的完整 hidden 序列，必须暂�
 8. 让未来 Speech/Action loss 通过 Z_t 监督早期 MemoryUpdater。
 9. 训练、验证、checkpoint 恢复和推理使用同一状态转移。
 10. 由 Harness 提供动作安全、权限和 screen revision 校验。
+11. Pretrain、SFT、Online GRPO 使用同一双头模型和状态转移完整训练全模型。
 
 ## 3. 输入与输出
 

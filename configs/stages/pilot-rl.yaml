@@ -1,0 +1,10 @@
+defaults:
+  - ../pilot
+  - _self_
+training:
+  stage: rl
+  objective: grpo
+  max_updates: 20000
+  backbone_train_mode: all
+runtime:
+  run_name: pilot-rl

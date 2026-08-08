@@ -16,15 +16,30 @@ class _Result:
 
 
 def test_stage_configs_inherit_complete_profiles() -> None:
-    canary = load_config("configs/stages/canary.yaml")
-    pilot = load_config("configs/stages/pilot-joint.yaml")
-    production = load_config("configs/stages/production-joint.yaml")
+    canary = load_config("configs/stages/canary-pretrain.yaml")
+    pilot = load_config("configs/stages/pilot-sft.yaml")
+    production = load_config("configs/stages/production-rl.yaml")
 
     assert canary.data.dataset == "canary"
     assert pilot.data.dataset == "pilot"
-    assert pilot.training.backbone_train_mode == "selective"
+    assert pilot.training.backbone_train_mode == "all"
+    assert pilot.training.stage == "sft"
+    assert production.training.objective == "grpo"
     assert production.data.dataset == "production"
     assert production.model.model_dim == 896
+
+
+@pytest.mark.parametrize("scale", ["canary", "pilot", "production"])
+def test_formal_recipes_have_the_same_three_stages(scale: str) -> None:
+    recipe = load_recipe(f"configs/recipes/{scale}.yaml")
+    assert [stage.name for stage in recipe.stages] == ["pretrain", "sft", "rl"]
+    configs = [load_config(Path("configs/recipes") / stage.config) for stage in recipe.stages]
+    assert [(config.training.stage, config.training.objective) for config in configs] == [
+        ("pretrain", "supervised"),
+        ("sft", "supervised"),
+        ("rl", "grpo"),
+    ]
+    assert all(config.training.backbone_train_mode == "all" for config in configs)
 
 
 def test_recipe_requires_unique_stages(tmp_path: Path) -> None:
@@ -121,11 +136,7 @@ def test_recipe_run_id_isolated_and_resume_validates_checkpoint(
 
     def fake_train(stage_config, *, resume=None, init_from=None):
         calls.append((resume, init_from))
-        checkpoint = (
-            stage_config.runtime.root_path()
-            / "checkpoints"
-            / "step-00000001.pt"
-        )
+        checkpoint = stage_config.runtime.root_path() / "checkpoints" / "step-00000001.pt"
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         checkpoint.write_bytes(b"checkpoint")
         return {"train_state": {"update": 1}, "metrics": {}, "tracking": {}}

@@ -33,6 +33,14 @@ class CheckpointMetadata:
     git_commit: str
     codec_revision: str = "unknown"
     parent_sha256: str | None = None
+    schema_version: int = 4
+    stage: str = "pretrain"
+    objective: str = "supervised"
+    action_vocabulary_id: str = "unified-action-v4"
+    reference_checkpoint_sha256: str | None = None
+    environment_id: str | None = None
+    task_manifest_sha256: str | None = None
+    reward_spec_id: str | None = None
 
 
 def config_hash(config: dict[str, Any]) -> str:
@@ -120,7 +128,7 @@ class CheckpointManager:
     ) -> tuple[Path, str]:
         target = self.directory / f"{name}.pt"
         payload = {
-            "format_version": 4,
+            "format_version": 5,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
@@ -218,8 +226,8 @@ class CheckpointManager:
         expected_metadata: CheckpointMetadata,
     ) -> tuple[dict[str, Any], DataCursor, RecurrentState | None, CheckpointMetadata]:
         payload = torch.load(Path(path), map_location=device, weights_only=False)
-        if payload.get("format_version") != 4:
-            raise ValueError("unsupported checkpoint format")
+        if payload.get("format_version") != 5:
+            raise ValueError("unsupported checkpoint format; format v4 is warm-start only")
         if payload["config_hash"] != config_hash(config):
             raise ValueError("checkpoint configuration does not match the current run")
         restored_metadata = CheckpointMetadata(**payload["metadata"])
@@ -228,6 +236,14 @@ class CheckpointManager:
             "codec_id",
             "codec_weight_hash",
             "codec_revision",
+            "schema_version",
+            "stage",
+            "objective",
+            "action_vocabulary_id",
+            "reference_checkpoint_sha256",
+            "environment_id",
+            "task_manifest_sha256",
+            "reward_spec_id",
         ):
             if getattr(restored_metadata, field_name) != getattr(expected_metadata, field_name):
                 raise ValueError(f"checkpoint {field_name} does not match the current run")

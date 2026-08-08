@@ -1,0 +1,10 @@
+defaults:
+  - ../canary
+  - _self_
+training:
+  stage: sft
+  objective: supervised
+  max_updates: 600
+  backbone_train_mode: all
+runtime:
+  run_name: canary-sft

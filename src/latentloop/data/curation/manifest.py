@@ -42,7 +42,7 @@ from latentloop.data.curation.spec import (
 # Episode audio is quantized to PCM16 by ``write_flac``.  Keep a small amount
 # of headroom so quantization cannot turn a nominally safe source peak into a
 # value above the audit gate's -1 dBFS limit.
-EPISODE_FORMAT_VERSION = 3
+EPISODE_FORMAT_VERSION = 4
 TIMELINE_CALIBRATION_VERSION = 2
 AUDIO_PEAK_LIMIT_DBFS = -1.5
 AUDIO_PEAK_LIMIT = 10 ** (AUDIO_PEAK_LIMIT_DBFS / 20.0)
@@ -234,9 +234,7 @@ def _minimum_episode_ticks(record: dict[str, Any]) -> int:
     return minimum
 
 
-def _calibrate_split_durations(
-    root: Path, dataset: str, records: list[dict[str, Any]]
-) -> None:
+def _calibrate_split_durations(root: Path, dataset: str, records: list[dict[str, Any]]) -> None:
     """Trim only deterministic tail silence to hit each split's tick quota."""
     spec = dataset_spec(dataset)
     tick_seconds = FRAME_SAMPLES / SAMPLE_RATE
@@ -266,7 +264,8 @@ def _calibrate_split_durations(
         category_target = spec.duration_seconds * CATEGORY_FRACTIONS[category] / tick_seconds
         language_target = spec.duration_seconds * LANGUAGE_FRACTIONS[language] / tick_seconds
         return (
-            error(cross_ticks[key] - 1, cross_target) - error(cross_ticks[key], cross_target)
+            error(cross_ticks[key] - 1, cross_target)
+            - error(cross_ticks[key], cross_target)
             + error(category_ticks[category] - 1, category_target)
             - error(category_ticks[category], category_target)
             + error(language_ticks[language] - 1, language_target)
@@ -281,9 +280,7 @@ def _calibrate_split_durations(
         if not split_records:
             continue
         current_ticks = sum(durations[str(record["episode_id"])] for record in split_records)
-        target_ticks = round(
-            spec.duration_seconds * SPLIT_FRACTIONS[split] / tick_seconds
-        )
+        target_ticks = round(spec.duration_seconds * SPLIT_FRACTIONS[split] / tick_seconds)
         excess = current_ticks - target_ticks
         if excess <= 0:
             continue
@@ -332,8 +329,7 @@ def _calibrate_split_durations(
                 requested_ticks -= trim
             if requested_ticks:
                 raise ValueError(
-                    f"cannot calibrate {dataset}/{split}/{key}: "
-                    f"{requested_ticks} ticks remain"
+                    f"cannot calibrate {dataset}/{split}/{key}: {requested_ticks} ticks remain"
                 )
 
 
@@ -716,8 +712,7 @@ def _select_sources(
             ]
         target = spec.target_seconds(*key)
         records = [
-            _compose_source(root, dataset, item, receipts, registry, fixture)
-            for item in candidates
+            _compose_source(root, dataset, item, receipts, registry, fixture) for item in candidates
         ]
         if fixture:
             selected.extend(records)
@@ -762,9 +757,7 @@ def _interleave_categories(records: list[dict[str, Any]]) -> list[dict[str, Any]
     # Keep an explicit order for the known production categories.  Unknown
     # categories are retained after the round-robin sequence rather than being
     # silently dropped from a manifest.
-    ordered_categories = [
-        category for category in _TRAINING_CATEGORY_ORDER if grouped[category]
-    ]
+    ordered_categories = [category for category in _TRAINING_CATEGORY_ORDER if grouped[category]]
     ordered: list[dict[str, Any]] = []
     index = 0
     while ordered_categories:

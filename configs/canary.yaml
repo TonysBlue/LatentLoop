@@ -1,7 +1,5 @@
-# One-hour Canary: an end-to-end pipeline run after production data audit and
-# Mimi encoding. The default is full training so a missing base checkpoint cannot
-# silently leave a randomly initialized frozen backbone.  For a quality-valid
-# warm start, pass --init-from with a compatible base checkpoint.
+# Canary uses the complete Pretrain -> SFT -> Online GRPO recipe on a small real
+# dataset. All three formal stages train the full model.
 model:
   model_dim: 512
   latent_dim: 512
@@ -29,7 +27,7 @@ data:
   source: webdataset
   shards: ~/latentloop-data/datasets/canary/v1/shards/processed/train/train-*.tar
   manifest: ~/latentloop-data/datasets/canary/v1/shards/processed/train/train-manifest.jsonl
-  schema_version: 3
+  schema_version: 4
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
   codec_id: mimi-24khz-8x2048
@@ -45,7 +43,9 @@ data:
   train_episodes: 1000
   seed: 17
 training:
-  max_updates: 2000
+  stage: pretrain
+  objective: supervised
+  max_updates: 1000
   weight_decay: 0.1
   gradient_accumulation_steps: 16
   tbptt_units: 750
@@ -63,6 +63,21 @@ training:
   action_loss_weight: 1.0
   memory_horizon_units: 750
   min_learning_rate_ratio: 0.1
+  rl:
+    group_size: 4
+    clip_epsilon: 0.2
+    reference_kl_beta: 0.02
+    rollout_horizon_units: 750
+    groups_per_update: 1
+    environment_workers: 1
+    environment_socket: ~/latentloop-data/runtime/canary/environment.sock
+    environment_id: isolated-desktop-v1
+    environment_version: "1"
+    environment_protocol_version: "1"
+    task_manifest: ~/latentloop-data/datasets/canary/v1/rl/tasks.jsonl
+    reward_spec_id: realtime-v1
+    sampling_temperature: 0.8
+    sampling_top_k: 250
 tracking:
   enabled: true
   project: latentloop

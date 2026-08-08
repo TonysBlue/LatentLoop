@@ -81,7 +81,7 @@ def test_import_pads_to_80_ms_and_sets_speech_only_masks(
     for unit in episode.units:
         assert unit.speech_mode_mask.all()
         assert unit.speech_mode.item() == SpeechMode.SILENCE
-        assert unit.action_token_mask.any()
+        assert not unit.action_token_mask.any()
 
 
 def test_import_generates_start_continue_and_stop(

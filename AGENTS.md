@@ -52,6 +52,19 @@ When a stage needs new behavior, first add a configuration field or a shared
 capability with tests. Only add stage-specific branching when the data/model
 contract genuinely differs, and document why in the design documentation.
 
+正式训练 recipe 的阶段语义固定为 `Pretrain -> SFT -> Online GRPO`。Canary、
+Pilot、Production 必须完整执行这三个阶段，且共享模型、训练循环、真实隔离电脑
+环境协议、reward 定义和 checkpoint 谱系；三种规模只能通过 YAML 改变数据量、
+optimizer update 数、GRPO group size、环境并发数和资源预算。不得用 fixture、
+离线 rollout、critic/value head 或只训练输出 head 来替代任何正式阶段。测试可以
+使用显式标记的进程内环境实现协议契约，但该实现不得成为正式配置的回退路径。
+
+Pretrain 和 SFT 都训练 InputEncoder、Backbone、MemoryUpdater、Speech Head 与
+Unified Action Head。Online GRPO 使用冻结的 SFT reference policy、同一初始环境
+状态的组内 rollout、组内标准化 advantage 和 clipped policy ratio，全模型接受
+策略梯度；不新增第三个输出头或独立 memory loss。所有优化仍由
+`training.py::train` 分派，所有阶段仍由 `recipe.py::run_recipe` 编排。
+
 ## Repository Map
 
 - `src/latentloop/model/`: streaming model, encoders, attention, speech head,
@@ -171,11 +184,11 @@ changed config, model shape, data manifest, codec revision, or codec weight
 must use a new run ID. The recipe runner rejects incompatible checkpoints;
 never work around this by deleting metadata or manually loading weights.
 
-Pilot and Production stages using `frozen` or `selective` backbone training
-must receive a compatible initial checkpoint through the recipe's
-`initial_checkpoint`, or resume a compatible stage checkpoint. Canary may run
-from random initialization when it is explicitly being used as a small,
-end-to-end training run.
+Formal Canary, Pilot and Production Pretrain/SFT/RL stages always use
+`backbone_train_mode=all`. SFT receives the preceding Pretrain checkpoint and
+RL receives the final SFT checkpoint as both its initial policy and frozen
+reference. Frozen/selective modes remain available only for explicitly named
+non-formal local experiments and must not appear in formal recipes.
 
 ## W&B Local and Experiment Tracking
 
@@ -217,6 +230,11 @@ changes or rewrite generated artifacts.
 `docs/unified-action.md`。顶层架构文档不得停留在脱离代码的研究草案，也不得把
 纯文本方案文档的讨论内容直接当作实现契约。两份文档都保留完整结构和中文表达，
 但应分别维护各自职责，删除历史内容时不得混淆文档层级。
+
+三阶段训练的专项契约由 `docs/three-stage-training.md` 描述，在线 GRPO、真实
+隔离环境和 reward 协议由 `docs/online-grpo-training.md` 描述。它们是最终系统
+架构的一部分，不写中间讨论过程、开发排期或阶段性妥协方案；顶层架构和本地平台
+文档应引用并保持语义一致。
 
 For Python changes, use `apply_patch`, preserve type hints and existing local
 patterns, and keep comments limited to non-obvious invariants. Prefer

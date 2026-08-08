@@ -98,6 +98,11 @@ class FactorizedSpeechHead(nn.Module):
         return torch.stack(logits, dim=1)[:, None], torch.stack(selected, dim=1)[:, None]
 
     @staticmethod
+    def sampled_logprob(logits: Tensor, tokens: Tensor) -> Tensor:
+        """Return log-probability for sampled codec tokens without a new head."""
+        return torch.log_softmax(logits, dim=-1).gather(-1, tokens.unsqueeze(-1)).squeeze(-1)
+
+    @staticmethod
     def _sample(logits: Tensor, sampling: SpeechSamplingConfig) -> Tensor:
         if sampling.greedy or sampling.temperature <= 0:
             return logits.argmax(dim=-1)

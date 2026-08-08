@@ -91,6 +91,17 @@ def test_reader_rejects_manifest_content_mismatch(
         next(iter(reader))
 
 
+def test_reader_rejects_schema_v3_metadata(tmp_path: Path, smoke_config: ProjectConfig) -> None:
+    episode = SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(0)
+    episode.metadata["schema_version"] = 3
+    write_episode_shards([episode], tmp_path / "train-%06d.tar", max_size=10_000_000)
+    reader = EpisodeShardReader(
+        str(tmp_path / "train-*.tar"), smoke_config.data, smoke_config.model
+    )
+    with pytest.raises(ValueError, match="schema version mismatch"):
+        next(iter(reader))
+
+
 def test_manifest_rejects_session_split_leak(tmp_path: Path, smoke_config: ProjectConfig) -> None:
     episodes = [
         SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(index)

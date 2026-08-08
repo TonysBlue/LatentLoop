@@ -161,11 +161,7 @@ def _build_episode(
     if any(tick < 0 or tick >= ticks for tick in screens):
         raise ValueError("screen tick is outside the episode timeline")
     tokenizer = ActionTokenizer(model.max_action_duration_ms, model.action_burst_tokens)
-    noop = tokenizer.encode(ActionEvent(ActionType.NOOP))
-    action_tokens = torch.zeros(1, model.action_burst_tokens, dtype=torch.long)
-    action_mask = torch.zeros_like(action_tokens, dtype=torch.bool)
-    action_tokens[0, : len(noop)] = torch.tensor(noop)
-    action_mask[0, : len(noop)] = True
+    action_by_tick = _load_action_targets(record.get("actions"), ticks, tokenizer, model)
     units: list[StreamUnit] = []
     screen_revision = -1
     empty_screen = torch.zeros(3, data.screen_height, data.screen_width)
@@ -194,8 +190,8 @@ def _build_episode(
                 speech_codec_mask=torch.full(
                     (1, model.speech_frames_per_unit), speaking, dtype=torch.bool
                 ),
-                action_tokens=action_tokens.clone(),
-                action_token_mask=action_mask.clone(),
+                action_tokens=action_by_tick[tick][0],
+                action_token_mask=action_by_tick[tick][1],
             )
         )
     metadata = {
@@ -211,7 +207,15 @@ def _build_episode(
         "scenario": record.get("scenario", "spoken-response"),
         "device_id_hash": record.get("device_id_hash", "speech-import"),
         "turns": record.get("turns", []),
-        "action_schema_version": 3,
+        "stage": record.get("stage", "pretrain"),
+        "dataset_scale": data.dataset,
+        "sample_kind": record.get("sample_kind", "supervised_episode"),
+        "supervision_kind": record.get("supervision_kind", "speech"),
+        "action_source": "expert" if record.get("actions") else "none",
+        "task_id": record.get("task_id", record["episode_id"]),
+        "environment_id": record.get("environment_id", "recorded"),
+        "environment_version": record.get("environment_version", "1"),
+        "action_schema_version": 4,
     }
     episode = Episode(str(record["episode_id"]), units, metadata, target_speech=target)
     episode.validate(
@@ -222,3 +226,48 @@ def _build_episode(
         action_vocab_size=tokenizer.vocab_size,
     )
     return episode
+
+
+def _load_action_targets(
+    values: Any, ticks: int, tokenizer: ActionTokenizer, model: ModelConfig
+) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    result = [
+        (
+            torch.zeros(1, model.action_burst_tokens, dtype=torch.long),
+            torch.zeros(1, model.action_burst_tokens, dtype=torch.bool),
+        )
+        for _ in range(ticks)
+    ]
+    if values is None:
+        return result
+    if not isinstance(values, list):
+        raise ValueError("actions must be a list")
+    for index, raw in enumerate(values):
+        if not isinstance(raw, dict):
+            raise ValueError(f"actions[{index}] must be an object")
+        tick = int(raw["tick"])
+        if tick < 0 or tick >= ticks:
+            raise ValueError("action tick is outside the episode timeline")
+        if result[tick][1].any():
+            raise ValueError("action tick is duplicated")
+        try:
+            kind = ActionType[str(raw["type"]).upper()]
+        except (KeyError, TypeError) as error:
+            raise ValueError(f"actions[{index}] has an invalid type") from error
+        event = ActionEvent(
+            kind,
+            coordinates=tuple(raw["coordinates"]) if raw.get("coordinates") is not None else None,
+            scroll_delta=tuple(raw["scroll_delta"])
+            if raw.get("scroll_delta") is not None
+            else None,
+            duration_ms=raw.get("duration_ms"),
+            text=raw.get("text"),
+            keys=tuple(raw["keys"]) if raw.get("keys") is not None else None,
+        )
+        encoded = tokenizer.encode(event)
+        if len(encoded) > model.action_burst_tokens:
+            raise ValueError("expert action exceeds one action burst")
+        tokens, mask = result[tick]
+        tokens[0, : len(encoded)] = torch.tensor(encoded)
+        mask[0, : len(encoded)] = True
+    return result

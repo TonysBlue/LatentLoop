@@ -1,9 +1,0 @@
-defaults:
-  - ../production
-  - _self_
-
-training:
-  backbone_train_mode: frozen
-  max_updates: 50000
-runtime:
-  run_name: production-head

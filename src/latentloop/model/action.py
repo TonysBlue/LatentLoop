@@ -36,6 +36,7 @@ class ActionHead(nn.Module):
         hidden: Tensor,
         state: ActionLocalState,
         teacher_tokens: Tensor | None = None,
+        sampling_temperature: float | None = None,
     ) -> tuple[Tensor, Tensor, ActionLocalState, Tensor]:
         context = self.context(hidden[:, -1])
         current = state.hidden
@@ -56,7 +57,12 @@ class ActionHead(nn.Module):
                 token = teacher_tokens[:, index]
                 valid = teacher_tokens[:, index].ne(int(ActionToken.PAD))
             else:
-                token = current_logits.argmax(dim=-1)
+                if sampling_temperature is not None and sampling_temperature > 0:
+                    token = torch.multinomial(
+                        torch.softmax(current_logits / sampling_temperature, dim=-1), 1
+                    ).squeeze(-1)
+                else:
+                    token = current_logits.argmax(dim=-1)
                 valid = ~ended
             current = torch.where(valid[:, None], candidate, current)
             tokens.append(token)
@@ -77,3 +83,7 @@ class ActionHead(nn.Module):
         output_mask = torch.stack(masks, dim=1)
         next_state = ActionLocalState(current, previous, active, event_type, burst_count)
         return output_logits, output_tokens, next_state, output_mask
+
+    @staticmethod
+    def sampled_logprob(logits: Tensor, tokens: Tensor) -> Tensor:
+        return torch.log_softmax(logits, dim=-1).gather(-1, tokens.unsqueeze(-1)).squeeze(-1)

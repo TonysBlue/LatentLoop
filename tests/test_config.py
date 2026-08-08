@@ -19,6 +19,22 @@ def test_local_dev_and_production_profiles_are_explicit() -> None:
     assert local.data.dataset == "synthetic"
     assert production.data.dataset == "production"
     assert production.model.model_dim == 896
+    assert production.data.schema_version == 4
+
+
+def test_training_stage_and_objective_must_match() -> None:
+    with pytest.raises(ValueError, match="supervised objective"):
+        load_config("configs/smoke.yaml", ["training.stage=pretrain", "training.objective=grpo"])
+    with pytest.raises(ValueError, match="GRPO objective"):
+        load_config("configs/smoke.yaml", ["training.stage=rl", "training.objective=supervised"])
+
+
+def test_formal_rl_requires_real_environment_configuration() -> None:
+    with pytest.raises(ValueError, match="environment_socket"):
+        load_config(
+            "configs/canary.yaml",
+            ["training.stage=rl", "training.objective=grpo", "training.rl.environment_socket=null"],
+        )
 
 
 def test_config_rejects_incompatible_attention_width() -> None:

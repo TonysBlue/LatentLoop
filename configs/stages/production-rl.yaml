@@ -1,0 +1,10 @@
+defaults:
+  - ../production
+  - _self_
+training:
+  stage: rl
+  objective: grpo
+  max_updates: 40000
+  backbone_train_mode: all
+runtime:
+  run_name: production-rl

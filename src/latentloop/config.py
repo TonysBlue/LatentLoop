@@ -47,7 +47,7 @@ class DataConfig:
     source: str = "synthetic"
     shards: str | None = None
     manifest: str | None = None
-    schema_version: int = 3
+    schema_version: int = 4
     audio_sample_rate: int = 24_000
     codec_frame_rate: float = 12.5
     codec_id: str = "mimi-24khz-8x2048"
@@ -66,6 +66,8 @@ class DataConfig:
 
 @dataclass(slots=True)
 class TrainingConfig:
+    stage: str = "pretrain"
+    objective: str = "supervised"
     max_updates: int = 10_000
     weight_decay: float = 0.1
     gradient_accumulation_steps: int = 16
@@ -84,6 +86,26 @@ class TrainingConfig:
     action_loss_weight: float = 1.0
     memory_horizon_units: int = 750
     min_learning_rate_ratio: float = 0.1
+    rl: RLConfig = field(default_factory=lambda: RLConfig())
+
+
+@dataclass(slots=True)
+class RLConfig:
+    group_size: int = 4
+    clip_epsilon: float = 0.2
+    reference_kl_beta: float = 0.02
+    rollout_horizon_units: int = 750
+    groups_per_update: int = 1
+    environment_workers: int = 1
+    environment_socket: str | None = None
+    environment_id: str = ""
+    environment_version: str = "1"
+    environment_protocol_version: str = "1"
+    task_manifest: str | None = None
+    reward_spec_id: str = "realtime-v1"
+    sampling_temperature: float = 0.8
+    sampling_top_k: int = 250
+    advantage_epsilon: float = 1e-6
 
 
 @dataclass(slots=True)
@@ -153,6 +175,8 @@ class ProjectConfig:
                 "data.dataset must be synthetic, canary, pilot, production, "
                 "or direct-speech-overfit"
             )
+        if self.data.schema_version != 4:
+            raise ValueError("data.schema_version must be exactly 4")
         if self.data.source not in {"synthetic", "webdataset"}:
             raise ValueError("data.source must be synthetic or webdataset")
         if self.data.dataset != "synthetic" and self.data.source != "webdataset":
@@ -184,6 +208,41 @@ class ProjectConfig:
             raise ValueError("codec_scheduled_sampling_start must be in [0, 1)")
         if self.training.backbone_train_mode not in {"frozen", "selective", "all"}:
             raise ValueError("backbone_train_mode must be frozen, selective, or all")
+        if self.training.stage not in {"pretrain", "sft", "rl"}:
+            raise ValueError("training.stage must be pretrain, sft, or rl")
+        if self.training.objective not in {"supervised", "grpo"}:
+            raise ValueError("training.objective must be supervised or grpo")
+        if self.training.stage in {"pretrain", "sft"} and self.training.objective != "supervised":
+            raise ValueError("pretrain and sft require supervised objective")
+        if self.training.stage == "rl" and self.training.objective != "grpo":
+            raise ValueError("rl stage requires GRPO objective")
+        if self.data.dataset in {"canary", "pilot", "production"}:
+            if self.training.backbone_train_mode != "all":
+                raise ValueError(
+                    "formal stages must train the full model with backbone_train_mode=all"
+                )
+        rl = self.training.rl
+        if rl.group_size < 2 or rl.groups_per_update < 1 or rl.environment_workers < 1:
+            raise ValueError("RL group_size must be >=2 and workers/groups must be positive")
+        if not 0 < rl.clip_epsilon < 1 or rl.reference_kl_beta < 0:
+            raise ValueError("RL clip_epsilon must be in (0,1) and KL beta non-negative")
+        if rl.rollout_horizon_units < 1 or rl.sampling_temperature <= 0 or rl.sampling_top_k < 0:
+            raise ValueError("RL horizon, temperature and top_k are invalid")
+        if self.training.stage == "rl" and self.data.dataset in {
+            "canary",
+            "pilot",
+            "production",
+        }:
+            if (
+                not rl.environment_socket
+                or not rl.environment_id
+                or not rl.environment_version
+                or not rl.environment_protocol_version
+                or not rl.task_manifest
+            ):
+                raise ValueError(
+                    "formal RL requires environment_socket, environment_id and task_manifest"
+                )
         if self.training.speech_loss_weight <= 0 or self.training.action_loss_weight <= 0:
             raise ValueError("speech_loss_weight and action_loss_weight must be positive")
         if self.training.memory_horizon_units < 1:
@@ -230,7 +289,10 @@ def load_config(path: str | Path, overrides: list[str] | None = None) -> Project
     config = ProjectConfig(
         model=ModelConfig(**raw["model"]),
         data=DataConfig(**raw["data"]),
-        training=TrainingConfig(**raw["training"]),
+        training=TrainingConfig(
+            **{key: value for key, value in raw["training"].items() if key != "rl"},
+            rl=RLConfig(**raw["training"].get("rl", {})),
+        ),
         tracking=TrackingConfig(**raw["tracking"]),
         runtime=RuntimeConfig(**raw["runtime"]),
     )

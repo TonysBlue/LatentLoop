@@ -1,0 +1,10 @@
+defaults:
+  - ../canary
+  - _self_
+training:
+  stage: pretrain
+  objective: supervised
+  max_updates: 1000
+  backbone_train_mode: all
+runtime:
+  run_name: canary-pretrain

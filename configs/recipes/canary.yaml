@@ -1,8 +1,12 @@
 name: canary
 dataset: canary
 stages:
-  - name: end-to-end
-    config: ../stages/canary.yaml
+  - name: pretrain
+    config: ../stages/canary-pretrain.yaml
+  - name: sft
+    config: ../stages/canary-sft.yaml
+  - name: rl
+    config: ../stages/canary-rl.yaml
 evaluation:
   validation_after_each_stage: true
   test_after_final_stage: true

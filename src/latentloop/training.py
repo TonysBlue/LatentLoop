@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import json
 import math
 import random
 import subprocess
@@ -12,6 +14,7 @@ import numpy as np
 import torch
 from accelerate import Accelerator
 
+from latentloop.action_tokens import ACTION_VOCABULARY_ID
 from latentloop.checkpoint import (
     CheckpointManager,
     CheckpointMetadata,
@@ -22,10 +25,17 @@ from latentloop.checkpoint import (
 from latentloop.config import ProjectConfig
 from latentloop.data import EpisodeShardReader, SyntheticEpisodeDataset
 from latentloop.data.curation.readiness import check_readiness
+from latentloop.environment import (
+    EnvironmentIdentity,
+    Observation,
+    UnixSocketEnvironmentClient,
+    validate_observation,
+)
+from latentloop.grpo import compute_group_advantages, grpo_loss
 from latentloop.losses import compute_losses
 from latentloop.model import StreamingLatentLoop
 from latentloop.tracking import Tracker
-from latentloop.types import Episode, RecurrentState, StreamUnit
+from latentloop.types import Episode, RecurrentState, SpeechSamplingConfig, StreamUnit
 
 
 def _loss_denominators(units: Sequence[StreamUnit]) -> dict[str, float]:
@@ -125,7 +135,9 @@ def _git_commit() -> str:
 
 
 def _checkpoint_metadata(
-    config: ProjectConfig, parent_sha256: str | None = None
+    config: ProjectConfig,
+    parent_sha256: str | None = None,
+    reference_checkpoint_sha256: str | None = None,
 ) -> CheckpointMetadata:
     return CheckpointMetadata(
         data_identity=_data_identity(config),
@@ -134,6 +146,19 @@ def _checkpoint_metadata(
         git_commit=_git_commit(),
         codec_revision=config.data.codec_revision,
         parent_sha256=parent_sha256,
+        reference_checkpoint_sha256=reference_checkpoint_sha256,
+        schema_version=config.data.schema_version,
+        stage=config.training.stage,
+        objective=config.training.objective,
+        action_vocabulary_id=ACTION_VOCABULARY_ID,
+        environment_id=config.training.rl.environment_id or None,
+        task_manifest_sha256=(
+            file_sha256(Path(config.training.rl.task_manifest).expanduser())
+            if config.training.rl.task_manifest
+            and Path(config.training.rl.task_manifest).expanduser().is_file()
+            else None
+        ),
+        reward_spec_id=config.training.rl.reward_spec_id if config.training.stage == "rl" else None,
     )
 
 
@@ -156,6 +181,14 @@ def train(
 ) -> dict[str, Any]:
     if resume and init_from:
         raise ValueError("resume and init_from are mutually exclusive")
+    if config.training.objective == "grpo":
+        return train_online_grpo(
+            config,
+            resume=resume,
+            init_from=init_from,
+            model=model,
+            stop_after_updates=stop_after_updates,
+        )
     if config.data.dataset != "synthetic":
         require_initial = (
             config.training.backbone_train_mode in {"frozen", "selective"}
@@ -593,3 +626,321 @@ def configure_trainable_parameters(model: StreamingLatentLoop, config: ProjectCo
                 layer_index = int(name.split(".", 2)[1])
                 trainable = trainable or layer_index >= first_top_layer
         parameter.requires_grad = trainable
+
+
+def _observation_unit(observation: Observation, config: ProjectConfig) -> StreamUnit:
+    validate_observation(observation, audio_samples=config.data.unit_audio_samples)
+    return StreamUnit(
+        timestamp_ms=torch.tensor([observation.timestamp_ms]),
+        delta_ms=torch.tensor([observation.delta_ms]),
+        mic_audio=observation.mixed_microphone.float()[None],
+        screen=observation.screen.float()[None],
+        screen_valid=torch.tensor([observation.screen_valid]),
+        screen_revision=torch.tensor([observation.screen_revision]),
+        speech_mode=torch.zeros(1, dtype=torch.long),
+        speech_mode_mask=torch.zeros(1, dtype=torch.bool),
+        speech_codes=torch.zeros(
+            1, config.model.speech_frames_per_unit, config.model.speech_codebooks, dtype=torch.long
+        ),
+        speech_codec_mask=torch.zeros(1, config.model.speech_frames_per_unit, dtype=torch.bool),
+        action_tokens=torch.zeros(1, config.model.action_burst_tokens, dtype=torch.long),
+        action_token_mask=torch.zeros(1, config.model.action_burst_tokens, dtype=torch.bool),
+    )
+
+
+def _sample_logprob(
+    output: Any, mode: torch.Tensor, codes: torch.Tensor, actions: torch.Tensor
+) -> torch.Tensor:
+    mode_lp = (
+        torch.log_softmax(output.speech_mode_logits, dim=-1).gather(-1, mode[:, None]).squeeze(-1)
+    )
+    codec_lp = (
+        torch.log_softmax(output.speech_codec_logits, dim=-1)
+        .gather(-1, codes[..., None])
+        .squeeze(-1)
+    )
+    codec_lp = codec_lp * mode.eq(1)[:, None, None].to(codec_lp)
+    action_lp = (
+        torch.log_softmax(output.action_logits, dim=-1).gather(-1, actions[..., None]).squeeze(-1)
+    )
+    action_lp = action_lp * output.action_token_mask.to(action_lp)
+    return torch.cat(
+        (
+            mode_lp.reshape(mode.shape[0], -1),
+            codec_lp.reshape(mode.shape[0], -1),
+            action_lp.reshape(mode.shape[0], -1),
+        ),
+        dim=-1,
+    )
+
+
+def _sample_mask(output: Any, mode: torch.Tensor) -> torch.Tensor:
+    codec_mask = mode.eq(1)[:, None, None].expand(output.speech_codec_logits.shape[:3])
+    return torch.cat(
+        (
+            torch.ones_like(mode, dtype=torch.bool).reshape(mode.shape[0], -1),
+            codec_mask.reshape(mode.shape[0], -1),
+            output.action_token_mask.reshape(mode.shape[0], -1),
+        ),
+        dim=-1,
+    )
+
+
+def _task_ids(path: str) -> list[str]:
+    values: list[str] = []
+    with Path(path).expanduser().open(encoding="utf-8") as source:
+        for line in source:
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            values.append(str(item["task_id"] if isinstance(item, dict) else item))
+    if not values:
+        raise ValueError("RL task manifest contains no tasks")
+    return values
+
+
+def train_online_grpo(
+    config: ProjectConfig,
+    *,
+    resume: str | None = None,
+    init_from: str | None = None,
+    model: StreamingLatentLoop | None = None,
+    stop_after_updates: int | None = None,
+) -> dict[str, Any]:
+    if resume:
+        raise ValueError("Online GRPO resume is not supported without a rollout cursor")
+    if not init_from:
+        raise ValueError("Online GRPO requires the final SFT checkpoint as --init-from")
+    if config.data.dataset != "synthetic":
+        check_readiness(config.runtime.data_path(), config=config)
+    task_manifest = config.training.rl.task_manifest
+    if not task_manifest:
+        raise ValueError("Online GRPO requires training.rl.task_manifest")
+    socket_path = Path(config.training.rl.environment_socket or "").expanduser()
+    if not socket_path.is_socket():
+        raise ValueError(f"Online GRPO environment socket is unavailable: {socket_path}")
+    tasks = _task_ids(task_manifest)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    policy = model or StreamingLatentLoop(config.model)
+    initialize_compatible_weights(policy, init_from)
+    policy = policy.to(device)
+    reference = copy.deepcopy(policy).eval()
+    for parameter in reference.parameters():
+        parameter.requires_grad_(False)
+    configure_trainable_parameters(policy, config)
+    optimizer = torch.optim.AdamW(
+        [parameter for parameter in policy.parameters() if parameter.requires_grad],
+        lr=config.training.backbone_learning_rate,
+        weight_decay=config.training.weight_decay,
+    )
+    tracker = Tracker(
+        config,
+        model_name=f"{policy.parameter_count()}p",
+        parameter_count=policy.parameter_count(),
+        data_identity=_data_identity(config),
+        parent_checkpoint_sha256=file_sha256(init_from),
+    )
+    manager = CheckpointManager(config.runtime.root_path() / "checkpoints")
+    train_state: dict[str, Any] = {"update": 0, "consumed_units": 0}
+    expected_identity = EnvironmentIdentity(
+        config.training.rl.environment_id,
+        config.training.rl.environment_version,
+        config.training.rl.environment_protocol_version,
+        ACTION_VOCABULARY_ID,
+    )
+
+    def factory() -> UnixSocketEnvironmentClient:
+        return UnixSocketEnvironmentClient(str(socket_path), expected_identity)
+
+    sampling = SpeechSamplingConfig(
+        temperature=config.training.rl.sampling_temperature,
+        top_k=config.training.rl.sampling_top_k,
+        greedy=False,
+    )
+    target_updates = min(
+        config.training.max_updates, stop_after_updates or config.training.max_updates
+    )
+    last_metrics: dict[str, float] = {}
+    skipped_updates = 0
+    while train_state["update"] < target_updates:
+        all_current: list[torch.Tensor] = []
+        all_old: list[torch.Tensor] = []
+        all_reference: list[torch.Tensor] = []
+        all_advantages: list[torch.Tensor] = []
+        all_masks: list[torch.Tensor] = []
+        group_rewards: list[float] = []
+        for group_index in range(config.training.rl.groups_per_update):
+            task_id = tasks[
+                (train_state["update"] * config.training.rl.groups_per_update + group_index)
+                % len(tasks)
+            ]
+            seed = config.data.seed + train_state["update"] * 1000 + group_index
+            rollouts: list[dict[str, Any]] = []
+            rewards: list[float] = []
+            for _rollout_index in range(config.training.rl.group_size):
+                env = factory()
+                observation = env.reset(task_id, seed)
+                policy_state = policy.initial_state(1, device)
+                reference_state = reference.initial_state(1, device)
+                observations: list[Observation] = []
+                modes: list[torch.Tensor] = []
+                codes_list: list[torch.Tensor] = []
+                actions_list: list[torch.Tensor] = []
+                old_list: list[torch.Tensor] = []
+                ref_list: list[torch.Tensor] = []
+                mask_list: list[torch.Tensor] = []
+                try:
+                    for unit_index in range(config.training.rl.rollout_horizon_units):
+                        if observation.terminated:
+                            break
+                        unit = _observation_unit(observation, config).to(device)
+                        with torch.no_grad():
+                            generated = policy.generate_step(unit, policy_state, sampling)
+                            policy_state = generated.output.state
+                            mode, codes, actions = (
+                                generated.speech_mode,
+                                generated.speech_codes,
+                                generated.action_tokens,
+                            )
+                            old_values = _sample_logprob(
+                                generated.output, mode, codes, actions
+                            ).squeeze(0)
+                            old_mask = _sample_mask(generated.output, mode).squeeze(0)
+                            ref_output = reference.forward_step(
+                                unit,
+                                reference_state,
+                                speech_teacher_codes=codes,
+                                speech_teacher_mode=mode,
+                                action_teacher_tokens=actions,
+                            )
+                            reference_state = ref_output.state
+                            ref_values = _sample_logprob(ref_output, mode, codes, actions).squeeze(
+                                0
+                            )
+                        next_observation, receipt = env.submit_unit(
+                            task_id, unit_index, int(mode.item()), codes, actions
+                        )
+                        if not receipt.accepted:
+                            break
+                        observations.append(observation)
+                        modes.append(mode.cpu())
+                        codes_list.append(codes.cpu())
+                        actions_list.append(actions.cpu())
+                        old_list.append(old_values.cpu())
+                        ref_list.append(ref_values.cpu())
+                        mask_list.append(old_mask.cpu())
+                        train_state["consumed_units"] += 1
+                        observation = next_observation
+                    breakdown = env.evaluate(task_id)
+                    rewards.append(breakdown.total)
+                    rollouts.append(
+                        {
+                            "observations": observations,
+                            "modes": modes,
+                            "codes": codes_list,
+                            "actions": actions_list,
+                            "old": old_list,
+                            "reference": ref_list,
+                            "masks": mask_list,
+                        }
+                    )
+                finally:
+                    env.close()
+            reward_tensor = torch.tensor(rewards, device=device)
+            advantages, active = compute_group_advantages(
+                reward_tensor, config.training.rl.advantage_epsilon
+            )
+            group_rewards.extend(rewards)
+            if not active:
+                continue
+            for rollout, advantage in zip(rollouts, advantages, strict=True):
+                state = policy.initial_state(1, device)
+                for observation, mode, codes, actions, old_values, ref_values, _old_mask in zip(
+                    rollout["observations"],
+                    rollout["modes"],
+                    rollout["codes"],
+                    rollout["actions"],
+                    rollout["old"],
+                    rollout["reference"],
+                    rollout["masks"],
+                    strict=True,
+                ):
+                    unit = _observation_unit(observation, config).to(device)
+                    output = policy.forward_step(
+                        unit,
+                        state,
+                        speech_teacher_codes=codes.to(device),
+                        speech_teacher_mode=mode.to(device),
+                        action_teacher_tokens=actions.to(device),
+                    )
+                    state = output.state
+                    current_values = _sample_logprob(
+                        output, mode.to(device), codes.to(device), actions.to(device)
+                    ).squeeze(0)
+                    all_current.append(current_values)
+                    all_old.append(old_values.to(device))
+                    all_reference.append(ref_values.to(device))
+                    all_advantages.append(advantage.expand_as(current_values))
+                    all_masks.append(_sample_mask(output, mode.to(device)).squeeze(0))
+        if not all_current:
+            skipped_updates += 1
+            if skipped_updates >= 100:
+                raise RuntimeError(
+                    "Online GRPO produced 100 consecutive zero-variance groups; "
+                    "check task diversity and reward instrumentation"
+                )
+            continue
+        skipped_updates = 0
+        current = torch.cat(all_current)
+        old = torch.cat(all_old)
+        ref = torch.cat(all_reference)
+        advantage = torch.cat(all_advantages)
+        mask = torch.cat(all_masks)
+        loss = grpo_loss(
+            current,
+            old,
+            ref,
+            advantage,
+            clip_epsilon=config.training.rl.clip_epsilon,
+            kl_beta=config.training.rl.reference_kl_beta,
+            mask=mask,
+        )
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(policy.parameters(), config.training.max_grad_norm)
+        optimizer.step()
+        train_state["update"] += 1
+        last_metrics = {
+            "train/loss_grpo": float(loss.detach().cpu()),
+            "rl/reward_mean": float(sum(group_rewards) / max(len(group_rewards), 1)),
+            "rl/groups": float(len(group_rewards) / config.training.rl.group_size),
+            "data/consumed_units": float(train_state["consumed_units"]),
+        }
+        if train_state["update"] % config.training.log_every == 0:
+            tracker.log(last_metrics, train_state["update"])
+    path, digest = manager.save(
+        f"step-{train_state['update']:08d}",
+        model=policy,
+        optimizer=optimizer,
+        scheduler=None,
+        scaler=None,
+        recurrent_state=None,
+        train_state=train_state,
+        data_cursor=DataCursor(),
+        metadata=_checkpoint_metadata(config, file_sha256(init_from), file_sha256(init_from)),
+        config=config.as_dict(),
+    )
+    tracker.record_checkpoint(path, digest, train_state["update"])
+    tracker.finish()
+    last_metrics["checkpoint/sha256"] = digest
+    return {
+        "train_state": train_state,
+        "data_cursor": DataCursor(),
+        "metrics": last_metrics,
+        "tracking": {
+            "requested_mode": config.tracking.mode,
+            "effective_mode": tracker.effective_mode,
+            "run_url": tracker.run_url,
+        },
+        "model": policy,
+    }

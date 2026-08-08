@@ -199,6 +199,33 @@ class StepOutput:
     action_token_mask: Tensor
     hidden: Tensor
 
+    def sampled_logprob(
+        self, speech_mode: Tensor, speech_codes: Tensor, action_tokens: Tensor
+    ) -> Tensor:
+        mode = (
+            torch.log_softmax(self.speech_mode_logits, dim=-1)
+            .gather(-1, speech_mode.unsqueeze(-1))
+            .squeeze(-1)
+        )
+        codec = (
+            torch.log_softmax(self.speech_codec_logits, dim=-1)
+            .gather(-1, speech_codes.unsqueeze(-1))
+            .squeeze(-1)
+        )
+        action = (
+            torch.log_softmax(self.action_logits, dim=-1)
+            .gather(-1, action_tokens.unsqueeze(-1))
+            .squeeze(-1)
+        )
+        return torch.cat(
+            (
+                mode.reshape(mode.shape[0], -1),
+                codec.reshape(codec.shape[0], -1),
+                action.reshape(action.shape[0], -1),
+            ),
+            dim=-1,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class SpeechSamplingConfig:

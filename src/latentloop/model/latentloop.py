@@ -202,7 +202,10 @@ class StreamingLatentLoop(nn.Module):
             mode[:, None] == int(SpeechMode.SPEECH), next_codes, torch.zeros_like(next_codes)
         )
         action_logits, action_tokens, action_local, action_token_mask = self.action_head(
-            hidden, state.action_local, action_teacher_tokens
+            hidden,
+            state.action_local,
+            action_teacher_tokens,
+            sampling_temperature=(sampling.temperature if sampling is not None else None),
         )
         next_state = RecurrentState(
             layer_kv=tuple(new_caches),

@@ -1,11 +1,12 @@
 name: production
 dataset: production
-initial_checkpoint: ~/latentloop-data/checkpoints/base/state-loop.pt
 stages:
-  - name: head
-    config: ../stages/production-head.yaml
-  - name: joint
-    config: ../stages/production-joint.yaml
+  - name: pretrain
+    config: ../stages/production-pretrain.yaml
+  - name: sft
+    config: ../stages/production-sft.yaml
+  - name: rl
+    config: ../stages/production-rl.yaml
 evaluation:
   validation_after_each_stage: true
   test_after_final_stage: true

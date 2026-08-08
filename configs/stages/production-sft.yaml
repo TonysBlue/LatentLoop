@@ -1,0 +1,10 @@
+defaults:
+  - ../production
+  - _self_
+training:
+  stage: sft
+  objective: supervised
+  max_updates: 60000
+  backbone_train_mode: all
+runtime:
+  run_name: production-sft

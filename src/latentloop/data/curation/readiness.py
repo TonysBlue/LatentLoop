@@ -51,6 +51,7 @@ def check_readiness(
     missing: list[str] = []
     invalid: list[str] = []
     production_dataset = dataset in {"canary", "pilot", "production"}
+
     def path(*parts: str) -> Path:
         return dataset_root.joinpath(*parts)
 
@@ -122,6 +123,8 @@ def check_readiness(
             processed_manifest = path("shards", "processed", split, f"{split}-manifest.jsonl")
             if processed_manifest.is_file():
                 encoded_entries = read_jsonl(processed_manifest)
+                if any(int(entry.get("schema_version", -1)) != 4 for entry in encoded_entries):
+                    invalid.append(f"{split} processed manifest contains non-v4 samples")
                 if {entry["episode_id"] for entry in source_entries} != {
                     entry["episode_id"] for entry in encoded_entries
                 }:
@@ -159,8 +162,8 @@ def check_readiness(
         if checkpoint.is_file():
             try:
                 payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
-                if payload.get("format_version") not in {2, 3}:
-                    invalid.append("initial checkpoint must use format version 2 or 3")
+                if payload.get("format_version") != 5:
+                    invalid.append("initial checkpoint must use format version 5")
                 metadata = payload.get("metadata", {})
                 if metadata.get("codec_id") != config.data.codec_id:
                     invalid.append("initial checkpoint codec_id differs from Pilot config")

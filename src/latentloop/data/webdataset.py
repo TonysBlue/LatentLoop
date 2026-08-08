@@ -78,7 +78,7 @@ def episode_to_sample(episode: Episode) -> dict[str, bytes | str]:
         "episode_id": episode.episode_id,
         "unit_count": len(units),
         "unit_audio_samples": units[0].mic_audio.shape[1],
-        "schema_version": int(episode.metadata.get("schema_version", 3)),
+        "schema_version": int(episode.metadata.get("schema_version", 4)),
     }
     timeline = {
         "timestamps_ms": np.asarray([int(u.timestamp_ms.item()) for u in units]),
@@ -222,6 +222,34 @@ class EpisodeShardReader:
         episode_id = str(sample["__key__"])
         if int(metadata.get("schema_version", -1)) != self.data.schema_version:
             raise ValueError(f"schema version mismatch for {episode_id}")
+        if int(metadata.get("schema_version", -1)) != 4:
+            raise ValueError(f"unsupported schema version for {episode_id}")
+        required_v4 = (
+            "stage",
+            "dataset_scale",
+            "sample_kind",
+            "supervision_kind",
+            "action_source",
+            "task_id",
+            "environment_id",
+            "environment_version",
+        )
+        missing = [key for key in required_v4 if key not in metadata]
+        if missing:
+            raise ValueError(f"schema v4 metadata is missing for {episode_id}: {missing}")
+        required_v4 = (
+            "stage",
+            "dataset_scale",
+            "sample_kind",
+            "supervision_kind",
+            "action_source",
+            "task_id",
+            "environment_id",
+            "environment_version",
+        )
+        missing = [key for key in required_v4 if key not in metadata]
+        if missing:
+            raise ValueError(f"schema v4 metadata is missing for {episode_id}: {missing}")
         for key in ("codec_id", "codec_weight_hash", "codec_revision"):
             if metadata.get(key) != getattr(self.data, key):
                 raise ValueError(f"{key} mismatch for {episode_id}")

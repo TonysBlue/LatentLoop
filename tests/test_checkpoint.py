@@ -48,6 +48,8 @@ def test_checkpoint_restores_full_recurrent_step(
         ),
         config=smoke_config.as_dict(),
     )
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    assert payload["format_version"] == 5
     expected = model(episode.units[1], first.state.detach()).speech_codec_logits.detach()
 
     restored_model = StreamingLatentLoop(smoke_config.model)

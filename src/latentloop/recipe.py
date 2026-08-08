@@ -17,6 +17,8 @@ from latentloop.config import ProjectConfig, load_config
 from latentloop.evaluation import build_evaluation_report, evaluate_checkpoint
 from latentloop.training import train
 
+_FORMAL_STAGES = ("pretrain", "sft", "rl")
+
 
 @dataclass(frozen=True, slots=True)
 class RecipeStage:
@@ -44,8 +46,7 @@ def load_recipe(path: str | Path) -> TrainingRecipe:
     if not isinstance(stages_raw, list) or not stages_raw:
         raise ValueError("recipe must contain at least one stage")
     stages = tuple(
-        RecipeStage(name=str(item["name"]), config=str(item["config"]))
-        for item in stages_raw
+        RecipeStage(name=str(item["name"]), config=str(item["config"])) for item in stages_raw
     )
     if len({stage.name for stage in stages}) != len(stages):
         raise ValueError("recipe stage names must be unique")
@@ -100,13 +101,15 @@ def _checkpoint_matches(path: Path, config: ProjectConfig) -> bool:
 
         payload = torch.load(path, map_location="cpu", weights_only=False)
         return (
-            payload.get("format_version") == 4
+            payload.get("format_version") == 5
             and payload.get("config_hash") == config_hash(config.as_dict())
             and payload.get("metadata", {}).get("data_identity") == _data_identity(config)
             and payload.get("metadata", {}).get("codec_id") == config.data.codec_id
             and payload.get("metadata", {}).get("codec_revision") == config.data.codec_revision
             and payload.get("metadata", {}).get("codec_weight_hash")
             == config.data.codec_weight_hash
+            and payload.get("metadata", {}).get("stage") == config.training.stage
+            and payload.get("metadata", {}).get("objective") == config.training.objective
         )
     except (OSError, RuntimeError, ValueError, KeyError, TypeError, pickle.UnpicklingError):
         return False
@@ -135,6 +138,23 @@ def _checkpoint_metadata(path: Path) -> dict[str, Any]:
         "metadata": payload.get("metadata", {}),
         "train_state": payload.get("train_state", {}),
     }
+
+
+def _require_parent_stage(path: Path, *, stage: str, objective: str) -> None:
+    import torch
+
+    try:
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+    except (OSError, RuntimeError, ValueError, TypeError) as error:
+        raise ValueError(f"cannot inspect parent checkpoint {path}: {error}") from error
+    if payload.get("format_version") != 5:
+        raise ValueError("formal stage parent checkpoint must use format version 5")
+    metadata = payload.get("metadata", {})
+    if metadata.get("stage") != stage or metadata.get("objective") != objective:
+        raise ValueError(
+            f"formal stage requires parent {stage}/{objective} checkpoint, got "
+            f"{metadata.get('stage')}/{metadata.get('objective')}"
+        )
 
 
 def _git_commit() -> str:
@@ -173,6 +193,9 @@ def run_recipe(
 ) -> dict[str, Any]:
     recipe_path = Path(path).expanduser().resolve()
     recipe = load_recipe(recipe_path)
+    if recipe.dataset in {"canary", "pilot", "production"}:
+        if tuple(stage.name for stage in recipe.stages) != _FORMAL_STAGES:
+            raise ValueError("formal recipes must contain pretrain -> sft -> rl")
     selected_run_id = (
         run_id or recipe.run_id or os.environ.get("LATENTLOOP_RUN_ID") or _new_run_id()
     )
@@ -189,6 +212,19 @@ def run_recipe(
             raise ValueError(
                 f"stage {stage.name} dataset {config.data.dataset!r} differs from "
                 f"recipe {recipe.dataset!r}"
+            )
+        expected_stage, expected_objective = (
+            (stage.name, "grpo" if stage.name == "rl" else "supervised")
+            if recipe.dataset in {"canary", "pilot", "production"}
+            else (config.training.stage, config.training.objective)
+        )
+        if (
+            config.training.stage != expected_stage
+            or config.training.objective != expected_objective
+        ):
+            raise ValueError(
+                f"stage {stage.name} must use {expected_stage}/{expected_objective}, got "
+                f"{config.training.stage}/{config.training.objective}"
             )
         config.runtime.run_name = f"{recipe.name}-{stage.name}"
         config.runtime.recipe_name = recipe.name
@@ -235,6 +271,12 @@ def run_recipe(
             parent = final_checkpoint
             continue
         init_from = None if resume else (str(parent) if parent else None)
+        if recipe.dataset in {"canary", "pilot", "production"} and init_from:
+            required_parent = "pretrain" if stage.name == "sft" else "sft"
+            required_objective = "supervised"
+            _require_parent_stage(
+                Path(init_from), stage=required_parent, objective=required_objective
+            )
         result = train(config, resume=resume, init_from=init_from)
         final_checkpoint = _checkpoint_path(config, result["train_state"]["update"])
         stage_report: dict[str, Any] = {
@@ -255,8 +297,7 @@ def run_recipe(
                 "optimizer_updates": result["train_state"]["update"],
                 "consumed_units": result["train_state"].get("consumed_units", 0),
                 "estimated_epochs": (
-                    result["train_state"].get("consumed_units", 0)
-                    / max(_manifest_units(config), 1)
+                    result["train_state"].get("consumed_units", 0) / max(_manifest_units(config), 1)
                 ),
             },
         }

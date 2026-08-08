@@ -1,0 +1,10 @@
+defaults:
+  - ../pilot
+  - _self_
+training:
+  stage: sft
+  objective: supervised
+  max_updates: 30000
+  backbone_train_mode: all
+runtime:
+  run_name: pilot-sft

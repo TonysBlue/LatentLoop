@@ -5,6 +5,8 @@ from enum import IntEnum
 
 from latentloop.types import ActionType
 
+ACTION_VOCABULARY_ID = "unified-action-v4"
+
 
 class ActionToken(IntEnum):
     PAD = 0
