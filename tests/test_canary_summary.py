@@ -74,21 +74,17 @@ def test_train_and_evaluation_summaries_explain_smoke_quality(tmp_path: Path) ->
             tmp_path / "runs" / f"{split}-evaluation.json",
             {
                 "episodes": 3,
-                "speech_control_macro_f1": 0.25,
-                "speech_control_accuracy": 0.8,
-                "teacher_codec_accuracy": [0.0, 0.1],
+                "speech_mode_accuracy": 0.8,
+                "speech_codec_accuracy": [0.0, 0.1],
+                "action_token_accuracy": 0.25,
             },
         )
 
-    train_output = run_summary(
-        "train", "--report", str(training), "--checkpoint", str(checkpoint)
-    )
-    evaluation_output = run_summary(
-        "evaluate", "--run-root", str(tmp_path), "--max-updates", "5"
-    )
+    train_output = run_summary("train", "--report", str(training), "--checkpoint", str(checkpoint))
+    evaluation_output = run_summary("evaluate", "--run-root", str(tmp_path), "--max-updates", "5")
 
     assert "Peak GPU memory: 2.00 GiB" in train_output
     assert "mean codec accuracy 0.2000" in train_output
     assert "W&B: online, http://127.0.0.1:8080/run/abc" in train_output
-    assert "Validation: 3 episodes, macro-F1 0.250" in evaluation_output
+    assert "Validation: 3 episodes, mode accuracy 0.800" in evaluation_output
     assert "Quality: pipeline smoke test only; model is not converged" in evaluation_output

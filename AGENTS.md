@@ -18,6 +18,17 @@ The repository is a research implementation, not a product UI. Prefer
 reproducibility, explicit contracts, measurable gates, and small reversible
 changes over convenience abstractions.
 
+## Design Target Principle
+
+方案设计、接口和训练目标应直接面向最终优雅、统一且自洽的目标架构，
+不要为了短期可运行而引入与目标架构语义不同的中间妥协方案。讨论或实现
+新方案时，先明确最终状态、数据流、输出空间和监督路径；除非用户明确要求
+过渡实现，否则不添加临时分支、占位 head 或仅服务于中间阶段的设计。
+
+涉及架构、状态、数据协议、训练目标或 checkpoint 的变更，必须先刷新
+设计文档并完成测试设计，再开始生产代码实现。除非用户明确要求过渡
+实现，不得先写中间版本再回补最终方案。
+
 ## Core Principle: Same Code Path
 
 Canary, Pilot, and Production must use the same training implementation.
@@ -85,9 +96,9 @@ Do not silently change these invariants:
 - Outputs: speech is direct codec-token prediction. TTS is a data-preparation
   adapter only; it is not a second runtime speech target. Actions remain an
   independent action head.
-- `latent_write_loss_weight` is intentionally zero in the current profiles.
-  Change it only with an explicit objective, supervision definition, and
-  regression evidence.
+- Long-term memory has no independent target or auxiliary write loss. It is
+  trained only through future Speech/Action output losses flowing through
+  `Z_t -> Backbone -> H_t -> heads`.
 - Do not reintroduce balanced-window training or per-window state reset. If
   speech supervision is sparse, fix the dataset composition and report the
   resulting supervision density.

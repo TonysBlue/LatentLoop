@@ -16,7 +16,7 @@ from latentloop.codec import CodecIdentity
 from latentloop.codec_worker import receive_message, send_message
 from latentloop.config import ProjectConfig
 from latentloop.data import EpisodeShardReader, import_speech_manifest, write_episode_shards
-from latentloop.types import ActionControl, CognitiveControl, SpeechControl
+from latentloop.types import SpeechMode
 
 
 def _write_audio(path: Path, values: np.ndarray, sample_rate: int) -> None:
@@ -77,36 +77,29 @@ def test_import_pads_to_80_ms_and_sets_speech_only_masks(
         episode.units[1].mic_audio[:, : frame // 2],
         torch.full((1, frame // 2), 0.1),
     )
-    assert torch.equal(
-        episode.units[1].mic_audio[:, frame // 2 :], torch.zeros(1, frame // 2)
-    )
+    assert torch.equal(episode.units[1].mic_audio[:, frame // 2 :], torch.zeros(1, frame // 2))
     for unit in episode.units:
-        assert unit.speech_mask.all()
-        assert unit.speech_control_mask.all()
-        assert not unit.action_mask.any()
-        assert not unit.action_control_mask.any()
-        assert not unit.cognitive_control_mask.any()
-        assert not unit.memory_mask.any()
-        assert unit.control_target.action.item() == ActionControl.NOOP
-        assert unit.control_target.cognitive.item() == CognitiveControl.OBSERVE
+        assert unit.speech_mode_mask.all()
+        assert unit.speech_mode.item() == SpeechMode.SILENCE
+        assert unit.action_token_mask.any()
 
 
 def test_import_generates_start_continue_and_stop(
     tmp_path: Path, smoke_config: ProjectConfig
 ) -> None:
     frame = smoke_config.data.unit_audio_samples
-    target = np.concatenate(
-        [np.full(frame, 0.25), np.full(frame, 0.25), np.zeros(frame)]
-    )
+    target = np.concatenate([np.full(frame, 0.25), np.full(frame, 0.25), np.zeros(frame)])
     _write_audio(tmp_path / "mic.wav", np.zeros(target.size), 4_000)
     _write_audio(tmp_path / "target.wav", target, 4_000)
     manifest = tmp_path / "source.jsonl"
     _write_manifest(manifest, _record())
 
     episode = next(import_speech_manifest(manifest, smoke_config.data, smoke_config.model))
-    controls = [unit.control_target.speech.item() for unit in episode.units]
-
-    assert controls == [SpeechControl.START, SpeechControl.CONTINUE, SpeechControl.STOP]
+    assert [unit.speech_mode.item() for unit in episode.units] == [
+        SpeechMode.SPEECH,
+        SpeechMode.SPEECH,
+        SpeechMode.SILENCE,
+    ]
 
 
 def test_import_uses_explicit_segments_for_controls_and_masks(
@@ -134,18 +127,18 @@ def test_import_uses_explicit_segments_for_controls_and_masks(
 
     episode = next(import_speech_manifest(manifest, smoke_config.data, smoke_config.model))
 
-    assert [unit.control_target.speech.item() for unit in episode.units] == [
-        SpeechControl.SILENT,
-        SpeechControl.START,
-        SpeechControl.CONTINUE,
-        SpeechControl.STOP,
-        SpeechControl.SILENT,
+    assert [unit.speech_mode.item() for unit in episode.units] == [
+        SpeechMode.SILENCE,
+        SpeechMode.SPEECH,
+        SpeechMode.SPEECH,
+        SpeechMode.SILENCE,
+        SpeechMode.SILENCE,
     ]
-    assert [bool(unit.speech_mask.item()) for unit in episode.units] == [
+    assert [bool(unit.speech_codec_mask.item()) for unit in episode.units] == [
         False,
         True,
         True,
-        True,
+        False,
         False,
     ]
 
@@ -160,9 +153,7 @@ def test_import_rejects_unaligned_explicit_segment(
     _write_manifest(
         manifest,
         _record(
-            target_segments=[
-                {"turn_id": "assistant-1", "start_sample": 1, "end_sample": frame}
-            ]
+            target_segments=[{"turn_id": "assistant-1", "start_sample": 1, "end_sample": frame}]
         ),
     )
 
@@ -201,9 +192,7 @@ def test_staging_shard_is_rejected_until_speech_is_encoded(
     _write_audio(tmp_path / "target.wav", np.zeros(frame), 4_000)
     source_manifest = tmp_path / "source.jsonl"
     _write_manifest(source_manifest, _record(content_sha256="untrusted"))
-    episode = next(
-        import_speech_manifest(source_manifest, smoke_config.data, smoke_config.model)
-    )
+    episode = next(import_speech_manifest(source_manifest, smoke_config.data, smoke_config.model))
     written = write_episode_shards([episode], tmp_path / "staging-%06d.tar")
     reader = EpisodeShardReader(
         str(tmp_path / "staging-*.tar"), smoke_config.data, smoke_config.model
@@ -237,15 +226,11 @@ class _EncodingCodecServer:
                     return
                 operation = header["operation"]
                 if operation == "health":
-                    send_message(
-                        connection, {"ok": True, "identity": asdict(self.identity)}
-                    )
+                    send_message(connection, {"ok": True, "identity": asdict(self.identity)})
                 elif operation == "reset":
                     send_message(connection, {"ok": True})
                 elif operation == "encode_step":
-                    codes = np.zeros(
-                        (1, self.identity.codebooks, 1), dtype=np.uint16
-                    )
+                    codes = np.zeros((1, self.identity.codebooks, 1), dtype=np.uint16)
                     send_message(
                         connection,
                         {"ok": True, "dtype": "uint16", "shape": codes.shape},
@@ -263,9 +248,7 @@ class _EncodingCodecServer:
         self.thread.join(timeout=1)
 
 
-def test_cli_import_encode_validate_workflow(
-    tmp_path: Path, smoke_config: ProjectConfig
-) -> None:
+def test_cli_import_encode_validate_workflow(tmp_path: Path, smoke_config: ProjectConfig) -> None:
     frame = smoke_config.data.unit_audio_samples
     _write_audio(tmp_path / "mic.wav", np.zeros(frame), 4_000)
     _write_audio(tmp_path / "target.wav", np.zeros(frame), 4_000)
@@ -286,40 +269,49 @@ def test_cli_import_encode_validate_workflow(
     server = _EncodingCodecServer(tmp_path / "codec.sock", identity)
     smoke_config.data.manifest = str(tmp_path / "unrelated-processed-manifest.jsonl")
     try:
-        assert main(
-            [
-                "import-speech",
-                "--config",
-                "configs/smoke.yaml",
-                "--manifest",
-                str(source_manifest),
-                "--output",
-                str(staging),
-            ]
-        ) == 0
-        assert main(
-            [
-                "encode-speech",
-                "--config",
-                "configs/smoke.yaml",
-                "--set",
-                f"data.manifest={smoke_config.data.manifest}",
-                "--shards",
-                str(tmp_path / "staging-*.tar"),
-                "--output",
-                str(processed),
-                "--socket",
-                str(server.path),
-            ]
-        ) == 0
-        assert main(
-            [
-                "validate-data",
-                "--config",
-                "configs/smoke.yaml",
-                "--shards",
-                str(tmp_path / "processed-*.tar"),
-            ]
-        ) == 0
+        assert (
+            main(
+                [
+                    "import-speech",
+                    "--config",
+                    "configs/smoke.yaml",
+                    "--manifest",
+                    str(source_manifest),
+                    "--output",
+                    str(staging),
+                ]
+            )
+            == 0
+        )
+        assert (
+            main(
+                [
+                    "encode-speech",
+                    "--config",
+                    "configs/smoke.yaml",
+                    "--set",
+                    f"data.manifest={smoke_config.data.manifest}",
+                    "--shards",
+                    str(tmp_path / "staging-*.tar"),
+                    "--output",
+                    str(processed),
+                    "--socket",
+                    str(server.path),
+                ]
+            )
+            == 0
+        )
+        assert (
+            main(
+                [
+                    "validate-data",
+                    "--config",
+                    "configs/smoke.yaml",
+                    "--shards",
+                    str(tmp_path / "processed-*.tar"),
+                ]
+            )
+            == 0
+        )
     finally:
         server.close()

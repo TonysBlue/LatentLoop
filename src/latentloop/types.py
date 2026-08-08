@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
 
@@ -21,56 +21,9 @@ class ActionType(IntEnum):
     CANCEL = 9
 
 
-class SpeechControl(IntEnum):
-    SILENT = 0
-    START = 1
-    CONTINUE = 2
-    PAUSE = 3
-    STOP = 4
-
-
-class ActionControl(IntEnum):
-    NOOP = 0
-    EXECUTE = 1
-    CANCEL = 2
-    WAIT_CONFIRMATION = 3
-
-
-class CognitiveControl(IntEnum):
-    OBSERVE = 0
-    UPDATE = 1
-    SILENT_THINK = 2
-    COMPACT = 3
-    RESET = 4
-
-
-@dataclass(slots=True)
-class ActionTarget:
-    type: Tensor
-    coordinates: Tensor
-    coordinate_mask: Tensor
-    scroll_delta: Tensor
-    scroll_mask: Tensor
-    duration_ms: Tensor
-    duration_mask: Tensor
-    text_tokens: Tensor
-    text_mask: Tensor
-    key_mask: Tensor
-
-    def to(self, device: torch.device | str) -> ActionTarget:
-        values = {field.name: getattr(self, field.name).to(device) for field in fields(self)}
-        return ActionTarget(**values)
-
-
-@dataclass(slots=True)
-class ControlTarget:
-    speech: Tensor
-    action: Tensor
-    cognitive: Tensor
-
-    def to(self, device: torch.device | str) -> ControlTarget:
-        values = {field.name: getattr(self, field.name).to(device) for field in fields(self)}
-        return ControlTarget(**values)
+class SpeechMode(IntEnum):
+    SILENCE = 0
+    SPEECH = 1
 
 
 @dataclass(slots=True)
@@ -83,16 +36,12 @@ class StreamUnit:
     screen: Tensor
     screen_valid: Tensor
     screen_revision: Tensor
+    speech_mode: Tensor
+    speech_mode_mask: Tensor
     speech_codes: Tensor
-    speech_mask: Tensor
-    action_mask: Tensor
-    speech_control_mask: Tensor
-    action_control_mask: Tensor
-    cognitive_control_mask: Tensor
-    memory_mask: Tensor
-    action_target: ActionTarget
-    control_target: ControlTarget
-    memory_target: Tensor
+    speech_codec_mask: Tensor
+    action_tokens: Tensor
+    action_token_mask: Tensor
 
     @property
     def batch_size(self) -> int:
@@ -106,16 +55,12 @@ class StreamUnit:
             screen=self.screen.to(device),
             screen_valid=self.screen_valid.to(device),
             screen_revision=self.screen_revision.to(device),
+            speech_mode=self.speech_mode.to(device),
+            speech_mode_mask=self.speech_mode_mask.to(device),
             speech_codes=self.speech_codes.to(device),
-            speech_mask=self.speech_mask.to(device),
-            action_mask=self.action_mask.to(device),
-            speech_control_mask=self.speech_control_mask.to(device),
-            action_control_mask=self.action_control_mask.to(device),
-            cognitive_control_mask=self.cognitive_control_mask.to(device),
-            memory_mask=self.memory_mask.to(device),
-            action_target=self.action_target.to(device),
-            control_target=self.control_target.to(device),
-            memory_target=self.memory_target.to(device),
+            speech_codec_mask=self.speech_codec_mask.to(device),
+            action_tokens=self.action_tokens.to(device),
+            action_token_mask=self.action_token_mask.to(device),
         )
 
     def validate(
@@ -125,65 +70,36 @@ class StreamUnit:
         speech_frames: int,
         speech_codebooks: int,
         speech_codebook_size: int = 2**16,
+        action_vocab_size: int | None = None,
     ) -> None:
         batch = self.batch_size
         if self.mic_audio.shape != (batch, audio_samples):
             raise ValueError(f"mic_audio must have shape [B, {audio_samples}]")
         if self.screen.ndim != 4 or self.screen.shape[:2] != (batch, 3):
             raise ValueError("screen must have shape [B, 3, H, W]")
+        if self.speech_mode.shape != (batch,) or self.speech_mode_mask.shape != (batch,):
+            raise ValueError("speech mode tensors must have shape [B]")
+        if torch.any((self.speech_mode < 0) | (self.speech_mode > 1)):
+            raise ValueError("speech mode must be SILENCE or SPEECH")
         if self.speech_codes.shape != (batch, speech_frames, speech_codebooks):
             raise ValueError("speech_codes has an incompatible shape")
-        if self.speech_mask.shape != (batch, speech_frames):
-            raise ValueError("speech_mask has an incompatible shape")
-        valid_codes = self.speech_codes[self.speech_mask]
+        if self.speech_codec_mask.shape != (batch, speech_frames):
+            raise ValueError("speech_codec_mask has an incompatible shape")
+        valid_codes = self.speech_codes[self.speech_codec_mask]
         if valid_codes.numel() and (
             valid_codes.min() < 0 or valid_codes.max() >= speech_codebook_size
         ):
             raise ValueError("speech code is outside the configured codebook")
-        for name, mask in (
-            ("action_mask", self.action_mask),
-            ("speech_control_mask", self.speech_control_mask),
-            ("action_control_mask", self.action_control_mask),
-            ("cognitive_control_mask", self.cognitive_control_mask),
-            ("memory_mask", self.memory_mask),
-        ):
-            if mask.shape != (batch,):
-                raise ValueError(f"{name} must have shape [B]")
-        action = self.action_target
-        if action.coordinates.shape != (batch, 4):
-            raise ValueError("action coordinates must have shape [B, 4]")
-        if action.coordinate_mask.shape != (batch, 4):
-            raise ValueError("action coordinate_mask must have shape [B, 4]")
-        if torch.any(action.coordinates < 0) or torch.any(action.coordinates > 1):
-            raise ValueError("action coordinates must be normalized to [0, 1]")
-        if action.scroll_delta.shape != (batch, 2):
-            raise ValueError("action scroll_delta must have shape [B, 2]")
-        if action.text_tokens.shape != action.text_mask.shape:
-            raise ValueError("action text tokens and mask must have identical shapes")
-        if action.key_mask.shape[0] != batch:
-            raise ValueError("action key_mask must start with the batch dimension")
-        for index, action_type in enumerate(action.type.tolist()):
-            coordinate_count = int(action.coordinate_mask[index].sum().item())
-            if (
-                action_type
-                in {
-                    ActionType.CLICK,
-                    ActionType.DOUBLE_CLICK,
-                    ActionType.RIGHT_CLICK,
-                }
-                and coordinate_count != 2
+        if self.action_tokens.ndim != 2 or self.action_tokens.shape[0] != batch:
+            raise ValueError("action_tokens must have shape [B, max_tokens]")
+        if self.action_token_mask.shape != self.action_tokens.shape:
+            raise ValueError("action_token_mask must match action_tokens")
+        if action_vocab_size is not None:
+            valid_actions = self.action_tokens[self.action_token_mask]
+            if valid_actions.numel() and (
+                valid_actions.min() < 0 or valid_actions.max() >= action_vocab_size
             ):
-                raise ValueError("point actions require exactly two coordinate values")
-            if action_type == ActionType.DRAG and coordinate_count != 4:
-                raise ValueError("drag requires four coordinate values")
-            if action_type == ActionType.SCROLL and not action.scroll_mask[index]:
-                raise ValueError("scroll requires a scroll delta")
-            if action_type == ActionType.TYPE and not action.text_mask[index].any():
-                raise ValueError("type requires at least one text token")
-            if action_type == ActionType.HOTKEY and not action.key_mask[index].any():
-                raise ValueError("hotkey requires at least one key")
-            if action_type == ActionType.WAIT and not action.duration_mask[index]:
-                raise ValueError("wait requires a duration")
+                raise ValueError("action token is outside the configured vocabulary")
         if torch.any(self.delta_ms <= 0):
             raise ValueError("delta_ms must be positive")
 
@@ -226,15 +142,29 @@ class LayerKV:
 class SpeechLocalState:
     temporal: Tensor
     previous_codes: Tensor
-    control: Tensor
-    utterance_active: Tensor
 
     def detach(self) -> SpeechLocalState:
         return SpeechLocalState(
             temporal=self.temporal.detach(),
             previous_codes=self.previous_codes.detach(),
-            control=self.control.detach(),
-            utterance_active=self.utterance_active.detach(),
+        )
+
+
+@dataclass(slots=True)
+class ActionLocalState:
+    hidden: Tensor
+    previous_token: Tensor
+    active: Tensor
+    event_type: Tensor
+    burst_tokens: Tensor
+
+    def detach(self) -> ActionLocalState:
+        return ActionLocalState(
+            hidden=self.hidden.detach(),
+            previous_token=self.previous_token.detach(),
+            active=self.active.detach(),
+            event_type=self.event_type.detach(),
+            burst_tokens=self.burst_tokens.detach(),
         )
 
 
@@ -243,7 +173,9 @@ class RecurrentState:
     layer_kv: tuple[LayerKV, ...]
     latent: Tensor
     audio_cache: Tensor
+    hidden: Tensor
     speech_local: SpeechLocalState
+    action_local: ActionLocalState
     unit_index: Tensor
 
     def detach(self) -> RecurrentState:
@@ -251,39 +183,21 @@ class RecurrentState:
             layer_kv=tuple(cache.detach() for cache in self.layer_kv),
             latent=self.latent.detach(),
             audio_cache=self.audio_cache.detach(),
+            hidden=self.hidden.detach(),
             speech_local=self.speech_local.detach(),
+            action_local=self.action_local.detach(),
             unit_index=self.unit_index.detach(),
         )
 
 
 @dataclass(slots=True)
-class ActionOutput:
-    type_logits: Tensor
-    coordinates: Tensor
-    scroll_delta: Tensor
-    duration_ms: Tensor
-    text_logits: Tensor
-    key_logits: Tensor
-    confidence: Tensor
-    observed_screen_revision: Tensor
-
-
-@dataclass(slots=True)
-class ControlOutput:
-    speech_logits: Tensor
-    action_logits: Tensor
-    cognitive_logits: Tensor
-
-
-@dataclass(slots=True)
 class StepOutput:
     state: RecurrentState
-    speech_logits: Tensor
-    action: ActionOutput
-    controls: ControlOutput
-    memory_logits: Tensor
-    latent_gate: Tensor
-    query: Tensor
+    speech_mode_logits: Tensor
+    speech_codec_logits: Tensor
+    action_logits: Tensor
+    action_token_mask: Tensor
+    hidden: Tensor
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,5 +210,6 @@ class SpeechSamplingConfig:
 @dataclass(slots=True)
 class GenerationOutput:
     output: StepOutput
+    speech_mode: Tensor
     speech_codes: Tensor
-    speech_control: Tensor
+    action_tokens: Tensor

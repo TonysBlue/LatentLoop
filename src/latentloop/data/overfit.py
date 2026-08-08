@@ -4,27 +4,20 @@ from collections.abc import Iterator
 
 import torch
 
+from latentloop.action_tokens import ActionEvent, ActionTokenizer
 from latentloop.config import DataConfig, ModelConfig
-from latentloop.types import (
-    ActionControl,
-    ActionTarget,
-    ActionType,
-    CognitiveControl,
-    ControlTarget,
-    Episode,
-    SpeechControl,
-    StreamUnit,
-)
+from latentloop.types import ActionType, Episode, SpeechMode, StreamUnit
 
 
 class SpeechOverfitDataset:
-    """Small deterministic trajectories for the direct-speech overfit gate."""
+    """Small deterministic direct-speech trajectories for the overfit gate."""
 
     def __init__(self, data: DataConfig, model: ModelConfig) -> None:
         if data.episode_units < 12:
             raise ValueError("speech overfit trajectories require at least 12 units")
         self.data = data
         self.model = model
+        self.actions = ActionTokenizer(model.max_action_duration_ms, model.action_burst_tokens)
 
     def __len__(self) -> int:
         return self.data.train_episodes
@@ -37,9 +30,10 @@ class SpeechOverfitDataset:
         response_class = episode_index % 8
         variant = episode_index // 8
         mic = self._microphone_prompt(response_class, variant)
-        target, controls = self._target_response(response_class)
+        target = self._target_response(response_class)
+        start_tick, active_ticks = 5, 8
         units = [
-            self._unit(index, mic, controls, response_class)
+            self._unit(index, mic, response_class, start_tick, active_ticks)
             for index in range(self.data.episode_units)
         ]
         episode = Episode(
@@ -64,10 +58,7 @@ class SpeechOverfitDataset:
                 "speech_codes_encoded": False,
                 "response_class": response_class,
                 "variant": variant,
-                "turns": [
-                    {"speaker": "user", "start_tick": 0, "end_tick": 3},
-                    {"speaker": "assistant", "start_tick": 5, "end_tick": 13},
-                ],
+                "action_schema_version": 3,
             },
             target_speech=target,
             sample_index_in_shard=episode_index,
@@ -77,6 +68,7 @@ class SpeechOverfitDataset:
             speech_frames=self.model.speech_frames_per_unit,
             speech_codebooks=self.model.speech_codebooks,
             speech_codebook_size=self.model.speech_codebook_size,
+            action_vocab_size=self.actions.vocab_size,
         )
         return episode
 
@@ -93,13 +85,10 @@ class SpeechOverfitDataset:
         waveform[:prompt_samples] = prompt
         return waveform
 
-    def _target_response(
-        self, response_class: int
-    ) -> tuple[torch.Tensor, list[SpeechControl]]:
+    def _target_response(self, response_class: int) -> torch.Tensor:
         total = self.data.episode_units * self.data.unit_audio_samples
         waveform = torch.zeros(total)
-        start_tick = 5
-        active_ticks = 8
+        start_tick, active_ticks = 5, 8
         active_samples = active_ticks * self.data.unit_audio_samples
         time = torch.arange(active_samples) / self.data.audio_sample_rate
         fundamental = 180.0 + 30.0 * response_class
@@ -109,13 +98,7 @@ class SpeechOverfitDataset:
         response *= self._edge_envelope(active_samples)
         offset = start_tick * self.data.unit_audio_samples
         waveform[offset : offset + active_samples] = response
-
-        controls = [SpeechControl.SILENT] * self.data.episode_units
-        controls[start_tick] = SpeechControl.START
-        for tick in range(start_tick + 1, start_tick + active_ticks):
-            controls[tick] = SpeechControl.CONTINUE
-        controls[start_tick + active_ticks] = SpeechControl.STOP
-        return waveform, controls
+        return waveform
 
     def _edge_envelope(self, samples: int) -> torch.Tensor:
         ramp_samples = min(self.data.audio_sample_rate // 100, samples // 2)
@@ -129,58 +112,33 @@ class SpeechOverfitDataset:
         self,
         index: int,
         microphone: torch.Tensor,
-        controls: list[SpeechControl],
         response_class: int,
+        start_tick: int,
+        active_ticks: int,
     ) -> StreamUnit:
         frame = self.data.unit_audio_samples
-        control = controls[index]
-        speech_valid = control is not SpeechControl.SILENT
+        speaking = start_tick <= index < start_tick + active_ticks
+        # The direct codec target is filled by the codec preparation stage.
+        tokens = self.actions.encode(ActionEvent(ActionType.NOOP))
+        action_tokens = torch.full((1, self.model.action_burst_tokens), 0, dtype=torch.long)
+        action_mask = torch.zeros_like(action_tokens, dtype=torch.bool)
+        action_tokens[0, : len(tokens)] = torch.tensor(tokens)
+        action_mask[0, : len(tokens)] = True
         return StreamUnit(
             timestamp_ms=torch.tensor([index * self.data.unit_ms]),
             delta_ms=torch.tensor([self.data.unit_ms]),
             mic_audio=microphone[None, index * frame : (index + 1) * frame],
-            screen=torch.zeros(
-                1, 3, self.data.screen_height, self.data.screen_width
-            ),
+            screen=torch.zeros(1, 3, self.data.screen_height, self.data.screen_width),
             screen_valid=torch.tensor([False]),
             screen_revision=torch.tensor([-1]),
+            speech_mode=torch.tensor([int(SpeechMode.SPEECH if speaking else SpeechMode.SILENCE)]),
+            speech_mode_mask=torch.tensor([True]),
             speech_codes=torch.zeros(
-                1,
-                self.model.speech_frames_per_unit,
-                self.model.speech_codebooks,
-                dtype=torch.long,
+                1, self.model.speech_frames_per_unit, self.model.speech_codebooks, dtype=torch.long
             ),
-            speech_mask=torch.tensor([[speech_valid]]),
-            action_mask=torch.tensor([False]),
-            speech_control_mask=torch.tensor([True]),
-            action_control_mask=torch.tensor([False]),
-            cognitive_control_mask=torch.tensor([False]),
-            memory_mask=torch.tensor([False]),
-            action_target=self._empty_action(),
-            control_target=ControlTarget(
-                speech=torch.tensor([int(control)]),
-                action=torch.tensor([int(ActionControl.NOOP)]),
-                cognitive=torch.tensor([int(CognitiveControl.OBSERVE)]),
+            speech_codec_mask=torch.full(
+                (1, self.model.speech_frames_per_unit), speaking, dtype=torch.bool
             ),
-            memory_target=torch.tensor([response_class]),
-        )
-
-    def _empty_action(self) -> ActionTarget:
-        return ActionTarget(
-            type=torch.tensor([int(ActionType.NOOP)]),
-            coordinates=torch.zeros(1, 4),
-            coordinate_mask=torch.zeros(1, 4, dtype=torch.bool),
-            scroll_delta=torch.zeros(1, 2),
-            scroll_mask=torch.tensor([False]),
-            duration_ms=torch.zeros(1),
-            duration_mask=torch.tensor([False]),
-            text_tokens=torch.zeros(
-                1, self.model.action_text_tokens, dtype=torch.long
-            ),
-            text_mask=torch.zeros(
-                1, self.model.action_text_tokens, dtype=torch.bool
-            ),
-            key_mask=torch.zeros(
-                1, self.model.action_key_vocab_size, dtype=torch.bool
-            ),
+            action_tokens=action_tokens,
+            action_token_mask=action_mask,
         )

@@ -78,7 +78,8 @@ done
 ## 标签语义
 
 `target_segments` 的 `start_sample` 必须落在 80 ms tick。包含最后助手采样的帧是
-`CONTINUE`，紧接着的下一帧是 `STOP`；`START/CONTINUE/STOP` 的 `speech_mask=true`，
+assistant segment 内的 unit 标记为 `speech_mode=SPEECH`，其余 unit 标记为
+`speech_mode=SILENCE`；codec mask 只在 SPEECH unit 有效。
 其他帧为 false。公共真实输入 episode 的 target 全静音、没有 codec loss。Action/Memory
 mask 在 Pilot 保持 false，`PAUSE` 不使用。
 

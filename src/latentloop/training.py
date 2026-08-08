@@ -29,54 +29,21 @@ from latentloop.types import Episode, RecurrentState, StreamUnit
 
 
 def _loss_denominators(units: Sequence[StreamUnit]) -> dict[str, float]:
-    """Mask counts matching the reductions in ``compute_losses``."""
-
-    def positive(value: int) -> float:
-        return float(max(value, 1))
-
     return {
         "total": float(len(units)),
-        "speech": float(sum(int(unit.speech_mask.sum()) for unit in units)),
-        "action_type": positive(sum(int(unit.action_mask.sum()) for unit in units)),
-        "action_confidence": positive(sum(int(unit.action_mask.sum()) for unit in units)),
-        "action_coord": positive(
-            sum(
-                int((unit.action_target.coordinate_mask & unit.action_mask[:, None]).sum())
-                for unit in units
+        "speech": float(max(sum(int(u.speech_mode_mask.sum()) for u in units), 1)),
+        "speech_mode": float(max(sum(int(u.speech_mode_mask.sum()) for u in units), 1)),
+        "speech_codec": float(
+            max(
+                sum(
+                    int((u.speech_codec_mask & u.speech_mode.eq(1)[:, None]).sum())
+                    * u.speech_codes.shape[-1]
+                    for u in units
+                ),
+                1,
             )
         ),
-        "action_scroll": positive(
-            sum(
-                int((unit.action_target.scroll_mask & unit.action_mask).sum()) * 2 for unit in units
-            )
-        ),
-        "action_duration": positive(
-            sum(int((unit.action_target.duration_mask & unit.action_mask).sum()) for unit in units)
-        ),
-        "action_text": positive(
-            sum(
-                int((unit.action_target.text_mask & unit.action_mask[:, None]).sum())
-                for unit in units
-            )
-        ),
-        "action_keys": positive(
-            sum(
-                int(
-                    (
-                        unit.action_target.key_mask
-                        & ((unit.action_target.type == 7) & unit.action_mask)[:, None]
-                    ).sum()
-                )
-                for unit in units
-            )
-        ),
-        "control_speech": positive(sum(int(unit.speech_control_mask.sum()) for unit in units)),
-        "control_action": positive(sum(int(unit.action_control_mask.sum()) for unit in units)),
-        "control_cognitive": positive(
-            sum(int(unit.cognitive_control_mask.sum()) for unit in units)
-        ),
-        "memory": positive(sum(int(unit.memory_mask.sum()) for unit in units)),
-        "latent_write": float(len(units)),
+        "action": float(max(sum(int(u.action_token_mask.sum()) for u in units), 1)),
     }
 
 
@@ -84,28 +51,15 @@ def _aggregate_update_metrics(
     records: list[dict[str, Any]], config: ProjectConfig
 ) -> dict[str, float]:
     """Aggregate losses and codec accuracy over chunks in one optimizer update."""
-    names = (
-        "total",
-        "speech",
-        "action_type",
-        "action_confidence",
-        "action_coord",
-        "action_scroll",
-        "action_duration",
-        "action_text",
-        "action_keys",
-        "control_speech",
-        "control_action",
-        "control_cognitive",
-        "memory",
-        "latent_write",
-    )
+    names = ("total", "speech", "speech_mode", "speech_codec", "action")
     metrics: dict[str, float] = {}
     for name in names:
         numerator = sum(item["losses"][name] for item in records)
         denominator = sum(item["denoms"][name] for item in records)
         metrics[f"train/loss_{name}"] = numerator / denominator if denominator else float("nan")
     speech_valid = sum(item["speech_valid"] for item in records)
+    mode_correct = sum(item["mode_correct"] for item in records)
+    action_correct = sum(item["action_correct"] for item in records)
     for codebook, correct in enumerate(
         sum(
             (item["speech_correct"] for item in records),
@@ -118,9 +72,14 @@ def _aggregate_update_metrics(
     target_units = sum(item["target_units"] for item in records)
     metrics.update(
         {
+            "speech/mode_accuracy": float(
+                mode_correct / max(sum(item["mode_valid"] for item in records), 1)
+            ),
+            "action/token_accuracy": float(
+                action_correct / max(sum(item["action_valid"] for item in records), 1)
+            ),
             "speech/valid_frames": float(speech_valid),
             "speech/active_unit_fraction": float(speech_valid / max(target_units, 1)),
-            "speech/no_speech_chunks": float(sum(item["speech_valid"] == 0 for item in records)),
             "speech/codec_accuracy_mean": (
                 float(
                     sum(
@@ -132,17 +91,8 @@ def _aggregate_update_metrics(
                 if speech_valid
                 else float("nan")
             ),
-            "speech/control_boundary_frames": float(
-                sum(item["boundary_frames"] for item in records)
-            ),
-            "speech/control_start_count": float(sum(item["start_count"] for item in records)),
-            "speech/control_stop_count": float(sum(item["stop_count"] for item in records)),
             "data/update_units": float(target_units),
             "data/update_chunks": float(len(records)),
-            "latent/gate_mean": float(
-                sum(item["gate_sum"] for item in records)
-                / max(sum(item["gate_count"] for item in records), 1)
-            ),
         }
     )
     return metrics
@@ -235,7 +185,7 @@ def train(
     for name, parameter in model.named_parameters():
         if not parameter.requires_grad:
             continue
-        if name.startswith(("speech_head.", "speech_active_embedding.", "speech_control_head.")):
+        if name.startswith(("speech_head.", "action_head.")):
             head_parameters.append(parameter)
         else:
             backbone_parameters.append(parameter)
@@ -296,11 +246,6 @@ def train(
         )
 
     optimizer.zero_grad(set_to_none=True)
-    speech_control_weights = torch.tensor(
-        config.training.speech_control_class_weights,
-        device=accelerator.device,
-        dtype=torch.float32,
-    )
     if accelerator.device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(accelerator.device)
     training_started = time.perf_counter()
@@ -333,7 +278,10 @@ def train(
                 unit_start = cursor.unit if is_resumed_episode else 0
                 if not is_resumed_episode or unit_start == 0:
                     recurrent = None
-                chunk_size = config.training.tbptt_units
+                # A memory horizon is one autograd segment: detaching at a
+                # shorter sampling window would sever future action/speech
+                # supervision from MemoryUpdater.
+                chunk_size = config.training.memory_horizon_units
                 for chunk_start in range(unit_start, len(episode.units), chunk_size):
                     if train_state["update"] >= target_updates:
                         break
@@ -351,18 +299,9 @@ def train(
                             for name in (
                                 "total",
                                 "speech",
-                                "action_type",
-                                "action_confidence",
-                                "action_coord",
-                                "action_scroll",
-                                "action_duration",
-                                "action_text",
-                                "action_keys",
-                                "control_speech",
-                                "control_action",
-                                "control_cognitive",
-                                "memory",
-                                "latent_write",
+                                "speech_mode",
+                                "speech_codec",
+                                "action",
                             )
                         }
                         speech_correct = torch.zeros(
@@ -383,14 +322,15 @@ def train(
                                 unit,
                                 recurrent,
                                 unit.speech_codes if use_teacher else None,
+                                speech_teacher_mode=unit.speech_mode,
+                                action_teacher_tokens=unit.action_tokens,
                             )
                             recurrent = output.state
                             unit_losses = compute_losses(
                                 output,
                                 unit,
-                                speech_control_weights,
-                                config.training.speech_control_loss_weight,
-                                config.training.latent_write_loss_weight,
+                                config.training.speech_loss_weight,
+                                config.training.action_loss_weight,
                             )
                             for name, value in unit_losses.items():
                                 accumulated = chunk_losses.get(name, torch.zeros_like(value))
@@ -401,12 +341,14 @@ def train(
                                     + value * unit_denoms[name]
                                 )
                                 chunk_denoms[name] += unit_denoms[name]
-                            predictions = output.speech_logits.detach().argmax(dim=-1)
-                            valid = unit.speech_mask[:, :, None]
+                            predictions = output.speech_codec_logits.detach().argmax(dim=-1)
+                            valid = (unit.speech_codec_mask & unit.speech_mode.eq(1)[:, None])[
+                                :, :, None
+                            ]
                             speech_correct += (predictions.eq(unit.speech_codes) & valid).sum(
                                 dim=(0, 1)
                             )
-                            speech_valid += unit.speech_mask.sum()
+                            speech_valid += valid[:, :, 0].sum()
                         losses = {name: value / len(moved) for name, value in chunk_losses.items()}
                         accelerator.backward(losses["total"])
                         if accelerator.sync_gradients:
@@ -456,29 +398,19 @@ def train(
                                 "speech_correct": speech_correct.detach().cpu(),
                                 "speech_valid": int(speech_valid.item()),
                                 "target_units": len(moved),
-                                "gate_sum": float(output.latent_gate.detach().float().sum().item()),
-                                "gate_count": len(moved) * config.model.latent_slots,
-                                "boundary_frames": sum(
-                                    int(
-                                        bool(unit.speech_control_mask.item())
-                                        and int(unit.control_target.speech.item()) in (1, 4)
-                                    )
-                                    for unit in moved
+                                "mode_correct": int(
+                                    (output.speech_mode_logits.argmax(-1) == unit.speech_mode)
+                                    .sum()
+                                    .item()
                                 ),
-                                "start_count": sum(
-                                    int(
-                                        bool(unit.speech_control_mask.item())
-                                        and int(unit.control_target.speech.item()) == 1
-                                    )
-                                    for unit in moved
+                                "mode_valid": int(unit.speech_mode_mask.sum().item()),
+                                "action_correct": int(
+                                    (output.action_logits.argmax(-1) == unit.action_tokens)
+                                    .masked_select(output.action_token_mask)
+                                    .sum()
+                                    .item()
                                 ),
-                                "stop_count": sum(
-                                    int(
-                                        bool(unit.speech_control_mask.item())
-                                        and int(unit.control_target.speech.item()) == 4
-                                    )
-                                    for unit in moved
-                                ),
+                                "action_valid": int(output.action_token_mask.sum().item()),
                             }
                         )
                         continue
@@ -494,29 +426,19 @@ def train(
                             "speech_correct": speech_correct.detach().cpu(),
                             "speech_valid": int(speech_valid.item()),
                             "target_units": len(moved),
-                            "gate_sum": float(output.latent_gate.detach().float().sum().item()),
-                            "gate_count": len(moved) * config.model.latent_slots,
-                            "boundary_frames": sum(
-                                int(
-                                    bool(unit.speech_control_mask.item())
-                                    and int(unit.control_target.speech.item()) in (1, 4)
-                                )
-                                for unit in moved
+                            "mode_correct": int(
+                                (output.speech_mode_logits.argmax(-1) == moved[-1].speech_mode)
+                                .sum()
+                                .item()
                             ),
-                            "start_count": sum(
-                                int(
-                                    bool(unit.speech_control_mask.item())
-                                    and int(unit.control_target.speech.item()) == 1
-                                )
-                                for unit in moved
+                            "mode_valid": int(moved[-1].speech_mode_mask.sum().item()),
+                            "action_correct": int(
+                                (output.action_logits.argmax(-1) == moved[-1].action_tokens)
+                                .masked_select(output.action_token_mask)
+                                .sum()
+                                .item()
                             ),
-                            "stop_count": sum(
-                                int(
-                                    bool(unit.speech_control_mask.item())
-                                    and int(unit.control_target.speech.item()) == 4
-                                )
-                                for unit in moved
-                            ),
+                            "action_valid": int(output.action_token_mask.sum().item()),
                         }
                     )
                     last_metrics = _aggregate_update_metrics(pending_update_metrics, config)
@@ -656,11 +578,7 @@ def configure_trainable_parameters(model: StreamingLatentLoop, config: ProjectCo
     mode = config.training.backbone_train_mode
     if mode == "all":
         return
-    speech_prefixes = (
-        "speech_head.",
-        "speech_active_embedding.",
-        "speech_control_head.",
-    )
+    head_prefixes = ("speech_head.", "action_head.")
     selective_prefixes = (
         "audio_encoder.",
         "latent_updater.",
@@ -668,7 +586,7 @@ def configure_trainable_parameters(model: StreamingLatentLoop, config: ProjectCo
     )
     first_top_layer = max(0, config.model.num_layers * 3 // 4)
     for name, parameter in model.named_parameters():
-        trainable = name.startswith(speech_prefixes)
+        trainable = name.startswith(head_prefixes)
         if mode == "selective":
             trainable = trainable or name.startswith(selective_prefixes)
             if name.startswith("layers."):

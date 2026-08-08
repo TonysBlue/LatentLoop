@@ -8,7 +8,7 @@ import torch
 from torch import Tensor
 
 from latentloop.codec_worker import CodecWorkerClient
-from latentloop.types import SpeechControl
+from latentloop.types import SpeechMode
 
 
 @dataclass(slots=True)
@@ -31,23 +31,19 @@ class DirectSpeechRuntime:
         self.active = False
         self.client.reset(self.session_id, replay=False)
 
-    def decode(self, codes: Tensor, control: Tensor) -> SpeechRuntimeResult:
-        if control.numel() != 1:
+    def decode(self, codes: Tensor, mode: Tensor) -> SpeechRuntimeResult:
+        if mode.numel() != 1:
             raise ValueError("speech runtime currently accepts one session at a time")
-        selected = SpeechControl(int(control.item()))
-        if selected is SpeechControl.SILENT:
+        selected = SpeechMode(int(mode.item()))
+        if selected is SpeechMode.SILENCE:
             self.active = False
             return SpeechRuntimeResult(torch.zeros(1, 1, 1_920), 0.0, False)
-        if selected is SpeechControl.START:
+        if not self.active:
             self.client.reset(self.session_id, replay=False)
             self.active = True
-        elif not self.active:
-            raise RuntimeError("speech CONTINUE/PAUSE/STOP received without START")
         started = time.perf_counter()
         waveform = self.client.decode_step(codes.transpose(1, 2), self.session_id)
         elapsed = time.perf_counter() - started
-        if selected is SpeechControl.STOP:
-            self.active = False
         return SpeechRuntimeResult(waveform, elapsed, True)
 
 

@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from latentloop.types import LayerKV, RecurrentState, SpeechLocalState
+from latentloop.types import ActionLocalState, LayerKV, RecurrentState, SpeechLocalState
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,11 +55,17 @@ def _serialize_state(state: RecurrentState | None) -> dict[str, Any] | None:
         "layer_kv": [(cache.key.cpu(), cache.value.cpu()) for cache in state.layer_kv],
         "latent": state.latent.cpu(),
         "audio_cache": state.audio_cache.cpu(),
+        "hidden": state.hidden.cpu(),
         "speech_local": {
             "temporal": state.speech_local.temporal.cpu(),
             "previous_codes": state.speech_local.previous_codes.cpu(),
-            "control": state.speech_local.control.cpu(),
-            "utterance_active": state.speech_local.utterance_active.cpu(),
+        },
+        "action_local": {
+            "hidden": state.action_local.hidden.cpu(),
+            "previous_token": state.action_local.previous_token.cpu(),
+            "active": state.action_local.active.cpu(),
+            "event_type": state.action_local.event_type.cpu(),
+            "burst_tokens": state.action_local.burst_tokens.cpu(),
         },
         "unit_index": state.unit_index.cpu(),
     }
@@ -77,11 +83,17 @@ def _deserialize_state(
         ),
         latent=payload["latent"].to(device),
         audio_cache=payload["audio_cache"].to(device),
+        hidden=payload["hidden"].to(device),
         speech_local=SpeechLocalState(
             temporal=payload["speech_local"]["temporal"].to(device),
             previous_codes=payload["speech_local"]["previous_codes"].to(device),
-            control=payload["speech_local"]["control"].to(device),
-            utterance_active=payload["speech_local"]["utterance_active"].to(device),
+        ),
+        action_local=ActionLocalState(
+            hidden=payload["action_local"]["hidden"].to(device),
+            previous_token=payload["action_local"]["previous_token"].to(device),
+            active=payload["action_local"]["active"].to(device),
+            event_type=payload["action_local"]["event_type"].to(device),
+            burst_tokens=payload["action_local"]["burst_tokens"].to(device),
         ),
         unit_index=payload["unit_index"].to(device),
     )
@@ -108,7 +120,7 @@ class CheckpointManager:
     ) -> tuple[Path, str]:
         target = self.directory / f"{name}.pt"
         payload = {
-            "format_version": 3,
+            "format_version": 4,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
@@ -206,7 +218,7 @@ class CheckpointManager:
         expected_metadata: CheckpointMetadata,
     ) -> tuple[dict[str, Any], DataCursor, RecurrentState | None, CheckpointMetadata]:
         payload = torch.load(Path(path), map_location=device, weights_only=False)
-        if payload.get("format_version") != 3:
+        if payload.get("format_version") != 4:
             raise ValueError("unsupported checkpoint format")
         if payload["config_hash"] != config_hash(config):
             raise ValueError("checkpoint configuration does not match the current run")

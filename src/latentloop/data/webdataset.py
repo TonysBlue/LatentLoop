@@ -15,7 +15,7 @@ import webdataset as wds
 from braceexpand import braceexpand
 
 from latentloop.config import DataConfig, ModelConfig
-from latentloop.types import ActionTarget, ControlTarget, Episode, StreamUnit
+from latentloop.types import Episode, StreamUnit
 
 
 def _numpy_bytes(array: np.ndarray, *, compressed: bool = False) -> bytes:
@@ -31,6 +31,30 @@ def _audio_bytes(audio: np.ndarray, sample_rate: int) -> bytes:
     output = io.BytesIO()
     sf.write(output, audio.reshape(-1), sample_rate, format="FLAC", subtype="PCM_16")
     return output.getvalue()
+
+
+def _timeline_bytes(values: dict[str, np.ndarray]) -> bytes:
+    output = io.BytesIO()
+    np.savez_compressed(output, **values)
+    return output.getvalue()
+
+
+def _load_numpy(data: bytes, *, compressed: bool = False) -> np.ndarray:
+    loaded = np.load(io.BytesIO(data), allow_pickle=False)
+    if compressed:
+        try:
+            return loaded["values"]
+        finally:
+            loaded.close()
+    return loaded
+
+
+def _load_timeline(data: bytes) -> dict[str, np.ndarray]:
+    loaded = np.load(io.BytesIO(data), allow_pickle=False)
+    try:
+        return {name: loaded[name] for name in loaded.files}
+    finally:
+        loaded.close()
 
 
 def episode_to_sample(episode: Episode) -> dict[str, bytes | str]:
@@ -49,68 +73,32 @@ def episode_to_sample(episode: Episode) -> dict[str, bytes | str]:
     else:
         height, width = units[0].screen.shape[-2:]
         screens = np.empty((0, 3, height, width), dtype=np.float32)
-    codes = (
-        torch.cat([unit.speech_codes for unit in units], dim=0)
-        .cpu()
-        .numpy()
-        .astype(np.uint16)
-    )
-    target_speech = (
-        episode.target_speech.cpu().numpy()
-        if episode.target_speech is not None
-        else np.zeros(audio.size, dtype=np.float32)
-    )
-    timeline = {
-        "timestamps_ms": np.asarray([int(unit.timestamp_ms.item()) for unit in units]),
-        "delta_ms": np.asarray([int(unit.delta_ms.item()) for unit in units]),
-        "screen_indices": np.asarray(screen_indices),
-        "screen_revision": np.asarray([int(unit.screen_revision.item()) for unit in units]),
-        "speech_mask": np.stack([unit.speech_mask[0].cpu().numpy() for unit in units]),
-        "action_mask": np.asarray([bool(unit.action_mask.item()) for unit in units]),
-        "speech_control_mask": np.asarray(
-            [bool(unit.speech_control_mask.item()) for unit in units]
-        ),
-        "action_control_mask": np.asarray(
-            [bool(unit.action_control_mask.item()) for unit in units]
-        ),
-        "cognitive_control_mask": np.asarray(
-            [bool(unit.cognitive_control_mask.item()) for unit in units]
-        ),
-        "memory_mask": np.asarray([bool(unit.memory_mask.item()) for unit in units]),
-        "memory_target": np.asarray([int(unit.memory_target.item()) for unit in units]),
-    }
     metadata = {
         **episode.metadata,
         "episode_id": episode.episode_id,
         "unit_count": len(units),
         "unit_audio_samples": units[0].mic_audio.shape[1],
-        "codec_revision": episode.metadata.get("codec_revision", "unknown"),
+        "schema_version": int(episode.metadata.get("schema_version", 3)),
     }
-    actions = [
-        {
-            "type": int(unit.action_target.type.item()),
-            "coordinates": unit.action_target.coordinates[0].cpu().tolist(),
-            "coordinate_mask": unit.action_target.coordinate_mask[0].cpu().tolist(),
-            "scroll_delta": unit.action_target.scroll_delta[0].cpu().tolist(),
-            "scroll_mask": bool(unit.action_target.scroll_mask.item()),
-            "duration_ms": float(unit.action_target.duration_ms.item()),
-            "duration_mask": bool(unit.action_target.duration_mask.item()),
-            "text_tokens": unit.action_target.text_tokens[0].cpu().tolist(),
-            "text_mask": unit.action_target.text_mask[0].cpu().tolist(),
-            "key_mask": unit.action_target.key_mask[0].cpu().tolist(),
-        }
-        for unit in units
-    ]
-    controls = np.asarray(
-        [
-            [
-                int(unit.control_target.speech.item()),
-                int(unit.control_target.action.item()),
-                int(unit.control_target.cognitive.item()),
-            ]
-            for unit in units
-        ],
-        dtype=np.int64,
+    timeline = {
+        "timestamps_ms": np.asarray([int(u.timestamp_ms.item()) for u in units]),
+        "delta_ms": np.asarray([int(u.delta_ms.item()) for u in units]),
+        "screen_indices": np.asarray(screen_indices),
+        "screen_revision": np.asarray([int(u.screen_revision.item()) for u in units]),
+        "speech_mode": np.asarray([int(u.speech_mode.item()) for u in units], dtype=np.int64),
+        "speech_mode_mask": np.asarray([bool(u.speech_mode_mask.item()) for u in units]),
+        "speech_codec_mask": np.stack([u.speech_codec_mask[0].cpu().numpy() for u in units]),
+        "action_tokens": torch.cat([u.action_tokens for u in units], dim=0)
+        .cpu()
+        .numpy()
+        .astype(np.int64),
+        "action_token_mask": torch.cat([u.action_token_mask for u in units], dim=0).cpu().numpy(),
+    }
+    codes = torch.cat([u.speech_codes for u in units], dim=0).cpu().numpy().astype(np.uint16)
+    target_speech = (
+        episode.target_speech.cpu().numpy()
+        if episode.target_speech is not None
+        else np.zeros(audio.size, dtype=np.float32)
     )
     return {
         "__key__": episode.episode_id,
@@ -120,9 +108,7 @@ def episode_to_sample(episode: Episode) -> dict[str, bytes | str]:
         "screen.npz": _numpy_bytes(screens, compressed=True),
         "timeline.npz": _timeline_bytes(timeline),
         "speech_codes.npy": _numpy_bytes(codes),
-        "actions.json": json.dumps(actions).encode("utf-8"),
         "turns.json": json.dumps(episode.metadata.get("turns", [])).encode("utf-8"),
-        "controls.npy": _numpy_bytes(controls),
     }
 
 
@@ -144,26 +130,24 @@ def load_manifest(path: str | Path) -> dict[str, dict[str, Any]]:
                 continue
             entry = json.loads(line)
             if entry.get("source") != "synthetic":
-                if not isinstance(entry.get("source_license"), str) or not entry[
-                    "source_license"
-                ].strip():
+                if (
+                    not isinstance(entry.get("source_license"), str)
+                    or not entry["source_license"].strip()
+                ):
                     raise ValueError(f"source_license is required at line {line_number}")
                 if not isinstance(entry.get("redistribution_allowed"), bool):
                     raise ValueError(
-                        "redistribution_allowed must be a boolean "
-                        f"at line {line_number}"
+                        f"redistribution_allowed must be a boolean at line {line_number}"
                     )
             episode_id = str(entry["episode_id"])
             if episode_id in entries:
                 raise ValueError(f"duplicate episode_id in manifest at line {line_number}")
             entries[episode_id] = entry
-            session = (
-                str(entry.get("device_id_hash", "")),
-                str(entry.get("session_id_hash", "")),
-            )
+            session = (str(entry.get("device_id_hash", "")), str(entry.get("session_id_hash", "")))
             if all(session):
                 session_splits.setdefault(session, set()).add(str(entry.get("split", "")))
-    if leaking := [session for session, splits in session_splits.items() if len(splits) > 1]:
+    leaking = [session for session, splits in session_splits.items() if len(splits) > 1]
+    if leaking:
         raise ValueError(f"sessions cross dataset splits: {leaking[:3]}")
     return entries
 
@@ -183,9 +167,7 @@ def write_episode_shards(
                     **episode.metadata,
                     "episode_id": episode.episode_id,
                     "units": len(episode.units),
-                    "duration_ms": sum(
-                        int(unit.delta_ms.item()) for unit in episode.units
-                    ),
+                    "duration_ms": sum(int(u.delta_ms.item()) for u in episode.units),
                     "content_sha256": _sample_sha256(sample),
                 }
             )
@@ -194,30 +176,6 @@ def write_episode_shards(
         for item in manifest:
             output.write(json.dumps(item, sort_keys=True) + "\n")
     return manifest
-
-
-def _load_numpy(data: bytes, *, compressed: bool = False) -> np.ndarray:
-    loaded = np.load(io.BytesIO(data), allow_pickle=False)
-    if compressed:
-        try:
-            return loaded["values"]
-        finally:
-            loaded.close()
-    return loaded
-
-
-def _timeline_bytes(values: dict[str, np.ndarray]) -> bytes:
-    output = io.BytesIO()
-    np.savez_compressed(output, **values)
-    return output.getvalue()
-
-
-def _load_timeline(data: bytes) -> dict[str, np.ndarray]:
-    loaded = np.load(io.BytesIO(data), allow_pickle=False)
-    try:
-        return {name: loaded[name] for name in loaded.files}
-    finally:
-        loaded.close()
 
 
 class EpisodeShardReader:
@@ -240,11 +198,7 @@ class EpisodeShardReader:
 
     def __iter__(self) -> Iterator[Episode]:
         shard_paths = sorted(
-            {
-                path
-                for expanded in braceexpand(self.shards)
-                for path in glob.glob(expanded)
-            }
+            {path for expanded in braceexpand(self.shards) for path in glob.glob(expanded)}
         )
         if not shard_paths:
             raise FileNotFoundError(f"no WebDataset shards match {self.shards}")
@@ -259,59 +213,44 @@ class EpisodeShardReader:
                 self._validate_sample_identity(sample)
                 yield self._decode(sample, shard_index, sample_index)
         if self.manifest is not None and seen != self.manifest.keys():
-            missing = sorted(self.manifest.keys() - seen)
-            extra = sorted(seen - self.manifest.keys())
-            raise ValueError(
-                f"manifest/shard episode mismatch: missing={missing[:3]}, extra={extra[:3]}"
-            )
+            missing = sorted(self.manifest.keys() - seen)[:3]
+            extra = sorted(seen - self.manifest.keys())[:3]
+            raise ValueError(f"manifest/shard episode mismatch: missing={missing}, extra={extra}")
 
     def _validate_sample_identity(self, sample: dict[str, Any]) -> None:
         metadata = json.loads(sample["meta.json"])
         episode_id = str(sample["__key__"])
         if int(metadata.get("schema_version", -1)) != self.data.schema_version:
             raise ValueError(f"schema version mismatch for {episode_id}")
-        if metadata.get("codec_id") != self.data.codec_id:
-            raise ValueError(f"codec id mismatch for {episode_id}")
-        if metadata.get("codec_weight_hash") != self.data.codec_weight_hash:
-            raise ValueError(f"codec weight hash mismatch for {episode_id}")
-        if metadata.get("codec_revision") != self.data.codec_revision:
-            raise ValueError(f"codec revision mismatch for {episode_id}")
+        for key in ("codec_id", "codec_weight_hash", "codec_revision"):
+            if metadata.get(key) != getattr(self.data, key):
+                raise ValueError(f"{key} mismatch for {episode_id}")
         if self.require_encoded_speech and not metadata.get("speech_codes_encoded", True):
             raise ValueError(f"speech codes are not encoded for {episode_id}")
-        if self.manifest is None:
-            return
-        entry = self.manifest.get(episode_id)
-        if entry is None:
-            raise ValueError(f"episode {episode_id} is absent from the manifest")
-        if entry.get("content_sha256") != _sample_sha256(sample):
-            raise ValueError(f"content hash mismatch for {episode_id}")
+        if self.manifest is not None:
+            entry = self.manifest.get(episode_id)
+            if entry is None:
+                raise ValueError(f"episode {episode_id} is absent from the manifest")
+            if entry.get("content_sha256") != _sample_sha256(sample):
+                raise ValueError(f"content hash mismatch for {episode_id}")
 
-    def _decode(
-        self, sample: dict[str, Any], shard_index: int, sample_index: int
-    ) -> Episode:
+    def _decode(self, sample: dict[str, Any], shard_index: int, sample_index: int) -> Episode:
         metadata = json.loads(sample["meta.json"])
-        actions = json.loads(sample["actions.json"])
         turns = json.loads(sample["turns.json"])
         screens = _load_numpy(sample["screen.npz"], compressed=True)
         timeline = _load_timeline(sample["timeline.npz"])
         codes = _load_numpy(sample["speech_codes.npy"])
-        controls = _load_numpy(sample["controls.npy"])
         audio, sample_rate = sf.read(io.BytesIO(sample["mic.flac"]), dtype="float32")
         target_speech, target_sample_rate = sf.read(
             io.BytesIO(sample["target_speech.flac"]), dtype="float32"
         )
-        if sample_rate != self.data.audio_sample_rate:
-            raise ValueError(
-                f"sample rate mismatch: expected {self.data.audio_sample_rate}, got {sample_rate}"
-            )
-        if target_sample_rate != sample_rate:
-            raise ValueError("target speech sample rate does not match microphone audio")
+        if sample_rate != self.data.audio_sample_rate or target_sample_rate != sample_rate:
+            raise ValueError("sample audio rate does not match configuration")
         unit_count = int(metadata["unit_count"])
         metadata["turns"] = turns
         audio = audio.reshape(unit_count, int(metadata["unit_audio_samples"]))
         units: list[StreamUnit] = []
         for index in range(unit_count):
-            action = actions[index]
             screen_index = int(timeline["screen_indices"][index])
             screen_valid = screen_index >= 0
             if screen_valid:
@@ -330,51 +269,18 @@ class EpisodeShardReader:
                     screen=torch.from_numpy(screen).float()[None],
                     screen_valid=torch.tensor([screen_valid]),
                     screen_revision=torch.tensor([timeline["screen_revision"][index]]),
+                    speech_mode=torch.tensor([timeline["speech_mode"][index]], dtype=torch.long),
+                    speech_mode_mask=torch.tensor(
+                        [timeline["speech_mode_mask"][index]], dtype=torch.bool
+                    ),
                     speech_codes=torch.from_numpy(codes[index]).long()[None],
-                    speech_mask=torch.from_numpy(timeline["speech_mask"][index]).bool()[None],
-                    action_mask=torch.tensor([timeline["action_mask"][index]], dtype=torch.bool),
-                    speech_control_mask=torch.tensor(
-                        [timeline["speech_control_mask"][index]], dtype=torch.bool
-                    ),
-                    action_control_mask=torch.tensor(
-                        [timeline["action_control_mask"][index]], dtype=torch.bool
-                    ),
-                    cognitive_control_mask=torch.tensor(
-                        [timeline["cognitive_control_mask"][index]], dtype=torch.bool
-                    ),
-                    memory_mask=torch.tensor([timeline["memory_mask"][index]], dtype=torch.bool),
-                    action_target=ActionTarget(
-                        type=torch.tensor([action["type"]], dtype=torch.long),
-                        coordinates=torch.tensor(
-                            [action["coordinates"]], dtype=torch.float32
-                        ),
-                        coordinate_mask=torch.tensor(
-                            [action["coordinate_mask"]], dtype=torch.bool
-                        ),
-                        scroll_delta=torch.tensor(
-                            [action["scroll_delta"]], dtype=torch.float32
-                        ),
-                        scroll_mask=torch.tensor([action["scroll_mask"]]),
-                        duration_ms=torch.tensor(
-                            [action["duration_ms"]], dtype=torch.float32
-                        ),
-                        duration_mask=torch.tensor([action["duration_mask"]]),
-                        text_tokens=torch.tensor(
-                            [action["text_tokens"]], dtype=torch.long
-                        ),
-                        text_mask=torch.tensor(
-                            [action["text_mask"]], dtype=torch.bool
-                        ),
-                        key_mask=torch.tensor([action["key_mask"]], dtype=torch.bool),
-                    ),
-                    control_target=ControlTarget(
-                        speech=torch.tensor([controls[index, 0]], dtype=torch.long),
-                        action=torch.tensor([controls[index, 1]], dtype=torch.long),
-                        cognitive=torch.tensor([controls[index, 2]], dtype=torch.long),
-                    ),
-                    memory_target=torch.tensor(
-                        [timeline["memory_target"][index]], dtype=torch.long
-                    ),
+                    speech_codec_mask=torch.from_numpy(timeline["speech_codec_mask"][index]).bool()[
+                        None
+                    ],
+                    action_tokens=torch.from_numpy(timeline["action_tokens"][index]).long()[None],
+                    action_token_mask=torch.from_numpy(timeline["action_token_mask"][index]).bool()[
+                        None
+                    ],
                 )
             )
         episode = Episode(

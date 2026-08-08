@@ -19,7 +19,7 @@ from latentloop.config import ProjectConfig
 from latentloop.data import SyntheticEpisodeDataset
 from latentloop.model import StreamingLatentLoop
 from latentloop.speech_metrics import boundary_discontinuity_db, codec_accuracy
-from latentloop.types import SpeechControl, SpeechSamplingConfig
+from latentloop.types import SpeechSamplingConfig
 
 
 def test_later_teacher_codebooks_do_not_change_earlier_logits(
@@ -32,8 +32,8 @@ def test_later_teacher_codebooks_do_not_change_earlier_logits(
     changed_codes = first_codes.clone()
     changed_codes[:, :, 0] = (changed_codes[:, :, 0] + 1) % 32
 
-    first = model(unit, state, first_codes).speech_logits
-    changed = model(unit, state, changed_codes).speech_logits
+    first = model(unit, state, first_codes).speech_codec_logits
+    changed = model(unit, state, changed_codes).speech_codec_logits
 
     assert torch.equal(first[:, :, 0], changed[:, :, 0])
     assert not torch.equal(first[:, :, 1], changed[:, :, 1])
@@ -57,12 +57,9 @@ def test_generate_step_returns_one_complete_codec_frame(
     )
 
 
-def test_speech_control_selection_obeys_state_machine() -> None:
-    logits = torch.tensor([[0.0, 1.0, 9.0, 8.0, 7.0], [9.0, 8.0, 1.0, 2.0, 3.0]])
-    selected = StreamingLatentLoop._select_speech_control(
-        logits, torch.tensor([False, True])
-    )
-    assert selected.tolist() == [SpeechControl.START, SpeechControl.STOP]
+def test_speech_mode_is_binary() -> None:
+    logits = torch.tensor([[0.0, 1.0], [9.0, 8.0]])
+    assert logits.argmax(dim=-1).tolist() == [1, 0]
 
 
 def test_codec_accuracy_reports_each_codebook() -> None:
@@ -118,9 +115,7 @@ class FakeCodecServer:
                         values.tobytes(),
                     )
                 elif operation == "encode_step":
-                    values = np.zeros(
-                        (1, self.identity.codebooks, 1), dtype=np.uint16
-                    )
+                    values = np.zeros((1, self.identity.codebooks, 1), dtype=np.uint16)
                     send_message(
                         connection,
                         {"ok": True, "dtype": "uint16", "shape": values.shape},

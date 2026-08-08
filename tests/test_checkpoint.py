@@ -48,7 +48,7 @@ def test_checkpoint_restores_full_recurrent_step(
         ),
         config=smoke_config.as_dict(),
     )
-    expected = model(episode.units[1], first.state.detach()).speech_logits.detach()
+    expected = model(episode.units[1], first.state.detach()).speech_codec_logits.detach()
 
     restored_model = StreamingLatentLoop(smoke_config.model)
     restored_optimizer = torch.optim.AdamW(restored_model.parameters(), lr=1e-3)
@@ -70,7 +70,7 @@ def test_checkpoint_restores_full_recurrent_step(
         ),
     )
     assert recurrent is not None
-    actual = restored_model(episode.units[1], recurrent).speech_logits.detach()
+    actual = restored_model(episode.units[1], recurrent).speech_codec_logits.detach()
     assert train_state["update"] == 1
     assert cursor.unit == 1
     assert metadata.codec_id == smoke_config.data.codec_id
@@ -104,9 +104,7 @@ def test_checkpoint_rejects_codec_mismatch(tmp_path: Path, smoke_config: Project
             scaler=None,
             device=torch.device("cpu"),
             config=smoke_config.as_dict(),
-            expected_metadata=CheckpointMetadata(
-                "data", "codec-b", "hash-a", "test", "revision"
-            ),
+            expected_metadata=CheckpointMetadata("data", "codec-b", "hash-a", "test", "revision"),
         )
     except ValueError as error:
         assert "codec_id" in str(error)

@@ -9,17 +9,9 @@ import numpy as np
 import soundfile as sf
 import torch
 
+from latentloop.action_tokens import ActionEvent, ActionTokenizer
 from latentloop.config import DataConfig, ModelConfig
-from latentloop.types import (
-    ActionControl,
-    ActionTarget,
-    ActionType,
-    CognitiveControl,
-    ControlTarget,
-    Episode,
-    SpeechControl,
-    StreamUnit,
-)
+from latentloop.types import ActionType, Episode, SpeechMode, StreamUnit
 
 
 def _read_audio(path: str | Path, sample_rate: int) -> torch.Tensor:
@@ -36,30 +28,13 @@ def _read_audio(path: str | Path, sample_rate: int) -> torch.Tensor:
     return waveform
 
 
-def _speech_controls(target: torch.Tensor, frame_samples: int) -> list[SpeechControl]:
+def _speech_activity(target: torch.Tensor, frame_samples: int) -> list[bool]:
     frames = target.reshape(-1, frame_samples)
-    active = frames.square().mean(dim=1) > 1e-5
-    controls: list[SpeechControl] = []
-    speaking = False
-    for is_active in active.tolist():
-        if is_active and not speaking:
-            controls.append(SpeechControl.START)
-            speaking = True
-        elif is_active:
-            controls.append(SpeechControl.CONTINUE)
-        elif speaking:
-            controls.append(SpeechControl.STOP)
-            speaking = False
-        else:
-            controls.append(SpeechControl.SILENT)
-    return controls
+    return [bool(active) for active in (frames.square().mean(dim=1) > 1e-5).tolist()]
 
 
-def _segment_controls(
-    segments: list[dict[str, Any]], ticks: int, frame_samples: int
-) -> tuple[list[SpeechControl], list[bool]]:
-    controls = [SpeechControl.SILENT] * ticks
-    speech_mask = [False] * ticks
+def _segment_activity(segments: list[dict[str, Any]], ticks: int, frame_samples: int) -> list[bool]:
+    active = [False] * ticks
     previous_end = -1
     for index, segment in enumerate(segments):
         if not isinstance(segment, dict):
@@ -79,20 +54,14 @@ def _segment_controls(
             raise ValueError("assistant segment end must be greater than its start")
         start_frame = start // frame_samples
         final_frame = (end - 1) // frame_samples
-        stop_frame = final_frame + 1
-        if stop_frame >= ticks:
-            raise ValueError("assistant segment requires a STOP frame inside the timeline")
+        if final_frame >= ticks:
+            raise ValueError("assistant segment is outside the episode timeline")
         if start_frame <= previous_end:
-            raise ValueError("assistant segments and their STOP frames must not overlap")
-        controls[start_frame] = SpeechControl.START
-        speech_mask[start_frame] = True
-        for frame in range(start_frame + 1, final_frame + 1):
-            controls[frame] = SpeechControl.CONTINUE
-            speech_mask[frame] = True
-        controls[stop_frame] = SpeechControl.STOP
-        speech_mask[stop_frame] = True
-        previous_end = stop_frame
-    return controls, speech_mask
+            raise ValueError("assistant segments must not overlap")
+        for frame in range(start_frame, final_frame + 1):
+            active[frame] = True
+        previous_end = final_frame
+    return active
 
 
 def _load_screens(
@@ -171,38 +140,32 @@ def _build_episode(
     segment_timeline = 0
     if explicit_segments:
         try:
-            segment_timeline = max(int(segment["end_sample"]) for segment in explicit_segments)
+            segment_timeline = (
+                max(int(segment["end_sample"]) for segment in explicit_segments)
+                + data.unit_audio_samples
+            )
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError("target_segments contain an invalid end_sample") from error
-        segment_timeline += data.unit_audio_samples
     samples = max(mic.numel(), target.numel(), segment_timeline)
     ticks = -(-samples // data.unit_audio_samples)
     timeline_samples = ticks * data.unit_audio_samples
     mic = torch.nn.functional.pad(mic, (0, timeline_samples - mic.numel()))
     target = torch.nn.functional.pad(target, (0, timeline_samples - target.numel()))
-    if explicit_segments is not None:
-        controls, speech_mask = _segment_controls(explicit_segments, ticks, data.unit_audio_samples)
-    else:
-        controls = _speech_controls(target, data.unit_audio_samples)
-        speech_mask = [True] * ticks
-    if (
-        explicit_segments is None
-        and controls
-        and controls[-1]
-        in {
-            SpeechControl.START,
-            SpeechControl.CONTINUE,
-        }
-    ):
-        mic = torch.nn.functional.pad(mic, (0, data.unit_audio_samples))
-        target = torch.nn.functional.pad(target, (0, data.unit_audio_samples))
-        controls.append(SpeechControl.STOP)
-        speech_mask.append(True)
-        ticks += 1
+    active = (
+        _segment_activity(explicit_segments, ticks, data.unit_audio_samples)
+        if explicit_segments is not None
+        else _speech_activity(target, data.unit_audio_samples)
+    )
     screen_path = record.get("screens")
     screens = _load_screens(str(_resolve(base, screen_path)) if screen_path else None, model, data)
     if any(tick < 0 or tick >= ticks for tick in screens):
         raise ValueError("screen tick is outside the episode timeline")
+    tokenizer = ActionTokenizer(model.max_action_duration_ms, model.action_burst_tokens)
+    noop = tokenizer.encode(ActionEvent(ActionType.NOOP))
+    action_tokens = torch.zeros(1, model.action_burst_tokens, dtype=torch.long)
+    action_mask = torch.zeros_like(action_tokens, dtype=torch.bool)
+    action_tokens[0, : len(noop)] = torch.tensor(noop)
+    action_mask[0, : len(noop)] = True
     units: list[StreamUnit] = []
     screen_revision = -1
     empty_screen = torch.zeros(3, data.screen_height, data.screen_width)
@@ -210,36 +173,29 @@ def _build_episode(
         screen_valid = tick in screens
         if screen_valid:
             screen_revision += 1
-        screen = screens.get(tick, empty_screen)
+        speaking = active[tick]
         units.append(
             StreamUnit(
                 timestamp_ms=torch.tensor([tick * data.unit_ms]),
                 delta_ms=torch.tensor([data.unit_ms]),
                 mic_audio=mic[
-                    None,
-                    tick * data.unit_audio_samples : (tick + 1) * data.unit_audio_samples,
+                    None, tick * data.unit_audio_samples : (tick + 1) * data.unit_audio_samples
                 ],
-                screen=screen[None],
+                screen=screens.get(tick, empty_screen)[None],
                 screen_valid=torch.tensor([screen_valid]),
                 screen_revision=torch.tensor([screen_revision]),
+                speech_mode=torch.tensor(
+                    [int(SpeechMode.SPEECH if speaking else SpeechMode.SILENCE)]
+                ),
+                speech_mode_mask=torch.tensor([True]),
                 speech_codes=torch.zeros(
                     1, model.speech_frames_per_unit, model.speech_codebooks, dtype=torch.long
                 ),
-                speech_mask=torch.full(
-                    (1, model.speech_frames_per_unit), speech_mask[tick], dtype=torch.bool
+                speech_codec_mask=torch.full(
+                    (1, model.speech_frames_per_unit), speaking, dtype=torch.bool
                 ),
-                action_mask=torch.tensor([False]),
-                speech_control_mask=torch.tensor([True]),
-                action_control_mask=torch.tensor([False]),
-                cognitive_control_mask=torch.tensor([False]),
-                memory_mask=torch.tensor([False]),
-                action_target=_empty_action(model),
-                control_target=ControlTarget(
-                    speech=torch.tensor([int(controls[tick])]),
-                    action=torch.tensor([int(ActionControl.NOOP)]),
-                    cognitive=torch.tensor([int(CognitiveControl.OBSERVE)]),
-                ),
-                memory_target=torch.zeros(1, dtype=torch.long),
+                action_tokens=action_tokens.clone(),
+                action_token_mask=action_mask.clone(),
             )
         )
     metadata = {
@@ -255,6 +211,7 @@ def _build_episode(
         "scenario": record.get("scenario", "spoken-response"),
         "device_id_hash": record.get("device_id_hash", "speech-import"),
         "turns": record.get("turns", []),
+        "action_schema_version": 3,
     }
     episode = Episode(str(record["episode_id"]), units, metadata, target_speech=target)
     episode.validate(
@@ -262,20 +219,6 @@ def _build_episode(
         speech_frames=model.speech_frames_per_unit,
         speech_codebooks=model.speech_codebooks,
         speech_codebook_size=model.speech_codebook_size,
+        action_vocab_size=tokenizer.vocab_size,
     )
     return episode
-
-
-def _empty_action(model: ModelConfig) -> ActionTarget:
-    return ActionTarget(
-        type=torch.tensor([int(ActionType.NOOP)]),
-        coordinates=torch.zeros(1, 4),
-        coordinate_mask=torch.zeros(1, 4, dtype=torch.bool),
-        scroll_delta=torch.zeros(1, 2),
-        scroll_mask=torch.tensor([False]),
-        duration_ms=torch.zeros(1),
-        duration_mask=torch.tensor([False]),
-        text_tokens=torch.zeros(1, model.action_text_tokens, dtype=torch.long),
-        text_mask=torch.zeros(1, model.action_text_tokens, dtype=torch.bool),
-        key_mask=torch.zeros(1, model.action_key_vocab_size, dtype=torch.bool),
-    )

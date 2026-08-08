@@ -36,18 +36,8 @@ def test_recurrent_state_is_bounded_and_heads_receive_gradients(
     assert model.vision_encoder.encoder[0].weight.grad is not None
     assert model.latent_updater.gate.weight.grad is not None
     assert model.speech_head.depth_embeddings[0].weight.grad is not None
-    assert model.action_type_head.weight.grad is not None
-    assert model.action_coord_head.weight.grad is not None
-    assert model.action_scroll_head.weight.grad is not None
-    assert model.action_duration_head.weight.grad is not None
-    assert model.action_text_head.weight.grad is not None
-    assert model.action_key_head.weight.grad is not None
-    assert model.action_confidence_head.weight.grad is not None
-    assert model.speech_control_head[-1].weight.grad is not None
-    assert model.speech_active_embedding.weight.grad is not None
-    assert model.action_control_head.weight.grad is not None
-    assert model.cognitive_control_head.weight.grad is not None
-    assert model.memory_probe.weight.grad is not None
+    assert model.action_head.output.weight.grad is not None
+    assert model.speech_head.mode.weight.grad is not None
 
 
 def test_detach_breaks_tbptt_graph(smoke_config: ProjectConfig) -> None:
@@ -73,23 +63,22 @@ def test_speech_loss_averages_over_valid_codec_tokens(smoke_config: ProjectConfi
     model = StreamingLatentLoop(smoke_config.model)
     unit = SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(0).units[0]
     output = model(unit, model.initial_state(1, "cpu"), unit.speech_codes)
-    output.speech_logits = torch.zeros_like(output.speech_logits)
+    output.speech_codec_logits = torch.zeros_like(output.speech_codec_logits)
+    output.speech_mode_logits = torch.zeros_like(output.speech_mode_logits)
 
     speech_loss = compute_losses(output, unit)["speech"]
 
-    assert torch.isclose(
-        speech_loss,
-        torch.tensor(math.log(smoke_config.model.speech_codebook_size)),
-    )
+    expected = math.log(smoke_config.model.speech_codebook_size) + math.log(2)
+    assert torch.isclose(speech_loss, torch.tensor(expected), atol=1e-4)
 
 
-def test_speech_control_weights_follow_model_dtype(smoke_config: ProjectConfig) -> None:
+def test_speech_loss_follows_model_dtype(smoke_config: ProjectConfig) -> None:
     model = StreamingLatentLoop(smoke_config.model).half()
     unit = SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(0).units[0]
     unit.mic_audio = unit.mic_audio.half()
     unit.screen = unit.screen.half()
     output = model(unit, model.initial_state(1, "cpu"), unit.speech_codes)
 
-    losses = compute_losses(output, unit, torch.ones(5, dtype=torch.float32))
+    losses = compute_losses(output, unit)
 
-    assert torch.isfinite(losses["control_speech"])
+    assert torch.isfinite(losses["speech"])

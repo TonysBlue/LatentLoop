@@ -33,10 +33,11 @@ def test_webdataset_episode_round_trip(tmp_path: Path, smoke_config: ProjectConf
     assert len(decoded.units) == len(original.units)
     assert torch.equal(decoded.units[0].speech_codes, original.units[0].speech_codes)
     assert torch.equal(decoded.target_speech, original.target_speech)
-    assert torch.equal(decoded.units[0].speech_control_mask, torch.tensor([True]))
+    assert torch.equal(decoded.units[0].speech_mode, original.units[0].speech_mode)
+    assert torch.equal(decoded.units[-1].action_tokens, original.units[-1].action_tokens)
     assert torch.equal(
-        decoded.units[-1].action_target.type,
-        original.units[-1].action_target.type,
+        decoded.units[-1].action_token_mask,
+        original.units[-1].action_token_mask,
     )
     assert torch.allclose(decoded.units[0].mic_audio, original.units[0].mic_audio, atol=5e-5)
 
@@ -110,16 +111,19 @@ def test_validate_data_explicit_shards_override_configured_source(
     episode = SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(0)
     write_episode_shards([episode], tmp_path / "actual-%06d.tar")
 
-    assert main(
-        [
-            "validate-data",
-            "--config",
-            "configs/smoke.yaml",
-            "--set",
-            "data.source=webdataset",
-            "--set",
-            f"data.shards={tmp_path / 'missing-*.tar'}",
-            "--shards",
-            str(tmp_path / "actual-*.tar"),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "validate-data",
+                "--config",
+                "configs/smoke.yaml",
+                "--set",
+                "data.source=webdataset",
+                "--set",
+                f"data.shards={tmp_path / 'missing-*.tar'}",
+                "--shards",
+                str(tmp_path / "actual-*.tar"),
+            ]
+        )
+        == 0
+    )

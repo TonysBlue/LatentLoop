@@ -91,17 +91,8 @@ def train_summary(report_path: Path, checkpoint: Path) -> None:
         f"{metrics.get('speech/active_unit_fraction', 0.0):.1%} active units, "
         f"{metrics.get('speech/no_speech_chunks', 0.0):.0f} silent chunks",
     )
-    line(
-        "Speech boundaries",
-        f"{metrics.get('speech/control_boundary_frames', 0.0):.0f} total, "
-        f"{metrics.get('speech/control_start_count', 0.0):.0f} START, "
-        f"{metrics.get('speech/control_stop_count', 0.0):.0f} STOP",
-    )
-    line(
-        "Latent gate",
-        f"mean {metrics.get('latent/gate_mean', 0.0):.4f}; "
-        f"chunks {metrics.get('data/update_chunks', 0.0):.0f}",
-    )
+    line("Speech mode accuracy", f"{metrics.get('speech/mode_accuracy', 0.0):.4f}")
+    line("Action token accuracy", f"{metrics.get('action/token_accuracy', 0.0):.4f}")
     line("Checkpoint", str(checkpoint))
     tracking_mode = tracking.get("effective_mode")
     run_url = tracking.get("run_url")
@@ -117,17 +108,13 @@ def evaluate_summary(run_root: Path, max_updates: int) -> None:
         for split in ("validation", "test")
     }
     for split, report in reports.items():
-        codec = report["teacher_codec_accuracy"]
+        codec = report["speech_codec_accuracy"]
         line(
             split.capitalize(),
-            f"{report['episodes']} episodes, macro-F1 "
-            f"{report['speech_control_macro_f1']:.3f}, control accuracy "
-            f"{report['speech_control_accuracy']:.3f}, mean codec accuracy "
+            f"{report['episodes']} episodes, mode accuracy "
+            f"{report['speech_mode_accuracy']:.3f}, mean codec accuracy "
             f"{sum(codec) / max(len(codec), 1):.4f}, "
-            f"START F1 {report.get('speech_control_start_f1', 0.0):.3f}, "
-            f"STOP F1 {report.get('speech_control_stop_f1', 0.0):.3f}, "
-            f"balanced accuracy {report.get('speech_control_balanced_accuracy', 0.0):.3f}, "
-            f"AR macro-F1 {report.get('autoregressive_speech_control_macro_f1', 0.0):.3f}",
+            f"action token accuracy {report['action_token_accuracy']:.3f}",
         )
     if max_updates <= 5:
         line("Quality", "pipeline smoke test only; model is not converged")

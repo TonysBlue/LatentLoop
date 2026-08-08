@@ -17,11 +17,7 @@ model:
   speech_depth_layers: 2
   speech_depth_heads: 4
   speech_depth_ffn_dim: 1024
-  action_text_tokens: 16
-  action_text_vocab_size: 256
-  action_key_vocab_size: 32
   max_action_duration_ms: 10000
-  memory_classes: 64
   dropout: 0.0
   activation_checkpointing: false
 data:
@@ -29,7 +25,7 @@ data:
   source: webdataset
   shards: ~/latentloop-data/datasets/gates/direct-speech-overfit/v1/shards/processed/train/train-*.tar
   manifest: ~/latentloop-data/datasets/gates/direct-speech-overfit/v1/shards/processed/train/train-manifest.jsonl
-  schema_version: 2
+  schema_version: 3
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
   codec_id: mimi-24khz-8x2048
@@ -59,9 +55,9 @@ training:
   codec_scheduled_sampling: 0.0
   codec_scheduled_sampling_start: 0.7
   backbone_train_mode: frozen
-  speech_control_class_weights: [1.0, 16.0, 1.0, 1.0, 16.0]
-  speech_control_loss_weight: 1.0
-  latent_write_loss_weight: 0.0
+  speech_loss_weight: 1.0
+  action_loss_weight: 1.0
+  memory_horizon_units: 16
   min_learning_rate_ratio: 0.1
 tracking:
   enabled: false

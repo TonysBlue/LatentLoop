@@ -17,17 +17,13 @@ model:
   speech_depth_layers: 1
   speech_depth_heads: 4
   speech_depth_ffn_dim: 128
-  action_text_tokens: 4
-  action_text_vocab_size: 32
-  action_key_vocab_size: 8
   max_action_duration_ms: 10000
-  memory_classes: 8
   dropout: 0.0
   activation_checkpointing: false
 data:
   dataset: synthetic
   source: synthetic
-  schema_version: 2
+  schema_version: 3
   audio_sample_rate: 4000
   codec_frame_rate: 12.5
   codec_id: synthetic-codec-v1
@@ -46,7 +42,7 @@ training:
   max_updates: 4
   weight_decay: 0.01
   gradient_accumulation_steps: 1
-  tbptt_units: 2
+  tbptt_units: 8
   mixed_precision: "no"
   max_grad_norm: 1.0
   checkpoint_every: 2
@@ -57,6 +53,9 @@ training:
   codec_scheduled_sampling: 0.0
   codec_scheduled_sampling_start: 0.7
   backbone_train_mode: all
+  speech_loss_weight: 1.0
+  action_loss_weight: 1.0
+  memory_horizon_units: 8
 tracking:
   enabled: false
   project: latentloop

@@ -123,7 +123,11 @@ def doctor(args: argparse.Namespace) -> int:
         unit.mic_audio = unit.mic_audio.half()
         unit.screen = unit.screen.half()
         output = model(unit, model.initial_state(1, device))
-        loss = output.speech_logits.float().mean() + output.memory_logits.float().mean()
+        loss = (
+            output.speech_mode_logits.float().mean()
+            + output.speech_codec_logits.float().mean()
+            + output.action_logits.float().mean()
+        )
         loss.backward()
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
         optimizer.step()
@@ -361,7 +365,8 @@ def benchmark_stream(args: argparse.Namespace) -> int:
             started = time.perf_counter()
             generated = model.generate_step(unit, state)
             state = generated.output.state
-            client.decode_step(generated.speech_codes.transpose(1, 2), "stream-benchmark")
+            if bool(generated.speech_mode.item()):
+                client.decode_step(generated.speech_codes.transpose(1, 2), "stream-benchmark")
             if index >= args.warmup:
                 latencies.append(time.perf_counter() - started)
     measured = torch.tensor(latencies)
@@ -394,7 +399,6 @@ def evaluate(args: argparse.Namespace) -> int:
         split=args.split,
         device=args.device,
         codec_threshold=args.codec_threshold,
-        control_f1_threshold=args.control_f1_threshold,
     )
     report = build_evaluation_report(config, args.checkpoint, args.split, result)
     _emit_json_report(report, args.report)
@@ -568,7 +572,6 @@ def build_parser() -> argparse.ArgumentParser:
     evaluation_parser.add_argument("--split", choices=("validation", "test"), default="validation")
     evaluation_parser.add_argument("--device")
     evaluation_parser.add_argument("--codec-threshold", type=float, default=0.9)
-    evaluation_parser.add_argument("--control-f1-threshold", type=float, default=0.9)
     evaluation_parser.add_argument("--report", help="Optional JSON report path")
     evaluation_parser.set_defaults(handler=evaluate)
 

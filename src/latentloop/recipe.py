@@ -100,7 +100,7 @@ def _checkpoint_matches(path: Path, config: ProjectConfig) -> bool:
 
         payload = torch.load(path, map_location="cpu", weights_only=False)
         return (
-            payload.get("format_version") == 3
+            payload.get("format_version") == 4
             and payload.get("config_hash") == config_hash(config.as_dict())
             and payload.get("metadata", {}).get("data_identity") == _data_identity(config)
             and payload.get("metadata", {}).get("codec_id") == config.data.codec_id

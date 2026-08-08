@@ -18,11 +18,7 @@ model:
   speech_depth_layers: 2
   speech_depth_heads: 4
   speech_depth_ffn_dim: 1024
-  action_text_tokens: 16
-  action_text_vocab_size: 256
-  action_key_vocab_size: 32
   max_action_duration_ms: 10000
-  memory_classes: 64
   dropout: 0.1
   activation_checkpointing: false
 data:
@@ -30,7 +26,7 @@ data:
   source: webdataset
   shards: ~/latentloop-data/datasets/pilot/v1/shards/processed/train/train-*.tar
   manifest: ~/latentloop-data/datasets/pilot/v1/shards/processed/train/train-manifest.jsonl
-  schema_version: 2
+  schema_version: 3
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
   codec_id: mimi-24khz-8x2048
@@ -42,14 +38,14 @@ data:
   unit_audio_samples: 1920
   screen_height: 224
   screen_width: 224
-  episode_units: 32
+  episode_units: 750
   train_episodes: 10000
   seed: 17
 training:
   max_updates: 100000
   weight_decay: 0.1
   gradient_accumulation_steps: 16
-  tbptt_units: 16
+  tbptt_units: 750
   mixed_precision: fp16
   max_grad_norm: 1.0
   checkpoint_every: 500
@@ -60,9 +56,9 @@ training:
   codec_scheduled_sampling: 0.25
   codec_scheduled_sampling_start: 0.7
   backbone_train_mode: frozen
-  speech_control_class_weights: [1.0, 16.0, 1.0, 1.0, 16.0]
-  speech_control_loss_weight: 0.5
-  latent_write_loss_weight: 0.0
+  speech_loss_weight: 1.0
+  action_loss_weight: 1.0
+  memory_horizon_units: 750
   min_learning_rate_ratio: 0.1
 tracking:
   enabled: true

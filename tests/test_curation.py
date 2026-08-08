@@ -18,7 +18,7 @@ from latentloop.data.curation import (
 from latentloop.data.curation.common import dataset_path, read_jsonl, registry_path, sha256_file
 from latentloop.data.curation.manifest import _duration_subset
 from latentloop.data.curation.prepare import prepare_pilot_data
-from latentloop.types import SpeechControl
+from latentloop.types import SpeechMode
 
 
 def _fixture_pipeline(root: Path, dataset: str) -> None:
@@ -93,21 +93,16 @@ def test_pilot_manifest_import_has_segment_aware_training_masks(
     data = DataConfig()
     model = ModelConfig()
     public_episode = next(import_speech_manifest(manifest, data, model))
-    assert not any(bool(unit.speech_mask.item()) for unit in public_episode.units)
-    assert all(
-        unit.control_target.speech.item() == SpeechControl.SILENT for unit in public_episode.units
-    )
+    assert not any(bool(unit.speech_codec_mask.item()) for unit in public_episode.units)
+    assert all(unit.speech_mode.item() == SpeechMode.SILENCE for unit in public_episode.units)
 
     manifest.write_text(json.dumps(dialogue_record) + "\n", encoding="utf-8")
     dialogue = next(import_speech_manifest(manifest, data, model))
-    controls = [unit.control_target.speech.item() for unit in dialogue.units]
-    masks = [bool(unit.speech_mask.item()) for unit in dialogue.units]
-    assert SpeechControl.START in controls
-    assert SpeechControl.STOP in controls
-    assert all(
-        mask == (control in {SpeechControl.START, SpeechControl.CONTINUE, SpeechControl.STOP})
-        for control, mask in zip(controls, masks, strict=True)
-    )
+    modes = [unit.speech_mode.item() for unit in dialogue.units]
+    masks = [bool(unit.speech_codec_mask.item()) for unit in dialogue.units]
+    assert SpeechMode.SPEECH in modes
+    assert SpeechMode.SILENCE in modes
+    assert all(mask == (mode == SpeechMode.SPEECH) for mode, mask in zip(modes, masks, strict=True))
 
 
 def test_manifest_interleaves_supervision_categories_deterministically(tmp_path: Path) -> None:
@@ -131,9 +126,7 @@ def test_manifest_interleaves_supervision_categories_deterministically(tmp_path:
     second = read_jsonl(train_path)
     assert sha256_file(train_path) == first_hash
     second_categories = [str(record["category"]) for record in second]
-    assert {
-        category: second_categories.count(category) for category in counts
-    } == counts
+    assert {category: second_categories.count(category) for category in counts} == counts
 
 
 def test_production_fetch_requires_locked_source_lock(tmp_path: Path) -> None:

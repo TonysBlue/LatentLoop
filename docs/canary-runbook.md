@@ -94,13 +94,12 @@ Canary 拟合曲线。需要使用兼容基础 checkpoint 时，把固定路径�
 scripts/run-training.sh --recipe configs/recipes/pilot.yaml --run-id pilot-001
 ```
 
-Canary 与正式训练使用同一条连续 episode TBPTT 路径：按时间顺序处理每个 episode，跨 chunk
-持续传递 KV、latent 和 speech-local state，只在 episode/session 边界重置；每个 `tbptt_units`
-chunk 计算梯度，chunk 之间 detach 状态。Canary 只缩小数据量和 update 数，不改变训练机制。
-助手语音比例、START/STOP 数量和静音时段由数据集设计保证，不通过重复采样窗口补齐。W&B 中
-`speech/valid_frames`、`speech/active_unit_fraction`、`speech/control_start_count` 和
-`speech/control_stop_count` 用于暴露数据监督密度；没有有效语音帧时 codec 指标为 `NaN`。
-`latent_write_loss_weight` 默认是 0，避免 gate 被正则项压到关闭；cosine 学习率最低保持为初始值的 10%。
+Canary 与正式训练使用同一条连续 episode 路径：按时间顺序处理每个 episode，持续传递 KV、
+latent、H、speech-local 和 action-local state。生产配置的 `tbptt_units=750` 与
+`memory_horizon_units=750`，确保未来输出 loss 可以回传到长期记忆更新器；smoke 只缩小该数值。
+W&B 中记录 speech mode、有效 codec 帧和 action token 的监督密度。
+训练只使用 speech mode/codec 与统一 action token loss；长期记忆没有独立
+target 或正则项。cosine 学习率最低保持为初始值的 10%。
 
 ## 验收产物
 

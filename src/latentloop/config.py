@@ -29,13 +29,10 @@ class ModelConfig:
     speech_depth_layers: int = 2
     speech_depth_heads: int = 4
     speech_depth_ffn_dim: int = 1024
-    action_text_tokens: int = 16
-    action_text_vocab_size: int = 256
-    action_key_vocab_size: int = 32
     max_action_duration_ms: int = 10_000
-    memory_classes: int = 64
     dropout: float = 0.1
     activation_checkpointing: bool = False
+    action_burst_tokens: int = 16
 
     @property
     def tokens_per_unit(self) -> int:
@@ -50,7 +47,7 @@ class DataConfig:
     source: str = "synthetic"
     shards: str | None = None
     manifest: str | None = None
-    schema_version: int = 2
+    schema_version: int = 3
     audio_sample_rate: int = 24_000
     codec_frame_rate: float = 12.5
     codec_id: str = "mimi-24khz-8x2048"
@@ -72,7 +69,7 @@ class TrainingConfig:
     max_updates: int = 10_000
     weight_decay: float = 0.1
     gradient_accumulation_steps: int = 16
-    tbptt_units: int = 16
+    tbptt_units: int = 750
     mixed_precision: str = "fp16"
     max_grad_norm: float = 1.0
     checkpoint_every: int = 500
@@ -83,9 +80,9 @@ class TrainingConfig:
     codec_scheduled_sampling: float = 0.0
     codec_scheduled_sampling_start: float = 0.7
     backbone_train_mode: str = "all"
-    speech_control_class_weights: list[float] = field(default_factory=lambda: [1.0] * 5)
-    speech_control_loss_weight: float = 0.25
-    latent_write_loss_weight: float = 0.0
+    speech_loss_weight: float = 1.0
+    action_loss_weight: float = 1.0
+    memory_horizon_units: int = 750
     min_learning_rate_ratio: float = 0.1
 
 
@@ -143,8 +140,8 @@ class ProjectConfig:
         expected_kv_units = -(-self.model.kv_window_ms // self.data.unit_ms)
         if self.model.kv_units != expected_kv_units:
             raise ValueError("kv_units must exactly cover kv_window_ms at the configured unit_ms")
-        if self.model.action_text_tokens < 1 or self.model.action_key_vocab_size < 1:
-            raise ValueError("action text and key dimensions must be positive")
+        if self.model.action_burst_tokens < 1:
+            raise ValueError("action_burst_tokens must be positive")
         if self.data.dataset not in {
             "synthetic",
             "canary",
@@ -187,14 +184,17 @@ class ProjectConfig:
             raise ValueError("codec_scheduled_sampling_start must be in [0, 1)")
         if self.training.backbone_train_mode not in {"frozen", "selective", "all"}:
             raise ValueError("backbone_train_mode must be frozen, selective, or all")
-        if len(self.training.speech_control_class_weights) != 5 or any(
-            weight <= 0 for weight in self.training.speech_control_class_weights
+        if self.training.speech_loss_weight <= 0 or self.training.action_loss_weight <= 0:
+            raise ValueError("speech_loss_weight and action_loss_weight must be positive")
+        if self.training.memory_horizon_units < 1:
+            raise ValueError("memory_horizon_units must be positive")
+        if self.training.tbptt_units != self.training.memory_horizon_units:
+            raise ValueError("tbptt_units must equal memory_horizon_units")
+        if (
+            self.data.dataset in {"canary", "pilot", "production"}
+            and self.training.memory_horizon_units != 750
         ):
-            raise ValueError("speech_control_class_weights must contain five positive values")
-        if self.training.speech_control_loss_weight <= 0:
-            raise ValueError("speech_control_loss_weight must be positive")
-        if self.training.latent_write_loss_weight < 0:
-            raise ValueError("latent_write_loss_weight cannot be negative")
+            raise ValueError("production memory horizon must be exactly 750 units")
         if not 0 <= self.training.min_learning_rate_ratio <= 1:
             raise ValueError("min_learning_rate_ratio must be in [0, 1]")
         if not 0 <= self.training.warmup_ratio < 1:
@@ -204,6 +204,13 @@ class ProjectConfig:
 
 
 def load_config(path: str | Path, overrides: list[str] | None = None) -> ProjectConfig:
+    # Old objective keys are rejected explicitly instead of being silently
+    # interpreted as compatibility settings.
+    for override in overrides or []:
+        if "speech_control_class_weights" in override:
+            raise ValueError("speech_control_class_weights is removed; use speech_loss_weight")
+        if "speech_control_loss_weight" in override:
+            raise ValueError("speech_control_loss_weight is removed; use speech_loss_weight")
     schema = OmegaConf.structured(ProjectConfig)
     config_path = Path(path).expanduser().resolve()
     loaded = OmegaConf.load(config_path)

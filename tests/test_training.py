@@ -87,7 +87,9 @@ def test_gradient_accumulation_tracks_all_consumed_units(
 
     assert result["train_state"]["update"] == 2
     assert result["train_state"]["consumed_units"] == (
-        2 * smoke_config.training.gradient_accumulation_steps * smoke_config.training.tbptt_units
+        2
+        * smoke_config.training.gradient_accumulation_steps
+        * smoke_config.training.memory_horizon_units
     )
 
 
@@ -103,11 +105,11 @@ def test_gradient_accumulation_resume_matches_continuous_training(
     }
 
     interrupted = train(smoke_config, stop_after_updates=1)
-    assert interrupted["train_state"]["consumed_units"] == 4
+    assert interrupted["train_state"]["consumed_units"] == 16
     checkpoint = smoke_config.runtime.root_path() / "checkpoints" / "step-00000001.pt"
     resumed = train(smoke_config, resume=str(checkpoint))
 
-    assert resumed["train_state"]["consumed_units"] == 8
+    assert resumed["train_state"]["consumed_units"] == 32
     for name, value in resumed["model"].state_dict().items():
         assert value.equal(continuous_state[name]), name
 
@@ -132,7 +134,7 @@ def test_webdataset_resume_across_shards_matches_continuous_training(
     }
     interrupted = train(smoke_config, stop_after_updates=2)
     cursor = interrupted["data_cursor"]
-    assert (cursor.ordered_shard_index, cursor.sample_index_in_shard) == (0, 1)
+    assert (cursor.ordered_shard_index, cursor.sample_index_in_shard) == (1, 1)
 
     checkpoint = smoke_config.runtime.root_path() / "checkpoints" / "step-00000002.pt"
     resumed = train(smoke_config, resume=str(checkpoint))
