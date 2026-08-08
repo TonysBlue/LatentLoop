@@ -1,18 +1,772 @@
-# Realtime multimodal LatentLoop
+# 实时流多模态 LatentLoop 完整方案
 
-This filename is retained as a research-note entry point. The former v0.1
-document described separate speech/action/cognitive controls and auxiliary
-memory objectives; that protocol is retired and incompatible.
+> 状态：项目顶层最终架构文档
+> 日期：2026-08-08
+> 目标：构建持续接收真实混合麦克风和屏幕流、直接生成语音并控制电脑的 always-on 全双工多模态模型。
+> 专项协议：[直接流式语音实施说明](direct-speech.md) · [统一电脑动作输出协议](unified-action.md)
 
-The normative design is documented in
-[latent-loop-architecture.md](latent-loop-architecture.md), including:
+## 1. 方案概述
 
-```text
+实时流多模态 LatentLoop 是一个运行在真实环境反馈闭环中的递归多模态模型。模型以 80 ms 为一个统一时间单元，持续接收单路混合麦克风音频、屏幕输入和时间信息，通过有界逐层 KV Cache 保存近期精确历史，通过固定容量 latent memory Z_t 保存长期任务状态，并使用独立 Speech Head 与 Unified Action Head 并行输出。
+
+完整闭环为：
+
+~~~
+单路混合麦克风 + 屏幕 + 时间
+              ↓
+       InputEncoder(U_t)
+              ↓
+    MemoryUpdater(Z_(t-1), H_(t-1))
+              ↓
+   Backbone(E_t, KV_(t-1), Z_t)
+              ↓
+       完整 H_t 与 KV_t
+          ↙          ↘
+     Speech Head   Unified Action Head
+          ↓          ↓
+    Mimi codec     Action tokens
+          ↓          ↓
+      扬声器       Harness / UI-TARS
+          ↘          ↙
+       真实声学与屏幕环境
+              ↓
+         下一 unit 输入
+~~~
+
+每个时间单元严格执行：
+
+~~~
+E_t       = InputEncoder(U_t)
 Z_t       = MemoryUpdater(Z_(t-1), H_(t-1))
 H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
-speech_t  = SpeechHead(H_t)
-action_t  = ActionHead(H_t)
-```
+speech_t  = SpeechHead(H_t, speech_local_(t-1))
+action_t  = ActionHead(H_t, action_local_(t-1))
+~~~
 
-There are exactly two output heads, schema version 3, checkpoint format 4, and
-the single weighted Speech/Action loss described in the normative document.
+H_t 是主干经过 final normalization 后的完整 hidden 序列，必须暂存到下一单元；不存在额外的 r_t、q_t 或其它摘要状态。环境执行结果只通过下一 unit 的真实混合音频和屏幕输入返回模型。
+
+## 2. 设计目标
+
+1. 连续接收混合麦克风和屏幕输入，支持长期 always-on 运行。
+2. 模型输出语音和电脑 action 时仍持续更新 H、KV、Z 和局部状态。
+3. 支持用户插话、补充、纠正和打断，真实回流进入后续 unit。
+4. 直接从多模态主干 hidden 生成语音 codec，不经过文本或 TTS。
+5. 将所有电脑操控统一到一个 action token vocabulary。
+6. 使用固定容量 Z_t 保存长期目标、约束、计划和环境状态。
+7. 使用有界 KV 保存近期精确多模态历史，控制显存和延迟。
+8. 让未来 Speech/Action loss 通过 Z_t 监督早期 MemoryUpdater。
+9. 训练、验证、checkpoint 恢复和推理使用同一状态转移。
+10. 由 Harness 提供动作安全、权限和 screen revision 校验。
+
+## 3. 输入与输出
+
+### 3.1 单路混合麦克风输入
+
+模型接收设备实际采集的一路混合音频：
+
+$$
+x_t^{mic}=u_t+e_t+o_t+n_t
+$$
+
+其中：
+
+- u_t：用户或现场说话人的语音；
+- e_t：模型语音经过声卡、扬声器、房间和麦克风后的回流；
+- o_t：其他人、电视、音乐、电脑提示音等声音；
+- n_t：环境噪声、设备噪声和声学失真。
+
+模型不接收播放参考、来源分离通道或用户/模型语音标识。
+
+### 3.2 屏幕视觉输入
+
+屏幕输入包括当前桌面或应用关键帧、屏幕有效标志、屏幕 revision 和必要的变化区域。采集器可以高频检测变化、低频编码语义，但送入模型的 unit 必须保持时间顺序和 revision 一致。
+
+### 3.3 直接语音输出
+
+Speech Head 直接预测 Mimi codec token：
+
+~~~
+H_t + speech_local_(t-1)
+    -> speech mode
+    -> Mimi codec frame
+    -> frozen causal codec decoder
+    -> 1920-sample waveform
+    -> playback
+~~~
+
+每 80 ms unit 输出 SILENCE 或 SPEECH。SILENCE 不生成 codec token，也不调用 codec decoder。
+
+### 3.4 电脑动作输出
+
+Unified Action Head 使用单一离散序列空间表示：
+
+~~~
+NOOP, CLICK, DOUBLE_CLICK, RIGHT_CLICK,
+DRAG, SCROLL, TYPE, HOTKEY, WAIT, CANCEL,
+coordinate bins, scroll bins, duration bins,
+UTF-8 byte tokens, key tokens, END_ACTION, PAD
+~~~
+
+动作参数不再由独立 regression head 输出。Harness 解码 token、校验 grammar 和安全策略后交给操作系统或 UI-TARS Operator。
+
+### 3.5 文本旁路边界
+
+文本可以作为离线审计、调试、字幕或数据准备工具，但不是运行时输出头，也不是 Speech Head 的中间目标。生产推理链路只有 Speech Head 和 Unified Action Head。
+
+## 4. 核心状态
+
+设系统按 unit t 运行：
+
+| 符号 | 含义 |
+|---|---|
+| U_t | 当前混合音频、屏幕和时间输入 |
+| E_t | InputEncoder(U_t) 的统一表示 |
+| KV_t | 有界逐层 Transformer Key/Value Cache |
+| Z_t | 固定容量长期 latent memory |
+| H_t | 当前 unit 的完整 final-normalized hidden |
+| speech_local | 语音 temporal state 和上一帧 codec |
+| action_local | action decoder 的跨 unit continuation state |
+
+### 4.1 KV Cache
+
+每层 KV 保存最近进入主干的音频、视觉、时间和状态位置。缓存按完整 unit 追加和淘汰，不能在 unit 中间截断。生产上限为 750 个 80 ms unit，即 60 秒。
+
+### 4.2 Latent memory
+
+$$
+Z_t\in\mathbb R^{B\times M\times d_z}
+$$
+
+Z_t 由固定数量的 slots 构成，用于保存：
+
+- 用户目标和长期约束；
+- 当前任务阶段和未完成子目标；
+- 应用、窗口和重要 UI 状态；
+- 动作计划、失败恢复和安全状态；
+- 已经离开 KV 窗口但仍影响未来输出的信息。
+
+Z_t 的容量与运行时长无关，不承诺逐 token 复制历史。
+
+### 4.3 完整 H_t
+
+$$
+H_t\in\mathbb R^{B\times tokens\_per\_unit\times d_{model}}
+$$
+
+H_t 是当前 unit 的完整主干输出，而不是单个 query 或 pooled summary。它必须保存在 RecurrentState.hidden，并作为下一时刻 MemoryUpdater 的唯一 hidden 输入。
+
+### 4.4 局部状态
+
+speech_local 只维护相邻 codec 帧的声学连续性；action_local 只维护未结束 action event 的 decoder 连续性。二者不是长期认知记忆，不能替代 Z_t。
+
+### 4.5 状态初始化和边界
+
+episode/session 开始时：
+
+- Z_0、H_0、audio cache、speech_local、action_local 清零；
+- KV_0 为空；
+- unit_index 从零开始。
+
+正常 unit 边界不重置状态。TBPTT 边界只 detach 计算图，不清空状态数值。
+
+## 5. 多模态时间单元
+
+### 5.1 Unit 格式
+
+每个 unit 的输入协议为：
+
+~~~
+timestamp_ms       [B] int64
+delta_ms           [B] int64
+mic_audio          [B, 1920] float32
+screen             [B, 3, H, W] float32
+screen_valid       [B] bool
+screen_revision    [B] int64
+~~~
+
+delta_ms 必须为正，时间戳严格递增。
+
+### 5.2 主干序列
+
+InputEncoder 将 unit 组织为带 type embedding 的统一序列：
+
+~~~
+<TIME>
+<AUDIO_0> ... <AUDIO_N>
+<VISION_OR_EMPTY>
+<STATE_QUERY>
+~~~
+
+当前实现的 tokens_per_unit 为 audio_tokens + 3。STATE_QUERY 是主干序列中的一个位置，但不形成独立跨步状态；完整 H_t 才会保存给下一步 updater。
+
+### 5.3 Codec 时间对齐
+
+~~~
+sample_rate          24000 Hz
+unit_ms              80
+audio_samples/unit   1920
+codec_frame_rate     12.5 Hz
+codec_frames/unit    1
+codebooks            8
+vocabulary           2048
+~~~
+
+音频和 codec 时间轴必须严格对应，不能累计四舍五入。
+
+### 5.4 多频率调度
+
+采集器可以高频采集音频和屏幕，编码器可以使用内部帧率，但主干状态转移和输出协议统一在 80 ms unit 上。任何降频、合并或背压都必须显式记录 delta_ms，并保持状态顺序。
+
+## 6. 模型架构
+
+~~~
+MIC_MIXED --> Streaming Audio Encoder --┐
+SCREEN   --> Vision Encoder -----------+--> InputEncoder(E_t)
+TIME     --> Time Encoder -------------┘
+                                      |
+Z_(t-1), H_(t-1) --> MemoryUpdater --> Z_t
+                                      |
+KV_(t-1), E_t, Z_t --> Backbone --> H_t, KV_t
+                                      |             |
+                               Speech Head   Unified Action Head
+                                      |             |
+                             Mimi waveform     action token burst
+~~~
+
+### 6.1 流式音频编码器
+
+音频编码器增量处理新增采样并保留 audio_cache。它只接收混合麦克风，不接收播放参考或来源标签。
+
+### 6.2 视觉编码器
+
+视觉编码器处理当前有效关键帧或视觉空事件，并保持 screen_revision 与 unit 时间一致。稳定屏幕可以复用最新有效帧，但不能改变时间序列的 unit 数量。
+
+### 6.3 多模态主干
+
+主干执行：
+
+$$
+H_t,KV_t=F_\theta(E_t,KV_{t-1},Z_t)
+$$
+
+每层包含 causal self-attention、周期性 latent cross-attention、feed-forward 和 normalization。Z_t 通过 latent projection/cross-attention 进入主干，不拼接为普通 token KV。
+
+## 7. LatentLoop 状态更新
+
+### 7.1 严格更新顺序
+
+MemoryUpdater 先于当前 unit Backbone：
+
+$$
+Z_t=G_\phi(Z_{t-1},H_{t-1})
+$$
+
+当前实现不使用 r_(t-1)、q_(t-1) 或动作控制摘要作为 updater 输入。
+
+### 7.2 候选与门控
+
+一种等价内部参数化为：
+
+~~~
+query     = latent_to_model(Z_(t-1)) + learned_slot_identity
+context   = Attention(query, H_(t-1), H_(t-1))
+candidate = Candidate([Z_(t-1), context]) + learned_slot_identity_latent
+gate      = sigmoid(Gate([Z_(t-1), context]))
+Z_t       = LayerNorm((1-gate)*Z_(t-1) + gate*candidate)
+~~~
+
+learned slot identity 只打破零初始化 slots 的对称性，不规定 slot 语义。
+
+### 7.3 写入和遗忘
+
+门控残差允许模型在信息不重要时保持旧状态，在目标变化或新事实出现时写入候选。重要信息的相对影响会在后续任务中被增强，不重要信息会因后续更新和有限容量而逐渐相对减弱。没有人工 write-budget 或 diversity loss。
+
+### 7.4 长时监督
+
+未来输出 loss 沿以下路径反向传播：
+
+~~~
+future Speech/Action loss
+  -> future H
+  -> future Z
+  -> earlier MemoryUpdater
+  -> earlier H and Z
+~~~
+
+长期记忆是否有效，以跨窗口 Speech/Action 行为评测和 latent on/off 消融为准。
+
+## 8. 直接语音生成
+
+### 8.1 Speech Head
+
+Speech Head 使用 H_t 的当前输出位置和 speech_local：
+
+~~~
+H_t + speech_local_(t-1)
+    -> speech mode logits
+    -> causal/factorized codec logits
+    -> generated codes
+~~~
+
+Speech mode 为 SILENCE 或 SPEECH。SPEECH unit 预测一帧 8-codebook Mimi token；SILENCE unit 的 codec mask 为 false。
+
+### 8.2 Codec 契约
+
+| 字段 | 值 |
+|---|---|
+| Codec | Mimi |
+| 采样率 | 24 kHz mono |
+| 帧率 | 12.5 Hz |
+| 帧长 | 80 ms / 1920 samples |
+| Codebook | 8 |
+| Vocab | 2048 |
+| Revision | 配置锁定 |
+| Weight SHA-256 | 配置锁定 |
+
+Mimi decoder 是冻结的声学解码器，不是 TTS。
+
+### 8.3 环境自听
+
+codec 解码和播放后的声音经过真实扬声器、房间和麦克风回流：
+
+$$
+Y_t\rightarrow Playback\rightarrow Environment\rightarrow x_{t+\delta}^{mic}
+$$
+
+回流作为下一 unit 的混合音频重新进入 InputEncoder，不直接把 codec token 回灌主干。
+
+## 9. Unified Action Head 与 Harness
+
+### 9.1 ActionTokenizer
+
+当前统一词表包含：
+
+~~~
+PAD, END_ACTION, NOOP, CLICK, DOUBLE_CLICK, RIGHT_CLICK,
+DRAG, SCROLL, TYPE, HOTKEY, WAIT, CANCEL,
+coordinate bins: 256
+scroll bins: 256
+duration bins: 128
+UTF-8 byte tokens: 256
+key tokens: 32
+~~~
+
+### 9.2 编码规则
+
+- 点击类：kind + 2 个 coordinate token + END_ACTION；
+- 拖拽：kind + 4 个 coordinate token + END_ACTION；
+- 滚动：kind + 2 个 signed scroll token + END_ACTION；
+- WAIT：kind + 1 个 duration token + END_ACTION；
+- TYPE：kind + UTF-8 byte tokens + END_ACTION；
+- HOTKEY：kind + key tokens + END_ACTION；
+- NOOP/CANCEL：kind + END_ACTION。
+
+### 9.3 跨 unit continuation
+
+每个 unit 最多生成 action_burst_tokens 个 token。event 未结束时，action_local 保存 decoder hidden、previous token、active、event_type 和 burst 计数，下一 unit 继续生成。END_ACTION 后的 PAD 被 mask。
+
+### 9.4 Harness 安全边界
+
+Harness 在执行前校验：
+
+- grammar 和 token sequence 完整性；
+- 坐标、滚动和时长范围；
+- screen_revision 新鲜度；
+- 应用和区域白名单；
+- 删除、支付、发送、安装和权限修改审批；
+- 速率限制、超时、CANCEL 和全局紧急停止。
+
+执行结果只通过下一 unit 的屏幕和声音反馈进入模型。
+
+## 10. 并发输出
+
+语音和 action 可以在同一 unit 并行产生，但两者保持独立输出空间：
+
+~~~
+H_t -> Speech Head -> SILENCE/SPEECH + codec
+H_t -> Action Head -> unified action token burst
+~~~
+
+不存在独立 Speech Control、Action Control 或 Cognitive Control head。静音由 Speech Head 的 SILENCE mode 表达，等待/取消由 action vocabulary 和运行时队列策略表达。
+
+## 11. 完整状态转移
+
+### 11.1 感知
+
+$$
+E_t=InputEncoder(U_t)
+$$
+
+### 11.2 记忆
+
+$$
+Z_t=MemoryUpdater(Z_{t-1},H_{t-1})
+$$
+
+### 11.3 主干
+
+$$
+H_t,KV_t=Backbone(E_t,KV_{t-1},Z_t)
+$$
+
+### 11.4 输出
+
+$$
+speech_t=SpeechHead(H_t,speech\_local_{t-1})
+$$
+
+$$
+action_t=ActionHead(H_t,action\_local_{t-1})
+$$
+
+### 11.5 状态保存
+
+$$
+state_{t+1}=(Z_t,H_t,KV_t,audio\_cache_t,speech\_local_t,action\_local_t)
+$$
+
+### 11.6 环境演化
+
+语音播放和 action 执行改变真实环境；其后续麦克风、屏幕和时间输入构成 U_(t+1)。模型不读取隐藏的执行成功标签。
+
+## 12. 上下文管理
+
+### 12.1 有界 KV
+
+KV 只保留最近配置窗口内的完整 unit：
+
+~~~
+KV_t = KV(UNIT[t-W+1], ..., UNIT[t])
+~~~
+
+生产 W 为 750 units。淘汰必须发生在 unit 边界，保持音频、视觉、时间和 revision 对齐。
+
+### 12.2 Latent memory 读取
+
+Z_t 在主干指定层通过 latent cross-attention 读取。Z_t 不并入普通 KV，不随 KV 淘汰被删除；只有 episode/session reset 才清零。
+
+### 12.3 持久化
+
+checkpoint 保存 Z、H、KV、audio cache、speech local、action local 和 unit cursor。会话持久化必须记录 model/schema/codec identity；不兼容版本拒绝恢复。
+
+## 13. 实时运行时
+
+### 13.1 运行线程
+
+~~~
+Audio Capture       音频环形缓冲
+Screen Capture      屏幕关键帧与 revision
+InputEncoder        音频/视觉/时间编码
+Backbone Worker     MemoryUpdater、Backbone、KV/Z 状态
+Speech Worker       codec frame 和播放块
+Action Worker       Harness grammar/safety/execution
+Telemetry           延迟、队列、状态和轨迹
+~~~
+
+### 13.2 单 GPU 调度
+
+递归模型、KV、Z、audio cache 和两个 local state 留在同一个 GPU 进程。Ray 只负责外围 CPU 任务，不逐 unit 搬运状态。
+
+### 13.3 背压
+
+当计算延迟超过实时 tick：
+
+- 音频块可以合并，但必须更新 delta_ms；
+- 视觉只保留最新关键帧和累计变化；
+- 播放队列和 action 队列保持有界；
+- 过期 action 在 Harness 被拒绝；
+- 超时、取消和紧急停止优先级最高；
+- 任何丢帧、时间跳跃或 worker 错误都写入 telemetry。
+
+## 14. 训练数据
+
+### 14.1 轨迹字段
+
+训练轨迹由以下数据构成：
+
+~~~
+mic_audio          单路混合麦克风
+screen_frames      带时间戳的屏幕关键帧
+target_speech      仅用于离线 codec 编码的目标音频
+target_actions     统一 action token 序列
+timestamps         unit 时间和 screen revision
+runtime_events     播放、执行、丢帧和延迟审计
+~~~
+
+构造过程中的来源分离、TTS 中间产物、环境参数和任务标签不能作为模型输入。
+
+当前 WebDataset schema version 为 3。一个 episode 由 `meta.json`、`mic.flac`、
+`target_speech.flac`、`screen.npz`、`timeline.npz`、`speech_codes.npy` 和
+`turns.json` 组成；timeline 保存 speech mode/mask、codec mask、统一 action
+tokens/mask、时间戳和 screen revision。旧 `controls.npy`、结构化 action JSON、
+memory target 和 schema v1/v2 不属于当前训练协议。
+
+### 14.2 场景覆盖
+
+最终数据集应覆盖：
+
+- 安静单人语音；
+- 用户打断、重叠语音和多人环境；
+- 键盘、风扇、音乐、电视和系统声音；
+- 播放延迟、混响、设备频响、回流衰减和回流缺失；
+- 静态屏幕、窗口切换、动态 UI 和 screen revision 变化；
+- 点击、拖拽、滚动、输入、快捷键、等待、取消；
+- 动作失败、用户纠正、长任务和跨应用任务；
+- 长时间无语音、纯屏幕观察和模型静音。
+
+### 14.3 声学域与视觉域随机化
+
+训练可以随机化房间 impulse response、设备频响、播放延迟、时钟漂移、非线性失真、自动增益、背景噪声、回流截断和视觉变化速度，但最终输入仍必须是一路混合麦克风和屏幕 unit。
+
+### 14.4 数据隔离
+
+按 device/session 分组切分 train/validation/test。同一 session 不得跨 split。每个 manifest 锁定 source、license、content hash、codec identity、schema version 和 session hash。
+
+## 15. 训练目标
+
+### 15.1 Speech loss
+
+$$
+L_{speech}=L_{speech\_mode}+L_{speech\_codec}
+$$
+
+mode loss 对有效 SILENCE/SPEECH 标签计算 CE；codec loss 只对 SPEECH unit 的有效 Mimi frame/codebook 计算 CE。
+
+### 15.2 Action loss
+
+$$
+L_{action}=MaskedCE(action\_logits,action\_tokens)
+$$
+
+统一处理 action kind、坐标、滚动、时长、UTF-8 byte、key 和 END_ACTION。PAD 与无效 burst 被 mask。
+
+### 15.3 并发输出
+
+Speech 和 Action 共享 Backbone 梯度，但使用独立 loss 和独立输出 vocabulary。一个 unit 可以同时具有有效 Speech 和 Action target。
+
+### 15.4 长期记忆监督
+
+没有独立 memory loss、future embedding loss、probe loss、write-budget 或 diversity loss。未来 Speech/Action loss 通过：
+
+~~~
+future loss -> future H -> future Z -> earlier MemoryUpdater
+~~~
+
+监督 Z_t 的长期信息选择。
+
+### 15.5 总损失
+
+$$
+L_{total}=w_{speech}L_{speech}+w_{action}L_{action}
+$$
+
+这是当前最终目标架构的唯一训练目标。各模块影响关系为：
+
+| 模块 | 直接梯度 | 主要行为影响 |
+|---|---|---|
+| Speech Head | Speech mode/codec loss | 语音 mode、codec 准确率和局部连续性 |
+| Action Head | Action token loss | grammar、参数 token 和跨 unit continuation |
+| Backbone | 两个输出 loss | 共享多模态理解和输出条件表示 |
+| MemoryUpdater/Z | 未来两个输出 loss | 长期目标、约束、计划和环境状态保持 |
+| KV state | 无参数 loss | 近期精确上下文 |
+| local states | 对应 head loss | 语音跨帧和 action 跨 unit 连续性 |
+
+## 16. 闭环训练
+
+### 16.1 训练分布
+
+训练输入中的未来麦克风可以由真实录音、目标语音经过声学环境后的回流或模型实际生成语音经过环境模拟后的回流构成；无论来源如何，模型看到的都必须是同一路混合麦克风。
+
+### 16.2 环境反馈建模
+
+声学环境可包含播放延迟、房间响应、设备频响、噪声、重叠、截断和回流缺失。视觉环境可包含窗口变化、动作延迟、动作失败和 screen revision 变化。
+
+### 16.3 梯度路径
+
+单个 unit 的输出 loss 通过当前 Backbone 反向传播；跨 unit 的未来 loss 通过 Z 和 H 反向传播。TBPTT 只在配置边界 detach，不能在每个 unit 重置状态。
+
+### 16.4 外部执行边界
+
+物理播放、操作系统和 UI-TARS 执行本身不是可微模块。它们提供后续观察和行为 reward；训练接口只接收合法的 input/target/observation，不把隐藏执行结果作为额外模型输入。
+
+## 17. 训练约束
+
+1. Canary、Pilot、Production 使用同一个训练入口和状态协议。
+2. 所有训练 episode 按时间顺序处理，不能每个窗口重置状态。
+3. 生产 memory horizon 和 TBPTT 为 750 units。
+4. 所有 targets 配套 mask；缺失标签屏蔽对应 loss，不伪造 NOOP 或 SILENCE。
+5. 未来输出 loss 必须能够在 TBPTT 范围内回传到早期 MemoryUpdater。
+6. 训练、验证、推理和恢复共享同一 forward_step 语义。
+7. codec、action vocabulary、schema、unit 时钟和 checkpoint identity 必须一致。
+
+## 18. 推理算法
+
+~~~
+state = initial_state()
+
+for each 80 ms unit U_t:
+    E_t = InputEncoder(U_t)
+    Z_t = MemoryUpdater(state.Z, state.H)
+    H_t, KV_t = Backbone(E_t, state.KV, Z_t)
+    speech_t = SpeechHead(H_t, state.speech_local)
+    action_t = ActionHead(H_t, state.action_local)
+
+    submit speech_t to codec/playback if mode=SPEECH
+    submit action_t to Harness if grammar/safety checks pass
+
+    state = {
+        Z: Z_t,
+        H: H_t,
+        KV: KV_t,
+        speech_local: speech_t.local,
+        action_local: action_t.local,
+    }
+~~~
+
+输出产生的真实音频和屏幕变化在后续 unit 重新进入输入。不存在 control-head 决定是否运行这两个 head 的额外状态机。
+
+## 19. MiniCPM 系基础实现
+
+MiniCPM 或同类多模态主干可以提供视觉编码、音频编码、多模态 projector、因果 Backbone 和增量 KV。项目必须在此基础上保持：
+
+1. 固定 80 ms unit；
+2. 完整 H_t 暂存；
+3. Z_t = MemoryUpdater(Z_(t-1), H_(t-1))；
+4. 独立 Speech Head；
+5. Unified Action Head；
+6. 单路混合麦克风输入；
+7. 有界 KV 和固定 latent slots；
+8. 同一 checkpoint/data/schema identity。
+
+不得引入与上述状态协议不一致的 control、memory 或 action 过渡接口。
+
+## 20. 配置约束
+
+目标配置必须明确：
+
+- model_dim、latent_dim、层数、heads 和 FFN；
+- latent_slots、kv_units、kv_window_ms；
+- audio sample rate、unit_ms、screen shape；
+- Mimi codec identity；
+- action_burst_tokens 和 max_action_duration_ms；
+- tbptt_units、memory_horizon_units、mixed precision；
+- loss weights、checkpoint cadence、manifest 和 run identity。
+
+生产、Canary、Pilot 的正式 horizon 为 750 units；Smoke 只缩小数值，不改变协议。
+
+## 21. 评测与消融
+
+### 21.1 基线与消融
+
+| 方案 | 用途 |
+|---|---|
+| 有界 KV，无 Z | 近期上下文基线 |
+| 有界 KV + Z | 核心长期记忆方案 |
+| 长 KV 对照 | 精确历史上界 |
+| 核心方案去掉完整 H 暂存 | 验证完整 hidden 的必要性 |
+| 核心方案去掉 Action continuation | 验证跨 unit action state |
+| 核心方案去掉 Speech codec mask | 验证 SILENCE 语义 |
+
+### 21.2 语音指标
+
+- mode accuracy；
+- speech-active fraction；
+- 每个 codebook accuracy；
+- SILENCE 误触发率；
+- codec RTF、首块延迟和长语音连续性；
+- 帧漂移、NaN、削波和播放队列积压；
+- 自声回流、噪声和重叠条件下的稳定性。
+
+### 21.3 视觉与动作指标
+
+- action token accuracy；
+- grammar validity；
+- 坐标、滚动、时长 token 正确率；
+- 跨 unit continuation；
+- screen revision 过期拒绝率；
+- 动作成功率、失败恢复和长任务完成率；
+- 危险动作误执行率。
+
+### 21.4 Long-term state 指标
+
+- Z on/off 跨窗口任务差异；
+- KV 窗口缩短时的目标保持曲线；
+- 用户约束更新和冲突修正；
+- 早期 action 结果在后续的正确利用；
+- H_t 完整暂存与摘要替代的对照；
+- Z、KV、H 和 local state 的容量上界。
+
+### 21.5 实时系统指标
+
+- unit latency、p95/p99；
+- 音频、视觉、codec、action 和 playback 队列长度；
+- GPU 显存、CPU 内存和 socket 健康；
+- 长时间运行中的 NaN、丢帧、underrun 和队列增长；
+- checkpoint 恢复后的下一 unit 输出与 loss 一致性。
+
+## 22. 风险与缓解
+
+| 风险 | 缓解策略 |
+|---|---|
+| Z 被近期 KV 忽略 | 窗口外任务、Z on/off 消融和长期行为评测 |
+| Z 过度写入或过度保持 | 依靠未来输出任务、门值监控和状态范数监控 |
+| slots 同质化 | learned slot identity、行为消融和容量监控 |
+| 声学回流导致重复响应 | 回流延迟/音量/缺失随机化、重复行为评测 |
+| 用户插话导致状态错乱 | 真实混合音频、严格 unit 顺序和完整 H 暂存 |
+| 动作基于过期屏幕 | screen_revision 和 Harness 执行前校验 |
+| 单卡吞吐跟不上 | 音频合并、视觉降频、activation checkpoint、显式背压 |
+| 长时间队列增长 | 有界队列、超时、取消和实时 telemetry |
+| 隐状态难审计 | action approval、完整轨迹、checkpoint lineage 和紧急停止 |
+
+## 23. 安全边界
+
+UI-TARS/Harness 必须提供：
+
+- 删除、支付、发送、安装和权限修改审批；
+- 应用和区域白名单；
+- 坐标、时长、速率和 revision 校验；
+- 全局停止快捷键；
+- 操作轨迹记录和回放；
+- 输入文本和屏幕媒体脱敏；
+- 无人值守策略和失败时的安全默认值。
+
+语音运行时必须提供最大连续输出时长、音量限制、异常重复检测和播放队列上限。模型不能绕过执行层直接调用高风险操作。
+
+## 24. 部署与运行时契约
+
+- 模型、KV、Z、H、codec local state 在同一推理进程内保持；
+- W&B 只负责指标、配置和谱系，不进入模型 forward；
+- Ray 只负责 CPU 数据、环境和评测，不维护 GPU recurrent state；
+- codec worker 通过带身份校验的本地接口提供 encode/decode；
+- runtime、checkpoint、manifest、codec 和 action vocabulary 版本必须一致；
+- 所有异常通过显式失败、隔离、恢复或安全拒绝处理。
+
+## 25. 成功标准
+
+1. 模型可以持续处理一路混合麦克风和屏幕流。
+2. Speech Head 以 80 ms 对齐生成 SILENCE/SPEECH 和 Mimi codec。
+3. 自声回流、用户插话、噪声和屏幕变化不会破坏状态顺序。
+4. 有界 KV 和固定 Z 的容量不随运行时长无限增长。
+5. Z on/off 对跨窗口目标、约束和错误恢复产生可测差异。
+6. Unified Action Head 能表达 grammar 合法的电脑操作并跨 unit continuation。
+7. Harness 能拒绝过期、越权和危险 action。
+8. checkpoint 恢复后的下一 unit 输出和 loss 与连续运行一致。
+9. 长时间运行中延迟、队列、显存和 socket 保持有界。
+10. 训练、验证、推理和恢复均符合本顶层状态协议。
+
+## 26. 最终架构定义
+
+实时流多模态 LatentLoop 的最终形态为：
+
+~~~
+mixed microphone + screen + time
+    -> InputEncoder(U_t) = E_t
+    -> Z_t = MemoryUpdater(Z_(t-1), H_(t-1))
+    -> H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
+    -> SpeechHead(H_t) + UnifiedActionHead(H_t)
+    -> frozen Mimi decode / Harness execution
+    -> real acoustic and visual feedback
+    -> next 80 ms unit
+~~~
+
+KV 负责近期精确历史，Z_t 负责固定容量长期状态，H_t 负责把当前完整主干结果连接到下一次 memory update。语音和电脑操控共享主干但保持独立输出空间；这就是项目的顶层最终架构。

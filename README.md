@@ -6,7 +6,9 @@ TBPTT、精确断点恢复、WebDataset、CPU-only Ray 任务和 W&B Local。
 
 完整架构见 `docs/realtime-multimodal-latent-loop.md`，本地训练设计见
 `docs/local-training-platform.md`。直接流式语音的实现与运行命令见
-`docs/direct-speech.md`。
+`docs/direct-speech.md`；统一电脑操控的 Action Head 协议见
+`docs/unified-action.md`。纯文本 token 输出的 LatentLoop 研究方案见
+`docs/latent-loop-architecture.md`。
 
 ## 环境初始化
 
@@ -97,7 +99,7 @@ scripts/restore-wandb.sh ~/latentloop-data/backups/wandb/wandb-local-<timestamp>
 [`docs/direct-speech.md`](docs/direct-speech.md)。
 
 Canary/Pilot 数据准备、外部语料许可证锁、CosyVoice/ASR/屏幕适配器以及自动审计门禁见
-[`docs/pilot-data.md`](docs/pilot-data.md)。本地 fixture 可以在不下载语料和模型的
+[`docs/canary-pilot-data.md`](docs/canary-pilot-data.md)。本地 fixture 可以在不下载语料和模型的
 情况下跑通六个阶段：
 
 真实一小时 Canary 的固定数据下载、TTS/ASR、Mimi 编码、训练和 validation/test 评测
