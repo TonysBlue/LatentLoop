@@ -47,7 +47,7 @@ class DataConfig:
     source: str = "synthetic"
     shards: str | None = None
     manifest: str | None = None
-    schema_version: int = 4
+    schema_version: int = 5
     audio_sample_rate: int = 24_000
     codec_frame_rate: float = 12.5
     codec_id: str = "mimi-24khz-8x2048"
@@ -175,8 +175,8 @@ class ProjectConfig:
                 "data.dataset must be synthetic, canary, pilot, production, "
                 "or direct-speech-overfit"
             )
-        if self.data.schema_version != 4:
-            raise ValueError("data.schema_version must be exactly 4")
+        if self.data.schema_version != 5:
+            raise ValueError("data.schema_version must be exactly 5; migrate v4 data explicitly")
         if self.data.source not in {"synthetic", "webdataset"}:
             raise ValueError("data.source must be synthetic or webdataset")
         if self.data.dataset != "synthetic" and self.data.source != "webdataset":

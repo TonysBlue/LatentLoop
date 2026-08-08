@@ -7,6 +7,10 @@
 
 ## 1. 完成边界
 
+Model Service 对外输出 24 kHz mono PCM。Mimi codec token 只存在于 Model Core 的
+Speech Head、训练 target 和内部 runtime 解码路径；Harness 只接收 PCM 并负责播放。
+SILENCE 由 Model Service 输出全零 80 ms PCM，Harness 不理解 Mimi。
+
 直接语音路径将模型时钟固定为 80 ms。每个 unit 接收一路 24 kHz、1920 样本的混合麦克风输入。完整状态顺序为：
 
 ~~~

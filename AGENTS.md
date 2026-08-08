@@ -35,12 +35,12 @@ Canary, Pilot, and Production must use the same training implementation.
 Differences belong in YAML configuration, recipe composition, data scale, and
 initial checkpoints, not in copied Python or shell training loops.
 
-- All optimizer training goes through `src/latentloop/training.py::train`.
-- Multi-stage execution goes through `src/latentloop/recipe.py::run_recipe`.
+- All optimizer training goes through the Training System's shared `train` dispatcher.
+- Multi-stage execution goes through the Training System's shared recipe runner.
 - The public orchestration wrapper is `scripts/run-training.sh`.
-- Evaluation goes through `latentloop evaluate` and
-  `src/latentloop/evaluation.py::evaluate_checkpoint`.
-- Data preparation goes through `scripts/prepare-data.sh` and the shared
+- Evaluation is owned by the Training System and uses the shared
+  `evaluate_checkpoint` implementation.
+- Data preparation goes through `data`/`scripts/data/prepare.sh` and the shared
   curation modules.
 - Do not add `run-canary.sh`, `train-pilot.py`, `production_training.py`, or
   another stage-specific code path.
@@ -67,15 +67,53 @@ Unified Action Head。Online GRPO 使用冻结的 SFT reference policy、同一�
 
 ## Repository Map
 
-- `src/latentloop/model/`: streaming model, encoders, attention, speech head,
-  and action head. Keep model math here; do not put orchestration here.
-- `src/latentloop/training.py`: the single training loop, optimizer groups,
-  TBPTT, recurrent state, checkpoint cadence, metrics, and readiness call.
-- `src/latentloop/recipe.py`: recipe loading, stage chaining, run IDs,
-  checkpoint identity checks, and validation/test orchestration.
-- `src/latentloop/data/`: synthetic data, WebDataset readers, speech import,
-  codec targets, and curation APIs.
-- `src/latentloop/data/curation/`: source locks, manifests, synthesis,
+### System boundaries
+
+The final architecture has three runtime systems and shared packages:
+
+- `Model Core` is pure tensor/model code. It owns the `Z/H/KV` recurrent state,
+  Backbone, Speech Head, Unified Action Head, and token sampling.
+- `Model Service` is the physical-signal inference boundary. It accepts mixed
+  microphone PCM, screen pixels/revision, and time; it returns speech PCM and
+  decoded `ControlSignal` events. It never captures devices or executes OS
+  input.
+- `Training System` owns Pretrain, SFT, Online GRPO, replay, optimizer,
+  checkpoint lineage, and evaluation. It uses the same Model Core as serving.
+- `Harness System` owns microphone/screen capture, playback, isolated computer
+  lifecycle, ControlSignal validation/safety, execution, receipts, and reward.
+- `Data` is a shared persistence domain for capture, replay, supervised
+  episodes, rollout traces, manifests, and readiness. It is not private to the
+  training package.
+
+The Model Service data plane is strictly physical signals:
+
+```text
+ObservationSignal: mic PCM + screen pixels/revision + time
+ActuationSignal:   speech PCM + decoded ControlSignal events
+```
+
+Action tokens remain an internal Model Core/training/data representation and
+are decoded before crossing the Model Service-to-Harness execution boundary.
+Rewards, receipts, task success, DOM/accessibility data, and other hidden
+environment fields are control-plane or training metadata only; they never
+enter `ObservationSignal`.
+
+The target source layout is a uv workspace with `packages/contracts`,
+`packages/model`, `packages/media`, `packages/data`, `packages/runtime`, and
+`systems/model-service`, `systems/training`, `systems/harness`. The legacy
+single package is migrated into these domains in one coherent change; no
+stage-specific implementation or fixture fallback is part of a formal run.
+
+- `packages/model/src/model/`: Model Core streaming model, encoders, attention,
+  speech head, action head, and recurrent state. Keep model math here; do not
+  put orchestration here.
+- `systems/training/src/training/`: the shared optimizer/recipe dispatch,
+  TBPTT, checkpoint lineage, metrics, and validation/test orchestration.
+- `packages/data/src/data/`: synthetic data, WebDataset readers, trajectory
+  schema, speech import, codec targets, and curation APIs.
+- `src/latentloop/` is the migration source for the shared implementation and
+  is not a runtime system boundary.
+- `packages/data/src/data/curation/`: source locks, manifests, synthesis,
   audits, Mimi checks, readiness, and encoded shard preparation.
 - `src/latentloop/evaluation.py`: shared validation/test evaluation and
   lineage-bearing reports.
@@ -189,6 +227,11 @@ Formal Canary, Pilot and Production Pretrain/SFT/RL stages always use
 RL receives the final SFT checkpoint as both its initial policy and frozen
 reference. Frozen/selective modes remain available only for explicitly named
 non-formal local experiments and must not appear in formal recipes.
+
+The final Harness backend is an isolated QEMU/KVM computer. A per-session
+overlay is restored from a task snapshot; SPICE/virtual audio provide screen
+and microphone integration and a controlled input backend executes validated
+`ControlSignal` events. A process-local fake backend is test-only.
 
 ## W&B Local and Experiment Tracking
 

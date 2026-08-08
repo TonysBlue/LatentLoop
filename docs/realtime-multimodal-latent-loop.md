@@ -8,6 +8,26 @@
 
 ## 1. 方案概述
 
+### 1.1 系统边界
+
+LatentLoop 由 Model Core、Model Service、Training System、Harness System 和共享
+Data 组成。Model Service 的数据平面只接受物理信号并返回物理输出：
+
+```text
+Harness sensors -> mic PCM + screen pixels/revision + time
+                 -> Model Service
+Model Service   -> speech PCM + decoded ControlSignal
+                 -> Harness actuators
+```
+
+Model Core 内部仍然使用 Speech Head 的 Mimi token 和 Unified Action Head 的 action
+token；这些 token 不作为 Model Service 与 Harness 的执行接口。Model Service 将它们
+解码为 speech PCM 和 ControlSignal 后再发送给 Harness。Harness 不读取或修改
+`Z_t/H_t/KV_t`，Training System 不把 reward、receipt 或隐藏环境信息注入模型输入。
+
+共享 Data 负责 capture、replay、监督 episode、online rollout、manifest、审计和
+readiness，不隶属于 Training System。
+
 实时流多模态 LatentLoop 是一个运行在真实环境反馈闭环中的递归多模态模型。模型以 80 ms 为一个统一时间单元，持续接收单路混合麦克风音频、屏幕输入和时间信息，通过有界逐层 KV Cache 保存近期精确历史，通过固定容量 latent memory Z_t 保存长期任务状态，并使用独立 Speech Head 与 Unified Action Head 并行输出。
 
 完整闭环为：

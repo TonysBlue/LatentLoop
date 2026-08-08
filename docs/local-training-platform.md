@@ -404,7 +404,7 @@ CUDA、FP16、codec worker、checkpoint 原子写入和 W&B Local/Offline 可用
 
 ### 14.2 数据与协议
 
-StreamUnit shape、80 ms 时钟、mask、schema v4、manifest/shard identity、codec identity、action grammar 和 split isolation 通过。
+StreamUnit shape、80 ms 时钟、mask、schema v5、manifest/shard identity、runtime identity、codec identity、action grammar 和 split isolation 通过。
 
 ### 14.3 状态闭环
 

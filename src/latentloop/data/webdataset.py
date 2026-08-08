@@ -78,8 +78,19 @@ def episode_to_sample(episode: Episode) -> dict[str, bytes | str]:
         "episode_id": episode.episode_id,
         "unit_count": len(units),
         "unit_audio_samples": units[0].mic_audio.shape[1],
-        "schema_version": int(episode.metadata.get("schema_version", 4)),
+        "schema_version": int(episode.metadata.get("schema_version", 5)),
     }
+    metadata.setdefault(
+        "runtime_identity",
+        {
+            "protocol_version": metadata.get("protocol_version", "realtime-v1"),
+            "environment_id": metadata.get("environment_id", "recorded"),
+            "environment_version": metadata.get("environment_version", "1"),
+            "action_vocabulary_id": metadata.get("action_vocabulary_id", "unified-action-v4"),
+        },
+    )
+    decoded_controls = metadata.get("decoded_controls", [])
+    receipts = metadata.get("receipts", [])
     timeline = {
         "timestamps_ms": np.asarray([int(u.timestamp_ms.item()) for u in units]),
         "delta_ms": np.asarray([int(u.delta_ms.item()) for u in units]),
@@ -109,6 +120,8 @@ def episode_to_sample(episode: Episode) -> dict[str, bytes | str]:
         "timeline.npz": _timeline_bytes(timeline),
         "speech_codes.npy": _numpy_bytes(codes),
         "turns.json": json.dumps(episode.metadata.get("turns", [])).encode("utf-8"),
+        "controls.json": json.dumps(decoded_controls, sort_keys=True).encode("utf-8"),
+        "receipts.json": json.dumps(receipts, sort_keys=True).encode("utf-8"),
     }
 
 
@@ -162,9 +175,10 @@ def write_episode_shards(
         for episode in episodes:
             sample = episode_to_sample(episode)
             sink.write(sample)
+            sample_metadata = json.loads(sample["meta.json"])
             manifest.append(
                 {
-                    **episode.metadata,
+                    **sample_metadata,
                     "episode_id": episode.episode_id,
                     "units": len(episode.units),
                     "duration_ms": sum(int(u.delta_ms.item()) for u in episode.units),
@@ -222,9 +236,9 @@ class EpisodeShardReader:
         episode_id = str(sample["__key__"])
         if int(metadata.get("schema_version", -1)) != self.data.schema_version:
             raise ValueError(f"schema version mismatch for {episode_id}")
-        if int(metadata.get("schema_version", -1)) != 4:
+        if int(metadata.get("schema_version", -1)) != 5:
             raise ValueError(f"unsupported schema version for {episode_id}")
-        required_v4 = (
+        required_v5 = (
             "stage",
             "dataset_scale",
             "sample_kind",
@@ -233,23 +247,15 @@ class EpisodeShardReader:
             "task_id",
             "environment_id",
             "environment_version",
+            "protocol_version",
+            "action_vocabulary_id",
+            "codec_id",
+            "codec_revision",
+            "runtime_identity",
         )
-        missing = [key for key in required_v4 if key not in metadata]
+        missing = [key for key in required_v5 if key not in metadata]
         if missing:
-            raise ValueError(f"schema v4 metadata is missing for {episode_id}: {missing}")
-        required_v4 = (
-            "stage",
-            "dataset_scale",
-            "sample_kind",
-            "supervision_kind",
-            "action_source",
-            "task_id",
-            "environment_id",
-            "environment_version",
-        )
-        missing = [key for key in required_v4 if key not in metadata]
-        if missing:
-            raise ValueError(f"schema v4 metadata is missing for {episode_id}: {missing}")
+            raise ValueError(f"schema v5 metadata is missing for {episode_id}: {missing}")
         for key in ("codec_id", "codec_weight_hash", "codec_revision"):
             if metadata.get(key) != getattr(self.data, key):
                 raise ValueError(f"{key} mismatch for {episode_id}")
@@ -265,6 +271,10 @@ class EpisodeShardReader:
     def _decode(self, sample: dict[str, Any], shard_index: int, sample_index: int) -> Episode:
         metadata = json.loads(sample["meta.json"])
         turns = json.loads(sample["turns.json"])
+        if "controls.json" in sample:
+            metadata["decoded_controls"] = json.loads(sample["controls.json"])
+        if "receipts.json" in sample:
+            metadata["receipts"] = json.loads(sample["receipts.json"])
         screens = _load_numpy(sample["screen.npz"], compressed=True)
         timeline = _load_timeline(sample["timeline.npz"])
         codes = _load_numpy(sample["speech_codes.npy"])

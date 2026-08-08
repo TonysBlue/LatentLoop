@@ -123,8 +123,19 @@ def check_readiness(
             processed_manifest = path("shards", "processed", split, f"{split}-manifest.jsonl")
             if processed_manifest.is_file():
                 encoded_entries = read_jsonl(processed_manifest)
-                if any(int(entry.get("schema_version", -1)) != 4 for entry in encoded_entries):
-                    invalid.append(f"{split} processed manifest contains non-v4 samples")
+                if any(int(entry.get("schema_version", -1)) != 5 for entry in encoded_entries):
+                    invalid.append(f"{split} processed manifest contains non-v5 samples")
+                required_v5 = {
+                    "protocol_version",
+                    "action_vocabulary_id",
+                    "runtime_identity",
+                    "environment_id",
+                    "environment_version",
+                }
+                if any(required_v5 - set(entry) for entry in encoded_entries):
+                    invalid.append(
+                        f"{split} processed manifest is missing schema v5 runtime identity"
+                    )
                 if {entry["episode_id"] for entry in source_entries} != {
                     entry["episode_id"] for entry in encoded_entries
                 }:

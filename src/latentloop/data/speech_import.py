@@ -215,6 +215,8 @@ def _build_episode(
         "task_id": record.get("task_id", record["episode_id"]),
         "environment_id": record.get("environment_id", "recorded"),
         "environment_version": record.get("environment_version", "1"),
+        "protocol_version": record.get("protocol_version", "realtime-v1"),
+        "action_vocabulary_id": record.get("action_vocabulary_id", "unified-action-v4"),
         "action_schema_version": 4,
     }
     episode = Episode(str(record["episode_id"]), units, metadata, target_speech=target)

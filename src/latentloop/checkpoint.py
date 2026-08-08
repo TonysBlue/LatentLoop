@@ -33,7 +33,7 @@ class CheckpointMetadata:
     git_commit: str
     codec_revision: str = "unknown"
     parent_sha256: str | None = None
-    schema_version: int = 4
+    schema_version: int = 5
     stage: str = "pretrain"
     objective: str = "supervised"
     action_vocabulary_id: str = "unified-action-v4"

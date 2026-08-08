@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package latentloop.realtime.v1;
+
+message MicPcm {
+  uint32 sample_rate_hz = 1;
+  uint32 channels = 2;
+  string encoding = 3;
+  bytes samples = 4;
+}
+
+message ScreenFrame {
+  uint32 width = 1;
+  uint32 height = 2;
+  uint64 revision = 3;
+  bool valid = 4;
+  string pixel_format = 5;
+  string encoding = 6;
+  bytes image = 7;
+}
+
+message ObservationSignal {
+  string session_id = 1;
+  uint64 unit_index = 2;
+  uint64 timestamp_ms = 3;
+  uint32 delta_ms = 4;
+  MicPcm mic = 5;
+  ScreenFrame screen = 6;
+}
+
+message ControlSignal {
+  string kind = 1;
+  string event_id = 2;
+  optional uint64 screen_revision = 3;
+  optional float x = 4;
+  optional float y = 5;
+  optional float x2 = 6;
+  optional float y2 = 7;
+  optional float dx = 8;
+  optional float dy = 9;
+  optional uint32 duration_ms = 10;
+  string text = 11;
+  optional uint32 key = 12;
+  optional uint32 button = 13;
+}
+
+message SpeechSignal {
+  uint32 sample_rate_hz = 1;
+  uint32 channels = 2;
+  string encoding = 3;
+  bool silent = 4;
+  bytes pcm = 5;
+}
+
+message ActuationSignal {
+  string session_id = 1;
+  uint64 unit_index = 2;
+  SpeechSignal speech = 3;
+  repeated ControlSignal controls = 4;
+}

@@ -59,6 +59,8 @@ class SyntheticEpisodeDataset:
                 "task_id": f"synthetic-task-{scenario}",
                 "environment_id": "synthetic-test-only",
                 "environment_version": "1",
+                "protocol_version": "realtime-v1",
+                "action_vocabulary_id": "unified-action-v4",
                 "action_schema_version": 4,
             },
             target_speech=torch.zeros(self.data.episode_units * self.data.unit_audio_samples),

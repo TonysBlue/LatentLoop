@@ -23,7 +23,7 @@ model:
 data:
   dataset: synthetic
   source: synthetic
-  schema_version: 4
+  schema_version: 5
   audio_sample_rate: 4000
   codec_frame_rate: 12.5
   codec_id: synthetic-codec-v1

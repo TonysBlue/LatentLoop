@@ -17,4 +17,4 @@ done
 cd "$REPO"
 ARGS=(--recipe "$RECIPE")
 [[ -n "$RUN_ID" ]] && ARGS+=(--run-id "$RUN_ID")
-exec uv run latentloop run-recipe "${ARGS[@]}" "${OVERRIDES[@]}"
+exec uv run training run-recipe "${ARGS[@]}" "${OVERRIDES[@]}"

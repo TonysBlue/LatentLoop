@@ -40,6 +40,26 @@ latentloop = "latentloop.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/latentloop"]
 
+[tool.uv.workspace]
+members = [
+  "packages/contracts",
+  "packages/model",
+  "packages/media",
+  "packages/data",
+  "packages/runtime",
+  "systems/model-service",
+  "systems/training",
+  "systems/harness",
+]
+
+[tool.uv.sources]
+latentloop = { workspace = true }
+latentloop-contracts = { workspace = true }
+latentloop-model = { workspace = true }
+latentloop-media = { workspace = true }
+latentloop-data = { workspace = true }
+latentloop-runtime = { workspace = true }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
@@ -50,4 +70,3 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-

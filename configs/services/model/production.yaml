@@ -1,0 +1,3 @@
+config: ../../production.yaml
+socket: ~/latentloop-data/runtime/production/model-service.sock
+device: cuda:0

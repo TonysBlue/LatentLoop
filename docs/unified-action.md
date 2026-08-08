@@ -7,6 +7,11 @@
 
 ## 1. 完成边界
 
+Action token 是模型内部和训练数据中的统一离散表示。Model Service 在输出边界将
+token 解码为 `ControlSignal`（鼠标、键盘、文本、滚动、等待、取消等物理控制事件）；
+Harness 只接收 `ControlSignal`，然后执行参数、screen revision、安全策略和权限校验。
+Harness 不依赖 Model Core，也不接收 raw action token 作为执行接口。
+
 Unified Action Head 是实时多模态模型的独立电脑操控输出头。它与 Speech Head 共享 `H_t`，但使用独立 vocabulary、局部 decoder state 和 loss：
 
 ~~~text

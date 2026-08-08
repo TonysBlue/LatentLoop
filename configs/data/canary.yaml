@@ -1,0 +1,3 @@
+dataset: canary
+schema_version: 5
+root: ~/latentloop-data/datasets/canary/v1

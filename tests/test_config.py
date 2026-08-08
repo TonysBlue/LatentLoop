@@ -19,7 +19,7 @@ def test_local_dev_and_production_profiles_are_explicit() -> None:
     assert local.data.dataset == "synthetic"
     assert production.data.dataset == "production"
     assert production.model.model_dim == 896
-    assert production.data.schema_version == 4
+    assert production.data.schema_version == 5
 
 
 def test_training_stage_and_objective_must_match() -> None:

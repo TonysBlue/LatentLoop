@@ -66,6 +66,8 @@ class SpeechOverfitDataset:
                 "task_id": f"overfit-task-{episode_index}",
                 "environment_id": "synthetic-test-only",
                 "environment_version": "1",
+                "protocol_version": "realtime-v1",
+                "action_vocabulary_id": "unified-action-v4",
                 "action_schema_version": 4,
             },
             target_speech=target,

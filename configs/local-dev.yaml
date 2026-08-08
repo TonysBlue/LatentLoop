@@ -23,7 +23,7 @@ model:
 data:
   dataset: synthetic
   source: synthetic
-  schema_version: 4
+  schema_version: 5
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
   codec_id: mimi-24khz-8x2048
