@@ -59,6 +59,7 @@ latentloop-model = { workspace = true }
 latentloop-media = { workspace = true }
 latentloop-data = { workspace = true }
 latentloop-runtime = { workspace = true }
+harness = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

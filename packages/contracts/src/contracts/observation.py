@@ -17,6 +17,10 @@ class MicSignal:
             raise ValueError("unsupported microphone encoding")
         if not self.samples:
             raise ValueError("microphone samples are required")
+        bytes_per_sample = 4 if self.encoding == "pcm_f32le" else 2
+        expected = round(self.sample_rate_hz * 0.08) * self.channels * bytes_per_sample
+        if len(self.samples) != expected:
+            raise ValueError("microphone PCM must contain exactly one 80 ms unit")
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +40,12 @@ class ScreenSignal:
             raise ValueError("screen revision must be non-negative")
         if self.pixel_format not in {"rgb24", "rgba32"}:
             raise ValueError("unsupported screen pixel format")
+        if self.valid and not self.image:
+            raise ValueError("valid screen image is required")
+        if self.encoding == "raw" and self.valid:
+            channels = 3 if self.pixel_format == "rgb24" else 4
+            if len(self.image) != self.width * self.height * channels:
+                raise ValueError("raw screen image size does not match its dimensions")
 
 
 @dataclass(frozen=True, slots=True)

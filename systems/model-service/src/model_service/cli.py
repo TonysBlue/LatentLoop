@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from latentloop.codec import CodecIdentity
-from latentloop.codec_worker import CodecWorkerClient
-from latentloop.config import load_config
+from runtime.codec import CodecIdentity
+from runtime.codec_worker import CodecWorkerClient
+from runtime.config import load_config
+
 from model_service.service import ModelService
 from model_service.transport.server import UnixModelServer
 

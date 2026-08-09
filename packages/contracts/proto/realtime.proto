@@ -58,3 +58,22 @@ message ActuationSignal {
   SpeechSignal speech = 3;
   repeated ControlSignal controls = 4;
 }
+
+message EnvironmentReceipt {
+  string session_id = 1;
+  uint64 unit_index = 2;
+  bool accepted = 3;
+  double execution_latency_ms = 4;
+  string safety_violation = 5;
+  bool terminated = 6;
+  string infrastructure_failure = 7;
+}
+
+message RewardBreakdown {
+  double task = 1;
+  double speech_quality = 2;
+  double latency_quality = 3;
+  double action_efficiency = 4;
+  double safety = 5;
+  string spec_id = 6;
+}

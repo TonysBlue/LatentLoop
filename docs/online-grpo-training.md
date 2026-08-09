@@ -2,7 +2,7 @@
 
 > 状态：最终目标强化学习与环境协议
 > 日期：2026-08-08
-> 关联文档：[统一三阶段训练架构](three-stage-training.md) · [统一电脑动作输出协议](unified-action.md)
+> 关联文档：[统一三阶段训练架构](three-stage-training.md) · [统一电脑动作输出协议](unified-action.md) · [物理 Rollout 闭环](protocols/physical-rollout.md)
 
 ## 1. 环境选择
 
@@ -16,21 +16,21 @@ Canary、Pilot、Production 全部使用同一种真实隔离电脑环境。环�
 
 ## 2. 环境协议
 
-环境客户端提供以下语义：
+Harness control client 提供以下语义：
 
 ```text
 identity() -> EnvironmentIdentity
-reset(task_id, seed) -> Observation
-submit_unit(task_id, unit_index, speech_mode, speech_codes, action_tokens)
-    -> Observation + EnvironmentReceipt
-evaluate(task_id) -> RewardBreakdown
-close()
+reset(task_id, seed, session_id) -> ObservationSignal
+apply(session_id, unit_index, ActuationSignal)
+    -> ObservationSignal + EnvironmentReceipt
+evaluate(task_id, session_id) -> RewardBreakdown
+close(session_id)
 ```
 
 `EnvironmentIdentity` 包含 environment ID、version、protocol version 和 action vocabulary
-identity。连接、reset 和每次 submit 都必须校验 session/task/unit 顺序。
+identity。连接、reset 和每次 apply 都必须校验 session/task/unit 顺序。
 
-模型可见的 `Observation` 仅包含：
+模型可见的 `ObservationSignal` 仅包含：
 
 ```text
 timestamp_ms
@@ -39,8 +39,10 @@ mixed_microphone[1920]
 screen[3,H,W]
 screen_valid
 screen_revision
-terminated
 ```
+
+是否继续 rollout 由 Harness receipt 的 `terminated` 控制字段表示；它不属于模型物理
+输入，也不携带任务成功原因。
 
 `terminated` 只表示 episode 是否结束，不透露成功原因。task success、评分器内部状态、
 权限判断和隐藏 UI 元数据只能进入训练侧 receipt/reward 记录，不能拼进下一 unit 输入。

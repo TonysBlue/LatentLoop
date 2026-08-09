@@ -4,3 +4,4 @@ protocol_version: realtime-v1
 base_image: ~/latentloop-data/assets/images/production-base.qcow2
 runtime_root: ~/latentloop-data/runtime/production/qemu
 model_service_socket: ~/latentloop-data/runtime/production/model-service.sock
+control_socket: ~/latentloop-data/runtime/production/harness-control.sock

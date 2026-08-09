@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 import torch
 from accelerate import Accelerator
+from training.physical_rollout import PhysicalRolloutClient, observation_to_stream_unit
 
 from latentloop.action_tokens import ACTION_VOCABULARY_ID
 from latentloop.checkpoint import (
@@ -25,12 +26,7 @@ from latentloop.checkpoint import (
 from latentloop.config import ProjectConfig
 from latentloop.data import EpisodeShardReader, SyntheticEpisodeDataset
 from latentloop.data.curation.readiness import check_readiness
-from latentloop.environment import (
-    EnvironmentIdentity,
-    Observation,
-    UnixSocketEnvironmentClient,
-    validate_observation,
-)
+from latentloop.environment import Observation, validate_observation
 from latentloop.grpo import compute_group_advantages, grpo_loss
 from latentloop.losses import compute_losses
 from latentloop.model import StreamingLatentLoop
@@ -716,9 +712,6 @@ def train_online_grpo(
     task_manifest = config.training.rl.task_manifest
     if not task_manifest:
         raise ValueError("Online GRPO requires training.rl.task_manifest")
-    socket_path = Path(config.training.rl.environment_socket or "").expanduser()
-    if not socket_path.is_socket():
-        raise ValueError(f"Online GRPO environment socket is unavailable: {socket_path}")
     tasks = _task_ids(task_manifest)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     policy = model or StreamingLatentLoop(config.model)
@@ -742,16 +735,6 @@ def train_online_grpo(
     )
     manager = CheckpointManager(config.runtime.root_path() / "checkpoints")
     train_state: dict[str, Any] = {"update": 0, "consumed_units": 0}
-    expected_identity = EnvironmentIdentity(
-        config.training.rl.environment_id,
-        config.training.rl.environment_version,
-        config.training.rl.environment_protocol_version,
-        ACTION_VOCABULARY_ID,
-    )
-
-    def factory() -> UnixSocketEnvironmentClient:
-        return UnixSocketEnvironmentClient(str(socket_path), expected_identity)
-
     sampling = SpeechSamplingConfig(
         temperature=config.training.rl.sampling_temperature,
         top_k=config.training.rl.sampling_top_k,
@@ -778,8 +761,21 @@ def train_online_grpo(
             rollouts: list[dict[str, Any]] = []
             rewards: list[float] = []
             for _rollout_index in range(config.training.rl.group_size):
-                env = factory()
-                observation = env.reset(task_id, seed)
+                env = PhysicalRolloutClient(config)
+                session_id = (
+                    f"grpo-{train_state['update']}-{group_index}-{_rollout_index}"
+                )
+                identity = env.identity()
+                if (
+                    identity.get("environment_id") != config.training.rl.environment_id
+                    or identity.get("environment_version")
+                    != config.training.rl.environment_version
+                    or identity.get("protocol_version")
+                    != config.training.rl.environment_protocol_version
+                    or identity.get("action_vocabulary_id") != ACTION_VOCABULARY_ID
+                ):
+                    raise ValueError("Harness environment identity does not match configuration")
+                observation = env.reset(task_id, seed, session_id)
                 policy_state = policy.initial_state(1, device)
                 reference_state = reference.initial_state(1, device)
                 observations: list[Observation] = []
@@ -790,10 +786,8 @@ def train_online_grpo(
                 ref_list: list[torch.Tensor] = []
                 mask_list: list[torch.Tensor] = []
                 try:
-                    for unit_index in range(config.training.rl.rollout_horizon_units):
-                        if observation.terminated:
-                            break
-                        unit = _observation_unit(observation, config).to(device)
+                    for _unit_index in range(config.training.rl.rollout_horizon_units):
+                        unit = observation_to_stream_unit(observation, config).to(device)
                         with torch.no_grad():
                             generated = policy.generate_step(unit, policy_state, sampling)
                             policy_state = generated.output.state
@@ -817,11 +811,19 @@ def train_online_grpo(
                             ref_values = _sample_logprob(ref_output, mode, codes, actions).squeeze(
                                 0
                             )
-                        next_observation, receipt = env.submit_unit(
-                            task_id, unit_index, int(mode.item()), codes, actions
+                        next_observation, receipt, _output = env.step(
+                            observation, mode, codes, actions
                         )
+                        if receipt.infrastructure_failure:
+                            raise RuntimeError(
+                                "physical rollout infrastructure failure: "
+                                f"{receipt.infrastructure_failure}"
+                            )
                         if not receipt.accepted:
-                            break
+                            raise RuntimeError(
+                                "physical rollout action rejected: "
+                                f"{receipt.safety_violation or 'unknown'}"
+                            )
                         observations.append(observation)
                         modes.append(mode.cpu())
                         codes_list.append(codes.cpu())
@@ -831,6 +833,8 @@ def train_online_grpo(
                         mask_list.append(old_mask.cpu())
                         train_state["consumed_units"] += 1
                         observation = next_observation
+                        if receipt.terminated:
+                            break
                     breakdown = env.evaluate(task_id)
                     rewards.append(breakdown.total)
                     rollouts.append(
@@ -865,7 +869,7 @@ def train_online_grpo(
                     rollout["masks"],
                     strict=True,
                 ):
-                    unit = _observation_unit(observation, config).to(device)
+                    unit = observation_to_stream_unit(observation, config).to(device)
                     output = policy.forward_step(
                         unit,
                         state,

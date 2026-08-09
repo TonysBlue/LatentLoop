@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 
+from runtime.config import load_config
+
+from data.curation import check_readiness
 from data.migrate import migrate_manifest_v4_to_v5
-from latentloop.config import load_config
-from latentloop.data.curation import check_readiness
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -20,8 +20,15 @@ from contracts.realtime_pb2 import (
     ControlSignal as ControlMessage,
 )
 from contracts.realtime_pb2 import (
+    EnvironmentReceipt as ReceiptMessage,
+)
+from contracts.realtime_pb2 import (
     ObservationSignal as ObservationMessage,
 )
+from contracts.realtime_pb2 import (
+    RewardBreakdown as RewardMessage,
+)
+from contracts.receipt import EnvironmentReceipt, RewardBreakdown
 
 
 def _set_optional(message: Any, field: str, value: Any) -> None:
@@ -135,6 +142,54 @@ def message_to_actuation(payload: bytes) -> ActuationSignal:
             silent=message.speech.silent,
         ),
         controls=tuple(_message_to_control(control) for control in message.controls),
+    )
+
+
+def receipt_to_payload(value: EnvironmentReceipt) -> bytes:
+    return ReceiptMessage(
+        session_id=value.session_id,
+        unit_index=value.unit_index,
+        accepted=value.accepted,
+        execution_latency_ms=value.execution_latency_ms,
+        safety_violation=value.safety_violation or "",
+        terminated=value.terminated,
+        infrastructure_failure=value.infrastructure_failure or "",
+    ).SerializeToString()
+
+
+def payload_to_receipt(payload: bytes) -> EnvironmentReceipt:
+    message = ReceiptMessage.FromString(payload)
+    return EnvironmentReceipt(
+        session_id=message.session_id,
+        unit_index=message.unit_index,
+        accepted=message.accepted,
+        execution_latency_ms=message.execution_latency_ms,
+        safety_violation=message.safety_violation or None,
+        terminated=message.terminated,
+        infrastructure_failure=message.infrastructure_failure or None,
+    )
+
+
+def reward_to_payload(value: RewardBreakdown) -> bytes:
+    return RewardMessage(
+        task=value.task,
+        speech_quality=value.speech_quality,
+        latency_quality=value.latency_quality,
+        action_efficiency=value.action_efficiency,
+        safety=value.safety,
+        spec_id=value.spec_id,
+    ).SerializeToString()
+
+
+def payload_to_reward(payload: bytes) -> RewardBreakdown:
+    message = RewardMessage.FromString(payload)
+    return RewardBreakdown(
+        task=message.task,
+        speech_quality=message.speech_quality,
+        latency_quality=message.latency_quality,
+        action_efficiency=message.action_efficiency,
+        safety=message.safety,
+        spec_id=message.spec_id or "realtime-v1",
     )
 
 

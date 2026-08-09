@@ -5,11 +5,16 @@ this package boundary, so they cannot accidentally acquire device or reward
 dependencies.
 """
 
-from latentloop.model import FactorizedSpeechHead, StreamingLatentLoop
-from latentloop.model.action import ActionHead
-from latentloop.types import (
+from model.action import ActionHead
+from model.core import FactorizedSpeechHead, StreamingLatentLoop
+from model.types import (
+    ActionLocalState,
+    ActionType,
+    Episode,
     GenerationOutput,
+    LayerKV,
     RecurrentState,
+    SpeechLocalState,
     SpeechMode,
     SpeechSamplingConfig,
     StepOutput,
@@ -17,6 +22,7 @@ from latentloop.types import (
 )
 
 __all__ = [
-    "ActionHead", "FactorizedSpeechHead", "GenerationOutput", "RecurrentState", "SpeechMode",
+    "ActionHead", "ActionLocalState", "ActionType", "Episode", "FactorizedSpeechHead",
+    "GenerationOutput", "LayerKV", "RecurrentState", "SpeechLocalState", "SpeechMode",
     "SpeechSamplingConfig", "StepOutput", "StreamUnit", "StreamingLatentLoop",
 ]

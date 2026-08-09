@@ -70,10 +70,11 @@ training:
     rollout_horizon_units: 750
     groups_per_update: 1
     environment_workers: 8
-    environment_socket: ~/latentloop-data/runtime/production/environment.sock
+    environment_socket: ~/latentloop-data/runtime/production/harness-control.sock
+    codec_socket: ~/latentloop-data/runtime/sockets/mimi.sock
     environment_id: isolated-desktop-v1
     environment_version: "1"
-    environment_protocol_version: "1"
+    environment_protocol_version: realtime-v1
     task_manifest: ~/latentloop-data/datasets/production/v1/rl/tasks.jsonl
     reward_spec_id: realtime-v1
     sampling_temperature: 0.8

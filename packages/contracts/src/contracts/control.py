@@ -73,6 +73,12 @@ class SpeechSignal:
             raise ValueError("speech output must be 24 kHz mono")
         if not self.pcm:
             raise ValueError("speech PCM is required")
+        if self.encoding not in {"pcm_f32le", "pcm_s16le"}:
+            raise ValueError("unsupported speech encoding")
+        bytes_per_sample = 4 if self.encoding == "pcm_f32le" else 2
+        expected = round(self.sample_rate_hz * 0.08) * self.channels * bytes_per_sample
+        if len(self.pcm) != expected:
+            raise ValueError("speech PCM must contain exactly one 80 ms unit")
 
 
 @dataclass(frozen=True, slots=True)

@@ -81,6 +81,11 @@ class ActionHead(nn.Module):
         output_logits = torch.stack(logits, dim=1)
         output_tokens = torch.stack(tokens, dim=1)
         output_mask = torch.stack(masks, dim=1)
+        output_tokens = torch.where(
+            output_mask,
+            output_tokens,
+            torch.full_like(output_tokens, int(ActionToken.PAD)),
+        )
         next_state = ActionLocalState(current, previous, active, event_type, burst_count)
         return output_logits, output_tokens, next_state, output_mask
 

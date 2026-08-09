@@ -3,23 +3,20 @@ from __future__ import annotations
 import io
 import threading
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import torch
 from contracts import (
     ActuationSignal,
-    ControlSignal,
     ObservationSignal,
     SpeechSignal,
-    decode_action_tokens,
 )
 from model import StreamingLatentLoop
+from model.types import SpeechMode, SpeechSamplingConfig, StreamUnit
 from PIL import Image
-
-from latentloop.action_tokens import ActionTokenizer
-from latentloop.config import ProjectConfig
-from latentloop.types import SpeechMode, SpeechSamplingConfig, StreamUnit
+from runtime.action import ActionStreamDecoder
+from runtime.config import ProjectConfig
 
 
 @dataclass(slots=True)
@@ -29,6 +26,7 @@ class ModelSession:
     previous_revision: int = -1
     next_unit: int = 0
     speech_active: bool = False
+    action_decoder: ActionStreamDecoder = field(default_factory=ActionStreamDecoder)
 
 
 class ModelService:
@@ -53,10 +51,6 @@ class ModelService:
         self.model.eval()
         self._sessions: dict[str, ModelSession] = {}
         self._lock = threading.RLock()
-        self._action_tokenizer = ActionTokenizer(
-            config.model.max_action_duration_ms,
-            config.model.action_burst_tokens,
-        )
         self._speech_decoder = speech_decoder
 
     def identity(self) -> dict[str, str]:
@@ -170,19 +164,18 @@ class ModelService:
                 values = waveform.detach().cpu().float().reshape(-1).numpy()
                 if values.size != self.config.data.unit_audio_samples:
                     raise RuntimeError("speech codec decoder returned an invalid PCM unit")
+                if not np.isfinite(values).all() or np.max(np.abs(values)) > 1.0:
+                    raise RuntimeError("speech codec decoder returned invalid PCM values")
                 speech = SpeechSignal(values.tobytes(), silent=False)
                 session.speech_active = True
             tokens = generated.action_tokens[0].detach().cpu().tolist()
-            controls: tuple[ControlSignal, ...] = ()
-            if tokens and tokens[-1] == 1:
-                controls = decode_action_tokens(
-                    tokens,
-                    event_id=f"{observation.session_id}-{observation.unit_index}",
-                ).controls
-                controls = tuple(
-                    replace(control, screen_revision=observation.screen.revision)
-                    for control in controls
-                )
+            controls = session.action_decoder.push(
+                tokens, event_id=f"{observation.session_id}-{observation.unit_index}"
+            )
+            controls = tuple(
+                replace(control, screen_revision=observation.screen.revision)
+                for control in controls
+            )
             return ActuationSignal(
                 observation.session_id,
                 observation.unit_index,

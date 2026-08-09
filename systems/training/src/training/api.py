@@ -1,14 +1,9 @@
-"""Training System API.
-
-The legacy tensor implementation remains the source of the shared optimizer
-until its files are physically relocated; this package is the only public
-system entry point and exposes the full Pretrain/SFT/Online-GRPO dispatcher.
-"""
+"""Training System API for Pretrain, SFT, and Online GRPO."""
 
 from __future__ import annotations
 
-from latentloop.recipe import run_recipe as _run_recipe
-from latentloop.training import train as _train
+from training.recipe import run_recipe as _run_recipe
+from training.training import train as _train
 
 
 def run(config, **kwargs):

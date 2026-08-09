@@ -111,15 +111,18 @@ stage-specific implementation or fixture fallback is part of a formal run.
   TBPTT, checkpoint lineage, metrics, and validation/test orchestration.
 - `packages/data/src/data/`: synthetic data, WebDataset readers, trajectory
   schema, speech import, codec targets, and curation APIs.
-- `src/latentloop/` is the migration source for the shared implementation and
-  is not a runtime system boundary.
+- `src/latentloop/` is retained only as a compatibility surface for existing
+  local tests and legacy CLI calls; it is not a runtime system boundary and
+  must not be imported by `packages/*` or `systems/*`. New implementation
+  changes belong in the formal workspace package that owns the concern.
 - `packages/data/src/data/curation/`: source locks, manifests, synthesis,
   audits, Mimi checks, readiness, and encoded shard preparation.
-- `src/latentloop/evaluation.py`: shared validation/test evaluation and
-  lineage-bearing reports.
-- `src/latentloop/checkpoint.py`: atomic checkpoint save/load and identity
-  validation. Do not bypass it for normal training.
-- `src/latentloop/tracking.py`: W&B Local/online/offline integration.
+- `systems/training/src/training/evaluation.py`: shared validation/test
+  evaluation and lineage-bearing reports.
+- `systems/training/src/training/checkpoint.py`: atomic checkpoint save/load
+  and identity validation. Do not bypass it for normal training.
+- `systems/training/src/training/tracking.py`: W&B Local/online/offline
+  integration.
 - `configs/`: model/data/training profiles, stage configs, and recipes.
 - `scripts/`: thin, fail-fast wrappers around `uv run` commands and workers.
 - `tools/`: external adapters and dataset utilities. Keep external model

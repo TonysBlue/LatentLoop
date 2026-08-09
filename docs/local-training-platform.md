@@ -67,15 +67,17 @@ codec worker health 和 identity 校验通过
 LatentLoop/
 ├── configs/
 ├── docs/
+├── packages/
+│   ├── contracts/     # 物理信号与控制面 protobuf/类型
+│   ├── model/         # Model Core：Z/H/KV、Speech Head、Action Head
+│   ├── media/         # PCM 与媒体时钟校验
+│   ├── data/          # episode、WebDataset、curation、readiness
+│   └── runtime/       # 配置、codec worker、action continuation
+├── systems/
+│   ├── model-service/ # ObservationSignal -> ActuationSignal 推理边界
+│   ├── training/      # Pretrain/SFT/Online GRPO、checkpoint、评估
+│   └── harness/       # QEMU/KVM、采集、执行、receipt/reward
 ├── scripts/
-├── src/latentloop/
-│   ├── data/
-│   ├── model/
-│   ├── checkpoint.py
-│   ├── losses.py
-│   ├── recipe.py
-│   ├── training.py
-│   └── tracking.py
 └── tests/
 
 ~/latentloop-data/

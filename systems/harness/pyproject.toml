@@ -2,7 +2,7 @@
 name = "harness"
 version = "0.1.0"
 requires-python = ">=3.11,<3.12"
-dependencies = ["latentloop-contracts", "numpy>=1.26,<3"]
+dependencies = ["latentloop-contracts", "numpy>=1.26,<3", "omegaconf>=2.3,<3"]
 
 [project.scripts]
 harness = "harness.cli:main"

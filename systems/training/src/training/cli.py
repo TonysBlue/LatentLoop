@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import argparse
 
-from latentloop.config import load_config
+from runtime.config import load_config
+
 from training.api import run, run_recipe
 
 

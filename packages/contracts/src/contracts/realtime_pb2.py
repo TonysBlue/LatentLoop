@@ -89,6 +89,21 @@ def _build() -> tuple[object, tuple[object, ...]]:
     act.field[-1].type_name = ".latentloop.realtime.v1.SpeechSignal"
     _field(act, "controls", 4, t.TYPE_MESSAGE, label=t.LABEL_REPEATED)
     act.field[-1].type_name = ".latentloop.realtime.v1.ControlSignal"
+    receipt = file.message_type.add(name="EnvironmentReceipt")
+    _field(receipt, "session_id", 1, t.TYPE_STRING)
+    _field(receipt, "unit_index", 2, t.TYPE_UINT64)
+    _field(receipt, "accepted", 3, t.TYPE_BOOL)
+    _field(receipt, "execution_latency_ms", 4, t.TYPE_DOUBLE)
+    _field(receipt, "safety_violation", 5, t.TYPE_STRING)
+    _field(receipt, "terminated", 6, t.TYPE_BOOL)
+    _field(receipt, "infrastructure_failure", 7, t.TYPE_STRING)
+    reward = file.message_type.add(name="RewardBreakdown")
+    _field(reward, "task", 1, t.TYPE_DOUBLE)
+    _field(reward, "speech_quality", 2, t.TYPE_DOUBLE)
+    _field(reward, "latency_quality", 3, t.TYPE_DOUBLE)
+    _field(reward, "action_efficiency", 4, t.TYPE_DOUBLE)
+    _field(reward, "safety", 5, t.TYPE_DOUBLE)
+    _field(reward, "spec_id", 6, t.TYPE_STRING)
     pool = descriptor_pool.Default()
     try:
         descriptor = pool.Add(file)
@@ -101,6 +116,8 @@ def _build() -> tuple[object, tuple[object, ...]]:
         "ControlSignal",
         "SpeechSignal",
         "ActuationSignal",
+        "EnvironmentReceipt",
+        "RewardBreakdown",
     )
     return descriptor, tuple(
         GetMessageClass(descriptor.message_types_by_name[name]) for name in names
@@ -115,10 +132,12 @@ DESCRIPTOR, _MESSAGE_CLASSES = _build()
     ControlSignal,
     SpeechSignal,
     ActuationSignal,
+    EnvironmentReceipt,
+    RewardBreakdown,
 ) = _MESSAGE_CLASSES
 
 __all__ = [
     "DESCRIPTOR",
     "MicPcm", "ScreenFrame", "ObservationSignal", "ControlSignal", "SpeechSignal",
-    "ActuationSignal",
+    "ActuationSignal", "EnvironmentReceipt", "RewardBreakdown",
 ]
