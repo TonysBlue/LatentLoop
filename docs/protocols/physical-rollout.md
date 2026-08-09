@@ -49,5 +49,22 @@ NOOP executor 或 fixture reward。
 泄漏 backend、重复 reset 关闭旧 backend、未知 session、错序 unit、错 session、过期 screen
 revision、backend 返回错误 identity、server shutdown 清理全部 session，以及 receipt/reward
 protobuf round-trip。QEMU 生命周期测试使用可控假进程和 QMP server 验证唯一 overlay、readiness、
-崩溃诊断和资源回收；端到端 Online GRPO 测试使用 fake codec 与实现同一严格协议的 Harness，
-验证环境只收到 ActuationSignal，reward/receipt 只进入训练 trace。
+崩溃诊断和资源回收。
+
+端到端 Online GRPO 测试使用 fake codec worker 与实现同一严格协议的进程内 Harness，但调用
+正式 `train_online_grpo` 和 `PhysicalRolloutClient`。测试固定 `group_size=2`，构造有方差的
+evaluator reward，至少完成一次 optimizer update。它必须断言：
+
+1. speech token 经正式 worker 解码为恰好一个 80 ms PCM，action continuation 解码为
+   `ControlSignal`，Harness 收不到 raw token 数组。
+2. reset、apply、receipt 和下一轮 observation 的 session/unit/screen revision 严格递增，
+   speech PCM 与 action 均经过 protobuf round-trip。
+3. receipt/reward、任务成功、DOM 和 evaluator 字段只保存在 rollout trace，不能出现在下一
+   轮 `ObservationSignal` 或模型输入张量。
+4. `infrastructure_failure`、设备断连、错序 unit 或 safety reject 不产生 advantage，也不
+   参加策略梯度；只有完成且 identity 正确的 group 才更新。
+5. 更新后的 checkpoint 记录 schema/codec/environment/reward identity、group reward 方差、
+   有效 unit 数和实际 optimizer update。
+
+真实部署验收还要在 QEMU/KVM、SPICE audio/display、QMP input 和外部 evaluator endpoint
+上运行同一矩阵；本机缺少外部设备时必须明确标记未执行，不得用 fixture 结果声称闭环通过。

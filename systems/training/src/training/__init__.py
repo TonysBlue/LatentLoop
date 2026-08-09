@@ -21,4 +21,16 @@ def train(config: Any, **kwargs: Any) -> Any:
     return implementation(config, **kwargs)
 
 
-__all__ = ["run", "run_recipe", "train"]
+def evaluate_checkpoint(config: Any, checkpoint: Any, **kwargs: Any) -> Any:
+    from training.evaluation import evaluate_checkpoint as implementation
+
+    return implementation(config, checkpoint, **kwargs)
+
+
+def evaluate_overfit_checkpoint(config: Any, checkpoint: Any, **kwargs: Any) -> Any:
+    from training.evaluation import evaluate_overfit_checkpoint as implementation
+
+    return implementation(config, checkpoint, **kwargs)
+
+
+__all__ = ["run", "run_recipe", "train", "evaluate_checkpoint", "evaluate_overfit_checkpoint"]

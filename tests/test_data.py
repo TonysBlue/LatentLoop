@@ -4,15 +4,14 @@ from pathlib import Path
 
 import pytest
 import torch
-
-from latentloop.cli import main
-from latentloop.config import ProjectConfig
-from latentloop.data import (
+from data import (
     EpisodeShardReader,
     SyntheticEpisodeDataset,
     load_manifest,
     write_episode_shards,
 )
+from data.cli import main
+from runtime.config import ProjectConfig
 
 
 def test_webdataset_episode_round_trip(tmp_path: Path, smoke_config: ProjectConfig) -> None:

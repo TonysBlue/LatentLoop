@@ -3,11 +3,10 @@ from __future__ import annotations
 import math
 
 import torch
-
-from latentloop.config import ProjectConfig
-from latentloop.data import SyntheticEpisodeDataset
-from latentloop.losses import compute_losses
-from latentloop.model import StreamingLatentLoop
+from data import SyntheticEpisodeDataset
+from model import StreamingLatentLoop
+from model.losses import compute_losses
+from runtime.config import ProjectConfig
 
 
 def test_recurrent_state_is_bounded_and_heads_receive_gradients(

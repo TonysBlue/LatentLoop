@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from latentloop.codec import codec_frame_bounds, codec_frame_mask
+from runtime.codec import codec_frame_bounds, codec_frame_mask
 
 
 def test_codec_timeline_alternates_without_drift() -> None:

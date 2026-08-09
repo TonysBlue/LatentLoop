@@ -10,12 +10,12 @@ resolution-markers = [
 [manifest]
 members = [
     "harness",
-    "latentloop",
     "latentloop-contracts",
     "latentloop-data",
     "latentloop-media",
     "latentloop-model",
     "latentloop-runtime",
+    "latentloop-workspace",
     "model-service",
     "training",
 ]
@@ -464,62 +464,6 @@ wheels = [
 ]
 
 [[package]]
-name = "latentloop"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "accelerate" },
-    { name = "hydra-core" },
-    { name = "numpy" },
-    { name = "safetensors" },
-    { name = "soundfile" },
-    { name = "torch" },
-    { name = "wandb" },
-    { name = "webdataset" },
-]
-
-[package.optional-dependencies]
-minicpm = [
-    { name = "bitsandbytes" },
-    { name = "peft" },
-    { name = "transformers" },
-]
-ray = [
-    { name = "ray", extra = ["data"] },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "accelerate", specifier = "==1.14.0" },
-    { name = "bitsandbytes", marker = "extra == 'minicpm'", specifier = "==0.50.0" },
-    { name = "hydra-core", specifier = "==1.3.4" },
-    { name = "numpy", specifier = ">=1.26,<3" },
-    { name = "peft", marker = "extra == 'minicpm'", specifier = "==0.20.0" },
-    { name = "ray", extras = ["data"], marker = "extra == 'ray'", specifier = "==2.56.1" },
-    { name = "safetensors", specifier = "==0.8.0" },
-    { name = "soundfile", specifier = ">=0.13,<1" },
-    { name = "torch", specifier = "==2.13.0" },
-    { name = "transformers", marker = "extra == 'minicpm'", specifier = "==5.14.1" },
-    { name = "wandb", specifier = "==0.28.1" },
-    { name = "webdataset", specifier = "==1.0.2" },
-]
-provides-extras = ["ray", "minicpm"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.3,<10" },
-    { name = "pytest-cov", specifier = ">=6,<8" },
-    { name = "ruff", specifier = ">=0.11,<1" },
-]
-
-[[package]]
 name = "latentloop-contracts"
 version = "0.1.0"
 source = { editable = "packages/contracts" }
@@ -535,6 +479,7 @@ name = "latentloop-data"
 version = "0.1.0"
 source = { editable = "packages/data" }
 dependencies = [
+    { name = "latentloop-media" },
     { name = "latentloop-model" },
     { name = "latentloop-runtime" },
     { name = "numpy" },
@@ -544,6 +489,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "latentloop-media", editable = "packages/media" },
     { name = "latentloop-model", editable = "packages/model" },
     { name = "latentloop-runtime", editable = "packages/runtime" },
     { name = "numpy", specifier = ">=1.26,<3" },
@@ -594,6 +540,62 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26,<3" },
     { name = "omegaconf", specifier = ">=2.3,<3" },
     { name = "torch", specifier = "==2.13.0" },
+]
+
+[[package]]
+name = "latentloop-workspace"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "accelerate" },
+    { name = "hydra-core" },
+    { name = "numpy" },
+    { name = "safetensors" },
+    { name = "soundfile" },
+    { name = "torch" },
+    { name = "wandb" },
+    { name = "webdataset" },
+]
+
+[package.optional-dependencies]
+minicpm = [
+    { name = "bitsandbytes" },
+    { name = "peft" },
+    { name = "transformers" },
+]
+ray = [
+    { name = "ray", extra = ["data"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", specifier = "==1.14.0" },
+    { name = "bitsandbytes", marker = "extra == 'minicpm'", specifier = "==0.50.0" },
+    { name = "hydra-core", specifier = "==1.3.4" },
+    { name = "numpy", specifier = ">=1.26,<3" },
+    { name = "peft", marker = "extra == 'minicpm'", specifier = "==0.20.0" },
+    { name = "ray", extras = ["data"], marker = "extra == 'ray'", specifier = "==2.56.1" },
+    { name = "safetensors", specifier = "==0.8.0" },
+    { name = "soundfile", specifier = ">=0.13,<1" },
+    { name = "torch", specifier = "==2.13.0" },
+    { name = "transformers", marker = "extra == 'minicpm'", specifier = "==5.14.1" },
+    { name = "wandb", specifier = "==0.28.1" },
+    { name = "webdataset", specifier = "==1.0.2" },
+]
+provides-extras = ["ray", "minicpm"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.3,<10" },
+    { name = "pytest-cov", specifier = ">=6,<8" },
+    { name = "ruff", specifier = ">=0.11,<1" },
 ]
 
 [[package]]

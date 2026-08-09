@@ -10,13 +10,12 @@ import numpy as np
 import pytest
 import soundfile as sf
 import torch
-
-from latentloop.cli import main
-from latentloop.codec import CodecIdentity
-from latentloop.codec_worker import receive_message, send_message
-from latentloop.config import ProjectConfig
-from latentloop.data import EpisodeShardReader, import_speech_manifest, write_episode_shards
-from latentloop.types import SpeechMode
+from data import EpisodeShardReader, import_speech_manifest, write_episode_shards
+from data.cli import main
+from model.types import SpeechMode
+from runtime.codec import CodecIdentity
+from runtime.codec_worker import receive_message, send_message
+from runtime.config import ProjectConfig
 
 
 def _write_audio(path: Path, values: np.ndarray, sample_rate: int) -> None:

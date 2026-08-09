@@ -52,6 +52,7 @@ class ActionHead(nn.Module):
         for index in range(steps):
             candidate = self.decoder(self.token_embedding(previous) + context, current)
             current_logits = self.output(candidate)
+            current_logits = torch.nan_to_num(current_logits, nan=0.0, posinf=30.0, neginf=-30.0)
             logits.append(current_logits)
             if teacher_tokens is not None:
                 token = teacher_tokens[:, index]

@@ -32,18 +32,4 @@ class Rollout:
         return self.reward_breakdown.total
 
 
-@dataclass(slots=True)
-class RolloutGroup:
-    group_id: str
-    task_id: str
-    seed: int
-    rollouts: list[Rollout]
-
-
-def rollout_group(*_args: object, **_kwargs: object) -> RolloutGroup:
-    raise NotImplementedError(
-        "formal rollout uses PhysicalRolloutClient and the shared Online GRPO loop"
-    )
-
-
-__all__ = ["Rollout", "RolloutGroup", "rollout_group"]
+__all__ = ["Rollout"]

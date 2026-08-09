@@ -5,6 +5,7 @@ from data.curation.prepare import (
     check_mimi_decode,
     encode_pilot_shards,
     prepare_pilot_data,
+    rebuild_schema_v5_shards,
 )
 from data.curation.readiness import check_readiness
 from data.curation.synthesis import synthesize_pilot
@@ -18,6 +19,7 @@ __all__ = [
     "check_mimi_decode",
     "check_readiness",
     "encode_pilot_shards",
+    "rebuild_schema_v5_shards",
     "fetch_pilot_data",
     "prepare_pilot_data",
     "select_pilot_voices",

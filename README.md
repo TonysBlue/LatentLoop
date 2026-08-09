@@ -14,17 +14,17 @@ TBPTT、精确断点恢复、WebDataset、CPU-only Ray 任务和 W&B Local。
 
 ```bash
 scripts/bootstrap.sh
-uv run latentloop doctor --config configs/smoke.yaml
+uv run data inspect-model --config configs/smoke.yaml
 uv run pytest
 ```
 
-`doctor` 会在 GPU 上执行 FP16 前向、反向和 `optimizer.step`。三个配置档位的参数量可用
-以下命令确认：
+`data inspect-model` 会验证配置并给出模型参数和 KV 规模。三个配置档位的参数量可用以下
+命令确认；GPU FP16 前反向由测试和正式训练启动门禁验证：
 
 ```bash
-uv run latentloop inspect-model --config configs/smoke.yaml
-uv run latentloop inspect-model --config configs/local-dev.yaml
-uv run latentloop inspect-model --config configs/research-0.2b.yaml
+uv run data inspect-model --config configs/smoke.yaml
+uv run data inspect-model --config configs/local-dev.yaml
+uv run data inspect-model --config configs/research-0.2b.yaml
 ```
 
 当前档位参数量约为 0.0003B、0.0507B 和 0.2424B。0.0507B 与 0.2424B 档位均已在
@@ -36,11 +36,11 @@ RTX 2080 SUPER 8GB 上完成 FP16 反向和 AdamW 更新；实际长期训练仍
 生成并校验合成 WebDataset：
 
 ```bash
-uv run latentloop generate-data \
+uv run data generate-data \
   --config configs/smoke.yaml \
   --output "$HOME/latentloop-data/datasets/generated/train-%06d.tar"
 
-uv run latentloop validate-data \
+uv run data validate-data \
   --config configs/smoke.yaml \
   --shards "$HOME/latentloop-data/datasets/generated/train-*.tar"
 ```
@@ -51,7 +51,7 @@ uv run latentloop validate-data \
 使用 Ray 的 CPU worker 生成数据：
 
 ```bash
-uv run latentloop generate-data \
+uv run data generate-data \
   --config configs/smoke.yaml \
   --output "$HOME/latentloop-data/datasets/generated/train-%06d.tar" \
   --ray
@@ -60,8 +60,8 @@ uv run latentloop generate-data \
 运行 smoke 训练或恢复 checkpoint：
 
 ```bash
-uv run latentloop train --config configs/smoke.yaml
-uv run latentloop train \
+uv run training train --config configs/smoke.yaml
+uv run training train \
   --config configs/smoke.yaml \
   --resume "$HOME/latentloop-data/checkpoints/smoke/step-00000002.pt"
 ```
@@ -81,7 +81,7 @@ scripts/wandb-local.sh status
 
 ```bash
 uv run wandb login --host http://127.0.0.1:8080
-uv run latentloop train \
+uv run training train \
   --config configs/smoke.yaml \
   --set tracking.enabled=true \
   --set tracking.mode=online
@@ -111,10 +111,10 @@ scripts/run-training.sh --recipe configs/recipes/canary.yaml --run-id canary-001
 ```
 
 ```bash
-uv run latentloop fetch-pilot-data --config configs/local-dev.yaml --fixture
-uv run latentloop select-pilot-voices --config configs/local-dev.yaml --fixture
-uv run latentloop build-pilot-text --config configs/local-dev.yaml --dataset canary --fixture
-uv run latentloop synthesize-pilot --config configs/local-dev.yaml --dataset canary --fixture
-uv run latentloop build-pilot-manifest --config configs/local-dev.yaml --dataset canary --fixture
-uv run latentloop audit-pilot-data --config configs/local-dev.yaml --dataset canary --fixture
+uv run data fetch-pilot-data --config configs/local-dev.yaml --fixture
+uv run data select-pilot-voices --config configs/local-dev.yaml --fixture
+uv run data build-pilot-text --config configs/local-dev.yaml --dataset canary --fixture
+uv run data synthesize-pilot --config configs/local-dev.yaml --dataset canary --fixture
+uv run data build-pilot-manifest --config configs/local-dev.yaml --dataset canary --fixture
+uv run data audit-pilot-data --config configs/local-dev.yaml --dataset canary --fixture
 ```

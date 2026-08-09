@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "latentloop"
+name = "latentloop-workspace"
 version = "0.1.0"
 description = "Streaming multimodal latent-memory training research harness"
 readme = "README.md"
@@ -35,10 +35,8 @@ dev = [
 ]
 
 [project.scripts]
-latentloop = "latentloop.cli:main"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/latentloop"]
+data = "data.cli:main"
+training = "training.cli:main"
 
 [tool.uv.workspace]
 members = [
@@ -52,8 +50,10 @@ members = [
   "systems/harness",
 ]
 
+[tool.uv]
+package = false
+
 [tool.uv.sources]
-latentloop = { workspace = true }
 latentloop-contracts = { workspace = true }
 latentloop-model = { workspace = true }
 latentloop-media = { workspace = true }

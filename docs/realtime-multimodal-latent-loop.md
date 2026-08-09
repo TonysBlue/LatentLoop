@@ -517,11 +517,14 @@ runtime_events     播放、执行、丢帧和延迟审计
 
 构造过程中的来源分离、TTS 中间产物、环境参数和任务标签不能作为模型输入。
 
-当前 WebDataset schema version 为 3。一个 episode 由 `meta.json`、`mic.flac`、
+当前 WebDataset schema version 为 5。一个 episode 由 `meta.json`、`mic.flac`、
 `target_speech.flac`、`screen.npz`、`timeline.npz`、`speech_codes.npy` 和
 `turns.json` 组成；timeline 保存 speech mode/mask、codec mask、统一 action
 tokens/mask、时间戳和 screen revision。旧 `controls.npy`、结构化 action JSON、
-memory target 和 schema v1/v2 不属于当前训练协议。
+`controls.json` 和 `receipts.json` 只保存 control-plane 审计，不进入模型输入。旧
+`controls.npy`、memory target 和 schema v1/v2/v3/v4 不属于当前训练协议；旧资产必须
+显式重建为 v5。完整字段、runtime identity 和迁移规则见
+`docs/data/trajectory-schema.md`。
 
 ### 14.2 场景覆盖
 

@@ -104,6 +104,11 @@ class FactorizedSpeechHead(nn.Module):
 
     @staticmethod
     def _sample(logits: Tensor, sampling: SpeechSamplingConfig) -> Tensor:
+        # A physical rollout must never emit an invalid probability tensor. In
+        # addition to making the failure observable in training metrics, this
+        # keeps a transient non-finite activation from crossing the codec
+        # boundary as an arbitrary device-side error.
+        logits = torch.nan_to_num(logits, nan=0.0, posinf=30.0, neginf=-30.0)
         if sampling.greedy or sampling.temperature <= 0:
             return logits.argmax(dim=-1)
         scaled = logits / sampling.temperature

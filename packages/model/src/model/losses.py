@@ -1,14 +1,16 @@
+"""Model output loss helpers shared by supervised Training stages."""
+
 from __future__ import annotations
 
 from torch import Tensor
 from torch.nn import functional as F
 
-from latentloop.types import SpeechMode, StepOutput, StreamUnit
+from model.types import SpeechMode, StepOutput, StreamUnit
 
 
 def _masked_mean(values: Tensor, mask: Tensor) -> Tensor:
-    mask = mask.to(values.dtype)
-    return (values * mask).sum() / mask.sum().clamp_min(1)
+    weights = mask.to(values.dtype)
+    return (values * weights).sum() / weights.sum().clamp_min(1)
 
 
 def compute_losses(
@@ -22,8 +24,7 @@ def compute_losses(
     batch, frames, codebooks, vocab = output.speech_codec_logits.shape
     codec_values = F.cross_entropy(
         output.speech_codec_logits.reshape(batch * frames * codebooks, vocab),
-        target.speech_codes.reshape(-1),
-        reduction="none",
+        target.speech_codes.reshape(-1), reduction="none",
     ).view(batch, frames, codebooks)
     codec_mask = (
         target.speech_codec_mask & target.speech_mode.eq(int(SpeechMode.SPEECH))[:, None]
@@ -31,8 +32,7 @@ def compute_losses(
     codec_loss = _masked_mean(codec_values, codec_mask)
     action_values = F.cross_entropy(
         output.action_logits.reshape(-1, output.action_logits.shape[-1]),
-        target.action_tokens.reshape(-1),
-        reduction="none",
+        target.action_tokens.reshape(-1), reduction="none",
     ).view_as(target.action_tokens)
     action_loss = _masked_mean(action_values, target.action_token_mask)
     total = speech_loss_weight * (mode_loss + codec_loss) + action_loss_weight * action_loss

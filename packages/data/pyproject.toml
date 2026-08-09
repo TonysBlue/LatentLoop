@@ -5,6 +5,7 @@ requires-python = ">=3.11,<3.12"
 dependencies = [
   "latentloop-model",
   "latentloop-runtime",
+  "latentloop-media",
   "numpy>=1.26,<3",
   "soundfile>=0.13,<1",
   "webdataset==1.0.2",

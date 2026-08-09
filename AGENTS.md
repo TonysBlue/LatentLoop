@@ -111,10 +111,9 @@ stage-specific implementation or fixture fallback is part of a formal run.
   TBPTT, checkpoint lineage, metrics, and validation/test orchestration.
 - `packages/data/src/data/`: synthetic data, WebDataset readers, trajectory
   schema, speech import, codec targets, and curation APIs.
-- `src/latentloop/` is retained only as a compatibility surface for existing
-  local tests and legacy CLI calls; it is not a runtime system boundary and
-  must not be imported by `packages/*` or `systems/*`. New implementation
-  changes belong in the formal workspace package that owns the concern.
+- The legacy `src/latentloop/` package and its single-package CLI are removed.
+  Formal imports and commands use `model`, `data`, `runtime`, `training`,
+  `contracts`, `media`, `harness`, and `model-service` workspace boundaries.
 - `packages/data/src/data/curation/`: source locks, manifests, synthesis,
   audits, Mimi checks, readiness, and encoded shard preparation.
 - `systems/training/src/training/evaluation.py`: shared validation/test
@@ -188,7 +187,7 @@ Data preparation is fail-closed:
 
 ```bash
 scripts/prepare-data.sh canary all
-uv run latentloop check-readiness --config configs/canary.yaml
+uv run data check-readiness --config configs/canary.yaml
 ```
 
 Real Canary/Pilot assets must have locked source versions, licenses, archive
@@ -315,8 +314,8 @@ git diff --check
 For configuration or data-contract changes also run:
 
 ```bash
-uv run latentloop inspect-model --config configs/smoke.yaml
-uv run latentloop check-readiness --config configs/canary.yaml
+uv run data inspect-model --config configs/smoke.yaml
+uv run data check-readiness --config configs/canary.yaml
 ```
 
 For a real-data end-to-end regression, use a unique run ID and a small update

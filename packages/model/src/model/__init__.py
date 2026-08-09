@@ -7,6 +7,7 @@ dependencies.
 
 from model.action import ActionHead
 from model.core import FactorizedSpeechHead, StreamingLatentLoop
+from model.losses import compute_losses
 from model.types import (
     ActionLocalState,
     ActionType,
@@ -25,4 +26,5 @@ __all__ = [
     "ActionHead", "ActionLocalState", "ActionType", "Episode", "FactorizedSpeechHead",
     "GenerationOutput", "LayerKV", "RecurrentState", "SpeechLocalState", "SpeechMode",
     "SpeechSamplingConfig", "StepOutput", "StreamUnit", "StreamingLatentLoop",
+    "compute_losses",
 ]

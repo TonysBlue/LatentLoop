@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import torch
-
-from latentloop.grpo import clipped_policy_loss, compute_group_advantages, grpo_loss
+from training.grpo import clipped_policy_loss, compute_group_advantages, grpo_loss
 
 
 def test_group_advantages_are_normalized_and_zero_variance_is_skipped() -> None:

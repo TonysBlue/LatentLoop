@@ -56,7 +56,7 @@ worker。
 长阶段每 30 秒打印一次 elapsed time。阶段失败时，终端会自动打印对应日志的最后 60 行；
 无需重新运行即可定位失败。需要固定日志路径时设置 `CANARY_LOG_DIR=/path/to/logs`。
 
-## 数据准备与训练检查
+## 数据准备、schema v5 重建与训练检查
 
 需要定位问题或观察产物时使用：
 
@@ -64,13 +64,18 @@ worker。
 # 1. 下载并校验真实语料、CosyVoice2 和 SenseVoice
 scripts/prepare-data.sh canary bootstrap
 
-# 2. 规范化、生成计划、CosyVoice2 合成、SenseVoice CER/WER 门禁、构造 manifest
+# 2. 规范化、生成计划、CosyVoice2 合成、SenseVoice CER/WER 门禁、构造 source manifest
 scripts/prepare-data.sh canary prepare
 
-# 3. Mimi decode 门禁、正式审计和三个 split 的 codec 编码
+# 3. 从 source manifest 重建 schema v5 staging shards，Mimi decode 门禁、正式审计和三个 split 的 codec 编码
 scripts/prepare-data.sh canary encode
 
-# 4. 运行完整三阶段的最小闭环并评测 validation/test
+# 4. 对已有旧 processed 资产执行可恢复的 v5 重建（不覆盖旧目录）
+scripts/prepare-data.sh canary rebuild-v5
+scripts/prepare-data.sh pilot rebuild-v5
+scripts/prepare-data.sh production rebuild-v5
+
+# 5. 运行完整三阶段的最小闭环并评测 validation/test
 scripts/run-training.sh --recipe configs/recipes/canary.yaml --run-id canary-001 \
   --set training.max_updates=1 --set training.checkpoint_every=1 \
   --set tracking.mode=offline
@@ -119,6 +124,9 @@ target 或正则项。cosine 学习率最低保持为初始值的 10%。
 评测必须读取到非零 episode 和 speech frame。`training.json` 记录训练耗时、吞吐、显存、
 最后一次训练指标、W&B 实际模式和 run URL。最小闭环只证明真实数据、codec、训练、
 checkpoint 和评测链路可运行；此时 codec accuracy、macro-F1 等质量指标不用于判断收敛。
+
+Pilot 和 Production 使用完全相同的 `rebuild-v5` 路径；Production 必须先提供锁定的真实
+source manifest、任务/evaluator spec 和 Mimi worker。缺少任一外部资产时命令以非零状态退出。
 
 ## 自定义目录
 

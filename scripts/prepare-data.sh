@@ -16,8 +16,8 @@ SCREEN="uv run --project $REPO/tools/curation python $REPO/tools/curation/screen
 TTS="env COSYVOICE_SOCKET=$RUN_DIR/cosyvoice.sock uv run --project $REPO/tools/cosyvoice python $REPO/tools/cosyvoice/adapter.py"
 ASR="env SENSEVOICE_SOCKET=$RUN_DIR/sensevoice.sock uv run --project $REPO/tools/asr python $REPO/tools/asr/adapter.py"
 
-[[ "$DATASET" == canary || "$DATASET" == pilot ]] || {
-  printf 'data preparation currently supports canary or pilot, got %s\n' "$DATASET" >&2
+[[ "$DATASET" == canary || "$DATASET" == pilot || "$DATASET" == production ]] || {
+  printf 'data preparation supports canary, pilot, or production, got %s\n' "$DATASET" >&2
   exit 2
 }
 [[ -f "$CFG" ]] || { printf 'config is absent: %s\n' "$CFG" >&2; exit 2; }
@@ -28,7 +28,7 @@ prepare() {
   "$REPO/scripts/canary-mimi-worker.sh" stop
   "$REPO/scripts/canary-speech-workers.sh" start
   trap '"$REPO/scripts/canary-speech-workers.sh" stop' EXIT
-  uv run latentloop prepare-pilot-data \
+  uv run data prepare-pilot-data \
     --config "$CFG" --root "$ROOT" --dataset "$DATASET" \
     --lock "$LOCK" --download --extract --library "$VOICES" \
     --synth-command "$TTS" --asr-command "$ASR" --model-sha256 "$TTS_HASH" \
@@ -43,12 +43,24 @@ encode() {
   "$REPO/scripts/canary-speech-workers.sh" stop
   "$REPO/scripts/canary-mimi-worker.sh" start
   trap '"$REPO/scripts/canary-mimi-worker.sh" stop' EXIT
-  uv run latentloop benchmark-codec \
+  uv run data benchmark-codec \
     --config "$CFG" --socket "$RUN_DIR/mimi.sock" \
     --report "$ROOT/$DATASET/v1/reports/codec-benchmark.json"
   uv run python "$REPO/tools/curation/finalize_data.py" \
     --config "$CFG" --root "$ROOT" --dataset "$DATASET" --socket "$RUN_DIR/mimi.sock"
-  uv run latentloop check-readiness --config "$CFG" --root "$ROOT"
+  uv run data check-readiness --config "$CFG" --root "$ROOT"
+  "$REPO/scripts/canary-mimi-worker.sh" stop
+  trap - EXIT
+}
+
+rebuild_v5() {
+  "$REPO/scripts/download-mimi.sh"
+  "$REPO/scripts/bootstrap-codec.sh"
+  "$REPO/scripts/canary-mimi-worker.sh" start
+  trap '"$REPO/scripts/canary-mimi-worker.sh" stop' EXIT
+  uv run data rebuild-v5 --config "$CFG" --root "$ROOT" --dataset "$DATASET" \
+    --socket "$RUN_DIR/mimi.sock" --activate
+  uv run data check-readiness --config "$CFG" --root "$ROOT"
   "$REPO/scripts/canary-mimi-worker.sh" stop
   trap - EXIT
 }
@@ -57,6 +69,7 @@ case "$ACTION" in
   bootstrap) "$REPO/scripts/bootstrap-canary.sh"; "$REPO/scripts/bootstrap-canary-models.sh" ;;
   prepare) prepare ;;
   encode) encode ;;
+  rebuild-v5) rebuild_v5 ;;
   all) prepare; encode ;;
-  *) printf 'usage: %s {canary|pilot} {bootstrap|prepare|encode|all}\n' "$0" >&2; exit 2 ;;
+  *) printf 'usage: %s {canary|pilot|production} {bootstrap|prepare|encode|rebuild-v5|all}\n' "$0" >&2; exit 2 ;;
 esac

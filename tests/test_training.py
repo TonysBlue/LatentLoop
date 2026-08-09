@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from latentloop.config import ProjectConfig
-from latentloop.data import SyntheticEpisodeDataset, write_episode_shards
-from latentloop.training import train
+from data import SyntheticEpisodeDataset, write_episode_shards
+from runtime.config import ProjectConfig
+from training import train
 
 
 class _RecordingTracker:
@@ -46,7 +46,7 @@ def test_short_training_logs_final_metrics(smoke_config: ProjectConfig, monkeypa
     smoke_config.training.max_updates = 2
     smoke_config.training.log_every = 10
     tracker = _RecordingTracker()
-    monkeypatch.setattr("latentloop.training.Tracker", lambda *args, **kwargs: tracker)
+    monkeypatch.setattr("training.training.Tracker", lambda *args, **kwargs: tracker)
 
     train(smoke_config)
 

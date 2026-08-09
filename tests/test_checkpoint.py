@@ -3,17 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import torch
-
-from latentloop.checkpoint import (
+from data import SyntheticEpisodeDataset
+from model import StreamingLatentLoop
+from model.losses import compute_losses
+from runtime.config import ProjectConfig
+from training.checkpoint import (
     CheckpointManager,
     CheckpointMetadata,
     DataCursor,
     file_sha256,
 )
-from latentloop.config import ProjectConfig
-from latentloop.data import SyntheticEpisodeDataset
-from latentloop.losses import compute_losses
-from latentloop.model import StreamingLatentLoop
 
 
 def test_checkpoint_restores_full_recurrent_step(

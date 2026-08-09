@@ -17,4 +17,4 @@ mkdir -p \
   "${LATENTLOOP_RUNTIME_ROOT:-$STORAGE_ROOT/runtime}"/{sockets,logs} \
   "${LATENTLOOP_TRACKING_ROOT:-$STORAGE_ROOT/tracking}"/wandb \
   "$STORAGE_ROOT/archive" "$STORAGE_ROOT/backups"
-uv run latentloop inspect-model --config configs/smoke.yaml
+uv run data inspect-model --config configs/smoke.yaml

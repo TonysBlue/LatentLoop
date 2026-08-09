@@ -3,13 +3,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from latentloop.config import load_config
-from latentloop.data.curation.audit import audit_pilot_data
-from latentloop.data.curation.prepare import (
+from data.curation.audit import audit_pilot_data
+from data.curation.prepare import (
     check_mimi_decode,
     codec_client,
     encode_pilot_shards,
 )
+from runtime.config import load_config
 
 
 def main() -> None:

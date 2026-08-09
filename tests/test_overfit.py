@@ -4,13 +4,12 @@ from dataclasses import asdict
 from pathlib import Path
 
 import torch
-
-from latentloop.checkpoint import CheckpointMetadata, file_sha256
-from latentloop.config import ProjectConfig
-from latentloop.data import SpeechOverfitDataset, write_episode_shards
-from latentloop.evaluation import evaluate_overfit_checkpoint
-from latentloop.model import StreamingLatentLoop
-from latentloop.types import SpeechMode
+from data import SpeechOverfitDataset, write_episode_shards
+from model import StreamingLatentLoop
+from model.types import SpeechMode
+from runtime.config import ProjectConfig
+from training.checkpoint import CheckpointMetadata, file_sha256
+from training.evaluation import evaluate_overfit_checkpoint
 
 
 def test_speech_overfit_fixture_has_expected_timeline(

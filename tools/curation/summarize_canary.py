@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from latentloop.data.curation.common import dataset_path, registry_path
+from data.curation.common import dataset_path, registry_path
 
 
 def read_json(path: Path) -> dict[str, Any]:

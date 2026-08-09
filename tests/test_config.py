@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import pytest
-
-from latentloop.config import load_config
+from runtime.config import load_config
 
 
 def test_load_config_with_override() -> None:

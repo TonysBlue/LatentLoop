@@ -1,33 +1,19 @@
 from __future__ import annotations
 
 import pytest
-import torch
-
-from latentloop.environment import (
-    EnvironmentIdentity,
-    Observation,
-    RewardBreakdown,
-    validate_observation,
-)
+from contracts import MicSignal, ObservationSignal, ProtocolIdentity, RewardBreakdown, ScreenSignal
 
 
 def test_observation_cannot_contain_privileged_reward_fields() -> None:
-    observation = Observation(
-        timestamp_ms=0,
-        delta_ms=80,
-        mixed_microphone=torch.zeros(1920),
-        screen=torch.zeros(3, 4, 4),
-        screen_valid=True,
-        screen_revision=0,
-        terminated=False,
+    observation = ObservationSignal(
+        "session", 0, 0, 80, MicSignal(b"x" * 7680), ScreenSignal(b"x" * 48, 4, 4, 0)
     )
-    validate_observation(observation, audio_samples=1920)
     assert not hasattr(observation, "task_success")
 
 
 def test_environment_identity_requires_action_vocabulary() -> None:
-    with pytest.raises(ValueError, match="action vocabulary"):
-        EnvironmentIdentity("desktop", "1", "1", "")
+    with pytest.raises(ValueError, match="protocol identity"):
+        ProtocolIdentity(action_vocabulary_id="")
 
 
 def test_reward_breakdown_has_fixed_components() -> None:

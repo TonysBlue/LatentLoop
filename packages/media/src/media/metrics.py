@@ -1,12 +1,13 @@
+"""Codec and streaming audio metrics owned by the Media package."""
+
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
 
 import torch
+from runtime.codec_worker import CodecWorkerClient
 from torch import Tensor
-
-from latentloop.codec_worker import CodecWorkerClient
 
 
 def codec_accuracy(logits: Tensor, targets: Tensor, mask: Tensor) -> Tensor:
@@ -43,8 +44,7 @@ def benchmark_decoder(
     if codes.ndim != 3 or codes.shape[1:] != (client.identity.codebooks, 1):
         raise ValueError("benchmark codes must have shape [frames, codebooks, 1]")
     client.reset(f"{session_id}-warmup", replay=False)
-    warmup_frames = min(3, len(codes))
-    for index in range(warmup_frames):
+    for index in range(min(3, len(codes))):
         client.decode_step(codes[index : index + 1], f"{session_id}-warmup")
     client.reset(session_id, replay=False)
     latencies: list[float] = []

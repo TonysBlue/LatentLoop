@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 from pathlib import Path
 
 from omegaconf import OmegaConf
@@ -10,18 +9,19 @@ from harness.environment.qemu import QemuBackend, QemuConfig
 from harness.transport.control import HarnessControlServer
 
 
-def _load_backend(config_path: Path, adapter_module: str):
+def _load_backend(config_path: Path, adapter_module: str | None = None):
     config = OmegaConf.to_container(OmegaConf.load(config_path), resolve=True)
     if not isinstance(config, dict):
         raise ValueError("Harness service config must be a mapping")
-    module = importlib.import_module(adapter_module)
+    module_name = adapter_module or "harness.deployment.qemu"
+    module = __import__(module_name, fromlist=["create_backend"])
     if hasattr(module, "create_backend"):
         backend = module.create_backend(config)
-        _validate_backend(backend, adapter_module)
+        _validate_backend(backend, module_name)
         return backend
     if not hasattr(module, "create_adapters"):
         raise RuntimeError(
-            f"adapter module {adapter_module!r} must expose create_backend(config) "
+            f"adapter module {module_name!r} must expose create_backend(config) "
             "or create_adapters(config)"
         )
     sensor, actuator, evaluator = module.create_adapters(config)
@@ -46,11 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="harness")
     parser.add_argument("command", choices=("serve",))
     parser.add_argument("--config", required=True)
-    parser.add_argument(
-        "--adapter-module",
-        required=True,
-        help="deployment module exposing create_backend(config) or create_adapters(config)",
-    )
+    parser.add_argument("--adapter-module", help="test-only deployment module override")
     parser.add_argument("--socket", help="override control socket path")
     args = parser.parse_args(argv)
     config = Path(args.config).expanduser()

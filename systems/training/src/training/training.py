@@ -16,7 +16,7 @@ from accelerate import Accelerator
 from contracts import ObservationSignal
 from data import EpisodeShardReader, SyntheticEpisodeDataset
 from data.curation.readiness import check_readiness
-from model import StreamingLatentLoop
+from model import StreamingLatentLoop, compute_losses
 from model.action_tokens import ACTION_VOCABULARY_ID
 from model.types import Episode, RecurrentState, SpeechSamplingConfig, StreamUnit
 from runtime.config import ProjectConfig
@@ -29,7 +29,6 @@ from training.checkpoint import (
     file_sha256,
 )
 from training.grpo import compute_group_advantages, grpo_loss
-from training.losses import compute_losses
 from training.physical_rollout import PhysicalRolloutClient, observation_to_stream_unit
 from training.tracking import Tracker
 

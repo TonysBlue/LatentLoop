@@ -171,6 +171,8 @@ class QemuBackend(ComputerBackend):
             self.observation_factory.close()
         if hasattr(self.executor, "close"):
             self.executor.close()
+        if hasattr(self.evaluator, "close"):
+            self.evaluator.close()
 
     def _terminate_process(self) -> None:
         process, self.process = self.process, None

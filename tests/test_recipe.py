@@ -4,9 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-
-from latentloop.config import load_config
-from latentloop.recipe import load_recipe, run_recipe
+from runtime.config import load_config
+from training.recipe import load_recipe, run_recipe
 
 
 @dataclass
@@ -97,9 +96,9 @@ def test_recipe_chains_stage_checkpoint_and_evaluates(
             "tracking": {},
         }
 
-    monkeypatch.setattr("latentloop.recipe.train", fake_train)
+    monkeypatch.setattr("training.recipe.train", fake_train)
     monkeypatch.setattr(
-        "latentloop.recipe.evaluate_checkpoint",
+        "training.recipe.evaluate_checkpoint",
         lambda config, checkpoint, split: _Result(split),
     )
 
@@ -141,7 +140,7 @@ def test_recipe_run_id_isolated_and_resume_validates_checkpoint(
         checkpoint.write_bytes(b"checkpoint")
         return {"train_state": {"update": 1}, "metrics": {}, "tracking": {}}
 
-    monkeypatch.setattr("latentloop.recipe.train", fake_train)
+    monkeypatch.setattr("training.recipe.train", fake_train)
     first = run_recipe(recipe, run_id="one")
     second = run_recipe(recipe, run_id="two")
     assert first["run_id"] == "one"
@@ -175,7 +174,7 @@ def test_recipe_rejects_mismatched_existing_checkpoint(
     checkpoint.parent.mkdir(parents=True)
     checkpoint.write_bytes(b"wrong")
     monkeypatch.setattr(
-        "latentloop.recipe.train", lambda *args, **kwargs: pytest.fail("must reject")
+        "training.recipe.train", lambda *args, **kwargs: pytest.fail("must reject")
     )
     with pytest.raises(ValueError, match="does not match"):
         run_recipe(recipe, run_id="run")

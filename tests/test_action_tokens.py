@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import pytest
-
-from latentloop.action_tokens import ActionEvent, ActionTokenizer
-from latentloop.types import ActionType
+from model.action_tokens import ActionEvent, ActionTokenizer
+from model.types import ActionType
 
 
 @pytest.mark.parametrize(

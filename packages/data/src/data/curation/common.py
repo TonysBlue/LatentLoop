@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-DATASETS = ("canary", "pilot")
+DATASETS = ("canary", "pilot", "production")
 DATASET_VERSION = "v1"
 SPLITS = ("train", "validation", "test")
 CATEGORIES = ("public_speech", "synthetic_dialogue", "adjacent_turns", "screen_task")

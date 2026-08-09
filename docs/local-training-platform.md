@@ -265,7 +265,7 @@ Production-compatible profile 使用生产 codec、schema、action vocabulary、
 
 ### 9.1 WebDataset episode
 
-schema version 为 3。每个 episode 主要保存：
+schema version 为 5。每个 episode 主要保存：
 
 ```text
 meta.json
@@ -277,7 +277,8 @@ speech_codes.npy
 turns.json
 ```
 
-训练协议不读取旧 `controls.npy`、memory target 或 schema 1/2。
+训练协议不读取旧 `controls.npy`、memory target 或 schema 1/2/3/4；旧资产必须显式重建为
+v5 并通过 readiness。
 
 ### 9.2 Split 规则
 

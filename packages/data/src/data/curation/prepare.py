@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ from data.curation.audit import audit_pilot_data
 from data.curation.common import (
     SPLITS,
     dataset_path,
+    dataset_root,
     ensure_tree,
     read_json,
     read_jsonl,
@@ -164,6 +167,72 @@ def encode_pilot_shards(
     return report
 
 
+def rebuild_schema_v5_shards(
+    root: str | Path,
+    *,
+    dataset: str,
+    config: ProjectConfig,
+    client: CodecWorkerClient,
+    activate: bool = False,
+) -> dict[str, Any]:
+    """Rebuild all processed shards through the v5 writer and Mimi worker.
+
+    The output is first written below ``shards/rebuild-v5`` and validated by a
+    v5 reader.  With ``activate=True`` the previous processed tree is moved to
+    a recoverable archive before the new tree is atomically installed.
+    """
+    if dataset not in {"canary", "pilot", "production"}:
+        raise ValueError("schema v5 rebuild supports canary, pilot, or production")
+    root = Path(root).expanduser().resolve()
+    source_root_path = dataset_root(root, dataset)
+    if not dataset_path(root, dataset, "manifests", "episodes.jsonl").is_file():
+        raise FileNotFoundError(f"source manifest is absent for {dataset}")
+    rebuild_root = source_root_path / "shards" / "rebuild-v5"
+    if rebuild_root.exists():
+        shutil.rmtree(rebuild_root)
+    for split in SPLITS:
+        source_manifest = dataset_path(root, dataset, "manifests", f"{split}.jsonl")
+        if not source_manifest.is_file():
+            raise FileNotFoundError(f"source split manifest is absent: {source_manifest}")
+        staging = rebuild_root / "staging" / split / f"{split}-%06d.tar"
+        processed = rebuild_root / "processed" / split / f"{split}-%06d.tar"
+        write_episode_shards(
+            import_speech_manifest(source_manifest, config.data, config.model), staging
+        )
+        staged = EpisodeShardReader(
+            str(staging).replace("%06d", "*"), config.data, config.model,
+            require_encoded_speech=False, validate_manifest=False,
+        )
+        write_episode_shards(encode_target_speech(staged, client), processed)
+        encoded = EpisodeShardReader(
+            str(processed).replace("%06d", "*"), config.data, config.model,
+            require_encoded_speech=True, validate_manifest=False,
+        )
+        episodes = sum(1 for _ in encoded)
+        if episodes == 0:
+            raise ValueError(f"v5 rebuild produced no episodes for {dataset}/{split}")
+    report = {
+        "dataset": dataset,
+        "schema_version": 5,
+        "rebuild_root": str(rebuild_root),
+        "activated": activate,
+    }
+    write_json(dataset_path(root, dataset, "reports", "rebuild-v5.json"), report)
+    if activate:
+        previous = source_root_path / "shards" / "processed"
+        source_identity = sha256_file(dataset_path(root, dataset, "manifests", "episodes.jsonl"))
+        archive = source_root_path / "archive" / f"processed-before-v5-{source_identity[:12]}"
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        if previous.exists():
+            if archive.exists():
+                raise FileExistsError(f"archive already exists; refusing overwrite: {archive}")
+            os.replace(previous, archive)
+        os.replace(rebuild_root / "processed", previous)
+        report["activated"] = True
+        write_json(dataset_path(root, dataset, "reports", "rebuild-v5.json"), report)
+    return report
+
+
 def prepare_pilot_data(
     root: str | Path,
     *,
@@ -195,12 +264,20 @@ def prepare_pilot_data(
             raise ValueError("production preparation requires --normalize-command")
         inventory = build_source_inventory(normalize_command, root)
     voices = select_pilot_voices(root, library=library, fixture=fixture)
-    if dataset not in {"canary", "pilot", "all"}:
-        raise ValueError("dataset must be canary, pilot, or all")
+    if dataset not in {"canary", "pilot", "production", "all"}:
+        raise ValueError("dataset must be canary, pilot, production, or all")
     datasets: dict[str, Any] = {}
     client = codec_client(config, socket_path) if socket_path else None
     if encode and client is None:
         raise ValueError("--encode requires --socket")
+    # Production is an external source governed by its own locked manifest;
+    # it is never implicitly synthesized by the Canary/Pilot convenience path.
+    production_manifest = dataset_path(root, dataset, "manifests", "episodes.jsonl")
+    if dataset == "production" and not production_manifest.is_file():
+        raise FileNotFoundError(
+            "Production preparation requires an external locked source manifest; "
+            "use rebuild-v5 after provisioning it"
+        )
     dataset_names = ("canary", "pilot") if dataset == "all" else (dataset,)
     for dataset_name in dataset_names:
         text = build_pilot_text(

@@ -4,9 +4,8 @@ import json
 from pathlib import Path
 
 import pytest
-
-from latentloop.config import ProjectConfig
-from latentloop.ray_jobs import generate_synthetic_with_ray, write_ray_report
+from data.ray import generate_synthetic_with_ray, write_ray_report
+from runtime.config import ProjectConfig
 
 
 def test_ray_report_declares_no_gpu_workers(tmp_path: Path) -> None:

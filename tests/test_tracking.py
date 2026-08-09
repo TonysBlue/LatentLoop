@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from latentloop.config import ProjectConfig
-from latentloop.tracking import Tracker
+from runtime.config import ProjectConfig
+from training.tracking import Tracker
 
 
 def test_tracker_falls_back_to_offline_without_server(

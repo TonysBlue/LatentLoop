@@ -41,17 +41,17 @@ fixture 不下载公开语料、不冒充 CosyVoice，也不代表模型质量�
 ROOT="$HOME/latentloop-data/datasets-fixture"
 CFG=configs/local-dev.yaml
 
-uv run latentloop fetch-pilot-data --config "$CFG" --root "$ROOT" --fixture
-uv run latentloop select-pilot-voices --config "$CFG" --root "$ROOT" --fixture
+uv run data fetch-pilot-data --config "$CFG" --root "$ROOT" --fixture
+uv run data select-pilot-voices --config "$CFG" --root "$ROOT" --fixture
 
 for DATASET in canary pilot; do
-  uv run latentloop build-pilot-text --config "$CFG" --root "$ROOT" \
+  uv run data build-pilot-text --config "$CFG" --root "$ROOT" \
     --dataset "$DATASET" --fixture
-  uv run latentloop synthesize-pilot --config "$CFG" --root "$ROOT" \
+  uv run data synthesize-pilot --config "$CFG" --root "$ROOT" \
     --dataset "$DATASET" --fixture
-  uv run latentloop build-pilot-manifest --config "$CFG" --root "$ROOT" \
+  uv run data build-pilot-manifest --config "$CFG" --root "$ROOT" \
     --dataset "$DATASET" --fixture
-  uv run latentloop audit-pilot-data --config "$CFG" --root "$ROOT" \
+  uv run data audit-pilot-data --config "$CFG" --root "$ROOT" \
     --dataset "$DATASET" --fixture
 done
 ```
@@ -86,8 +86,8 @@ mask 在 Pilot 保持 false，`PAUSE` 不使用。
 ## 审计和训练导入
 
 ```bash
-uv run latentloop audit-pilot-data --config "$CFG" --root "$ROOT" --dataset pilot
-uv run latentloop import-speech --config "$CFG" \
+uv run data audit-pilot-data --config "$CFG" --root "$ROOT" --dataset pilot
+uv run data import-speech --config "$CFG" \
   --manifest "$ROOT/pilot/v1/manifests/train.jsonl" \
   --output "$ROOT/pilot/v1/shards/staging/train/train-%06d.tar"
 ```
@@ -102,7 +102,7 @@ Mimi decode-check 的正式 Pilot。通过后再使用既有 `encode-speech` 生
 ROOT="$HOME/latentloop-data/datasets"
 CFG=configs/pilot.yaml
 
-uv run latentloop prepare-pilot-data --config "$CFG" --root "$ROOT" \
+uv run data prepare-pilot-data --config "$CFG" --root "$ROOT" \
   --lock "$ROOT/registry/source-lock.json" --download --extract \
   --library "$ROOT/registry/voices/voice-library.json" \
   --synth-command 'path/to/cosyvoice-adapter' \
@@ -120,7 +120,7 @@ uv run latentloop prepare-pilot-data --config "$CFG" --root "$ROOT" \
 训练前最后执行 fail-closed 检查：
 
 ```bash
-uv run latentloop check-readiness --config configs/pilot.yaml --root "$ROOT" \
+uv run data check-readiness --config configs/pilot.yaml --root "$ROOT" \
   --checkpoint "$HOME/latentloop-data/checkpoints/base/state-loop.pt"
 ```
 

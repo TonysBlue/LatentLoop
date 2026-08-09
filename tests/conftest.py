@@ -3,8 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from latentloop.config import ProjectConfig, load_config
+from runtime.config import ProjectConfig, load_config
 
 
 @pytest.fixture

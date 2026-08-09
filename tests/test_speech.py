@@ -8,18 +8,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-
-from latentloop.codec import CodecIdentity
-from latentloop.codec_worker import (
+from data import SyntheticEpisodeDataset
+from media.metrics import boundary_discontinuity_db, codec_accuracy
+from model import StreamingLatentLoop
+from model.types import SpeechSamplingConfig
+from runtime.codec import CodecIdentity
+from runtime.codec_worker import (
     CodecWorkerClient,
     receive_message,
     send_message,
 )
-from latentloop.config import ProjectConfig
-from latentloop.data import SyntheticEpisodeDataset
-from latentloop.model import StreamingLatentLoop
-from latentloop.speech_metrics import boundary_discontinuity_db, codec_accuracy
-from latentloop.types import SpeechSamplingConfig
+from runtime.config import ProjectConfig
 
 
 def test_later_teacher_codebooks_do_not_change_earlier_logits(
