@@ -27,7 +27,7 @@ def test_speech_overfit_fixture_has_expected_timeline(
         + [int(SpeechMode.SPEECH)] * 8
         + [int(SpeechMode.SILENCE)] * 3
     )
-    assert all(unit.action_token_mask.any() for unit in episode.units)
+    assert all(unit.action_supervision_mask.any() for unit in episode.units)
     assert episode.target_speech is not None
     assert episode.target_speech[: 5 * smoke_config.data.unit_audio_samples].count_nonzero() == 0
 
@@ -57,7 +57,7 @@ def test_overfit_evaluation_covers_complete_encoded_dataset(
     )
     torch.save(
         {
-            "format_version": 5,
+            "format_version": 6,
             "metadata": asdict(metadata),
             "model": model.state_dict(),
         },

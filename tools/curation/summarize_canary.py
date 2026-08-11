@@ -114,7 +114,7 @@ def evaluate_summary(run_root: Path, max_updates: int) -> None:
             f"{report['episodes']} episodes, mode accuracy "
             f"{report['speech_mode_accuracy']:.3f}, mean codec accuracy "
             f"{sum(codec) / max(len(codec), 1):.4f}, "
-            f"action token accuracy {report['action_token_accuracy']:.3f}",
+            f"action kind accuracy {report['action_kind_accuracy']:.3f}",
         )
     if max_updates <= 5:
         line("Quality", "pipeline smoke test only; model is not converged")

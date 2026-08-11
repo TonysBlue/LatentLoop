@@ -199,6 +199,8 @@ class QmpInputInjector:
     def __init__(self, qmp_socket_getter, *, timeout_s: float = 2.0) -> None:
         self._qmp_socket_getter = qmp_socket_getter
         self.timeout_s = timeout_s
+        self._held_buttons: set[int] = set()
+        self._held_keys: set[int] = set()
 
     def apply(
         self, output: ActuationSignal, *, current_revision: int = 0
@@ -226,11 +228,7 @@ class QmpInputInjector:
 
     def _send_control(self, control: ControlSignal) -> None:
         events: list[dict[str, Any]] = []
-        if control.kind in {
-            ControlKind.POINTER_MOVE,
-            ControlKind.POINTER_BUTTON,
-            ControlKind.POINTER_DRAG,
-        }:
+        if control.kind is ControlKind.POINTER_MOVE:
             assert control.x is not None and control.y is not None
             events.extend(
                 [
@@ -238,30 +236,58 @@ class QmpInputInjector:
                     {"type": "abs", "axis": "y", "value": round(control.y * 32767)},
                 ]
             )
-            if control.kind is ControlKind.POINTER_BUTTON:
+        elif control.kind is ControlKind.POINTER_BUTTON:
+            if control.button_phase is None:
+                raise ValueError("pointer button has no phase")
+            if control.button_phase.value == "click":
+                if int(control.button or 0) in self._held_buttons:
+                    raise ValueError("held pointer button requires an UP control")
                 events.append({"type": "btn", "button": int(control.button or 0), "down": True})
+                events.append({"type": "btn", "button": int(control.button or 0), "down": False})
+            else:
+                button = int(control.button or 0)
+                down = control.button_phase.value == "down"
+                if down and button in self._held_buttons:
+                    raise ValueError("pointer button is already held")
+                if not down and button not in self._held_buttons:
+                    raise ValueError("pointer button is not held")
+                events.append(
+                    {
+                        "type": "btn",
+                        "button": button,
+                        "down": down,
+                    }
+                )
         elif control.kind is ControlKind.SCROLL:
             events.append({"type": "rel", "axis": "x", "value": round(control.dx or 0)})
             events.append({"type": "rel", "axis": "y", "value": round(control.dy or 0)})
         elif control.kind in {ControlKind.KEY_PRESS, ControlKind.KEY_RELEASE}:
             if control.key is None:
                 raise ValueError("key control has no key")
+            down = control.kind is ControlKind.KEY_PRESS
+            if down and control.key in self._held_keys:
+                raise ValueError("key is already held")
+            if not down and control.key not in self._held_keys:
+                raise ValueError("key is not held")
             events.append(
                 {
                     "type": "key",
                     "key": int(control.key),
-                    "down": control.kind is ControlKind.KEY_PRESS,
+                    "down": down,
                 }
             )
         elif control.kind is ControlKind.TEXT_INPUT:
-            events.extend({"type": "text", "text": char} for char in str(control.text or ""))
-        elif control.kind is ControlKind.WAIT:
-            time.sleep(float(control.duration_ms or 0) / 1000)
-            return
-        elif control.kind is ControlKind.CANCEL:
-            return
+            events.append({"type": "text", "text": str(control.text or "")})
         for event in events:
             self._qmp({"execute": "input-send-event", "arguments": {"events": [event]}})
+            if event["type"] == "btn" and control.button_phase.value != "click":
+                (self._held_buttons.add if event["down"] else self._held_buttons.discard)(
+                    int(event["button"])
+                )
+            elif event["type"] == "key":
+                (self._held_keys.add if event["down"] else self._held_keys.discard)(
+                    int(event["key"])
+                )
 
     def _qmp(self, request: dict[str, Any]) -> None:
         path = self._qmp_socket_getter()
@@ -279,7 +305,23 @@ class QmpInputInjector:
                 raise RuntimeError(str(result["error"]))
 
     def close(self) -> None:
-        return None
+        self.reset()
+
+    def reset(self) -> None:
+        events = [
+            {"type": "key", "key": key, "down": False}
+            for key in sorted(self._held_keys, reverse=True)
+        ]
+        events.extend(
+            {"type": "btn", "button": button, "down": False}
+            for button in sorted(self._held_buttons)
+        )
+        try:
+            for event in events:
+                self._qmp({"execute": "input-send-event", "arguments": {"events": [event]}})
+        finally:
+            self._held_keys.clear()
+            self._held_buttons.clear()
 
 
 def _read_qmp(connection: socket.socket) -> dict[str, Any]:
@@ -346,9 +388,12 @@ class _CompositeActuator(ActuatorAdapter):
     def health(self) -> None:
         self.playback.health()
 
+    def reset(self) -> None:
+        self.input.reset()
+
     def close(self) -> None:
-        self.playback.close()
         self.input.close()
+        self.playback.close()
 
 
 class ProductionQemuBackend(QemuBackend):

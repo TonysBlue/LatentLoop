@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -15,9 +14,9 @@ from contracts import (
     SpeechSignal,
 )
 from harness.transport.control import HarnessControlClient
-from model.types import SpeechMode, StreamUnit
+from model.types import ActionFrame, SpeechMode, StreamUnit
 from PIL import Image
-from runtime.action import ActionStreamDecoder
+from runtime.action import ActionFrameDecoder
 from runtime.codec_worker import CodecWorkerClient
 from runtime.config import ProjectConfig
 
@@ -56,7 +55,7 @@ class PhysicalRolloutClient:
         )
         self.codec.health()
         self.session_id: str | None = None
-        self.actions = ActionStreamDecoder()
+        self.actions = ActionFrameDecoder()
 
     def identity(self) -> dict[str, str]:
         return self.harness.identity()
@@ -72,7 +71,7 @@ class PhysicalRolloutClient:
         observation: ObservationSignal,
         mode: torch.Tensor,
         codes: torch.Tensor,
-        action_tokens: torch.Tensor,
+        action_frame: ActionFrame,
     ) -> ActuationSignal:
         selected_mode = int(mode.reshape(-1)[0].item())
         if selected_mode == int(SpeechMode.SILENCE):
@@ -91,12 +90,10 @@ class PhysicalRolloutClient:
             if not np.isfinite(values).all() or np.max(np.abs(values)) > 1.0:
                 raise RuntimeError("codec decoder returned invalid PCM values")
             speech = SpeechSignal(values.tobytes())
-        tokens = action_tokens.detach().cpu().reshape(-1).tolist()
         controls = self.actions.push(
-            tokens, event_id=f"{observation.session_id}-{observation.unit_index}"
-        )
-        controls = tuple(
-            replace(signal, screen_revision=observation.screen.revision) for signal in controls
+            action_frame.as_contract(),
+            event_id=f"{observation.session_id}-{observation.unit_index}",
+            screen_revision=observation.screen.revision,
         )
         return ActuationSignal(observation.session_id, observation.unit_index, speech, controls)
 
@@ -105,9 +102,9 @@ class PhysicalRolloutClient:
         observation: ObservationSignal,
         mode: torch.Tensor,
         codes: torch.Tensor,
-        action_tokens: torch.Tensor,
+        action_frame: ActionFrame,
     ) -> tuple[ObservationSignal, EnvironmentReceipt, ActuationSignal]:
-        output = self.actuation(observation, mode, codes, action_tokens)
+        output = self.actuation(observation, mode, codes, action_frame)
         next_observation, receipt = self.harness.apply(output)
         return next_observation, receipt, output
 
@@ -153,6 +150,6 @@ def observation_to_stream_unit(observation: ObservationSignal, config: ProjectCo
             1, config.model.speech_frames_per_unit, config.model.speech_codebooks, dtype=torch.long
         ),
         speech_codec_mask=torch.zeros(1, config.model.speech_frames_per_unit, dtype=torch.bool),
-        action_tokens=torch.zeros(1, config.model.action_burst_tokens, dtype=torch.long),
-        action_token_mask=torch.zeros(1, config.model.action_burst_tokens, dtype=torch.bool),
+        action=ActionFrame.no_action(1),
+        action_supervision_mask=torch.zeros(1, dtype=torch.bool),
     )

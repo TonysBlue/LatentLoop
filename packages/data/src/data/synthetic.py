@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import torch
-from model.action_tokens import ActionEvent, ActionTokenizer
-from model.types import ActionType, Episode, SpeechMode, StreamUnit
+from contracts import ACTION_SCHEMA_ID, ActionKind
+from model.types import ActionFrame, Episode, SpeechMode, StreamUnit
 from runtime.codec import codec_frame_mask
 from runtime.config import DataConfig, ModelConfig
 
@@ -13,10 +13,6 @@ class SyntheticEpisodeDataset:
     def __init__(self, data: DataConfig, model: ModelConfig) -> None:
         self.data = data
         self.model = model
-        self.actions = ActionTokenizer(
-            model.max_action_duration_ms,
-            model.action_burst_tokens,
-        )
 
     def __len__(self) -> int:
         return self.data.train_episodes
@@ -59,8 +55,7 @@ class SyntheticEpisodeDataset:
                 "environment_id": "synthetic-test-only",
                 "environment_version": "1",
                 "protocol_version": "realtime-v1",
-                "action_vocabulary_id": "unified-action-v4",
-                "action_schema_version": 4,
+                "action_schema_id": ACTION_SCHEMA_ID,
             },
             target_speech=torch.zeros(self.data.episode_units * self.data.unit_audio_samples),
             sample_index_in_shard=episode_index,
@@ -70,7 +65,6 @@ class SyntheticEpisodeDataset:
             speech_frames=self.model.speech_frames_per_unit,
             speech_codebooks=self.model.speech_codebooks,
             speech_codebook_size=self.model.speech_codebook_size,
-            action_vocab_size=self.actions.vocab_size,
         )
         return episode
 
@@ -105,22 +99,15 @@ class SyntheticEpisodeDataset:
                 + torch.arange(self.model.speech_frames_per_unit)
                 + codebook
             ) % self.model.speech_codebook_size
-        action_type = ActionType.CLICK if unit_index % 4 == 2 else ActionType.NOOP
-        coordinates = None
-        if action_type is ActionType.CLICK:
-            coordinates = (
-                column / max(self.data.screen_width - 1, 1),
-                row / max(self.data.screen_height - 1, 1),
-            )
-        encoded = self.actions.encode(ActionEvent(action_type, coordinates=coordinates))
-        action_tokens = torch.zeros(
-            1,
-            self.model.action_burst_tokens,
-            dtype=torch.long,
-        )
-        action_mask = torch.zeros_like(action_tokens, dtype=torch.bool)
-        action_tokens[0, : len(encoded)] = torch.tensor(encoded)
-        action_mask[0, : len(encoded)] = True
+        action = ActionFrame.no_action(1)
+        if unit_index % 4 == 2:
+            x = column / max(self.data.screen_width - 1, 1)
+            y = row / max(self.data.screen_height - 1, 1)
+            cell_x = min(int(x * 32), 31)
+            cell_y = min(int(y * 32), 31)
+            action.kind[0] = int(ActionKind.POINTER_MOVE)
+            action.coordinate_cell[0] = cell_y * 32 + cell_x
+            action.coordinate_residual[0] = torch.tensor((x * 32 - cell_x, y * 32 - cell_y))
         return StreamUnit(
             timestamp_ms=torch.tensor([unit_index * self.data.unit_ms]),
             delta_ms=torch.tensor([self.data.unit_ms]),
@@ -137,6 +124,6 @@ class SyntheticEpisodeDataset:
                 self.data.codec_frame_rate,
                 self.model.speech_frames_per_unit,
             )[None],
-            action_tokens=action_tokens,
-            action_token_mask=action_mask,
+            action=action,
+            action_supervision_mask=torch.ones(1, dtype=torch.bool),
         )

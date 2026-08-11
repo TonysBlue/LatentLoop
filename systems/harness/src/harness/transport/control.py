@@ -66,7 +66,7 @@ class HarnessControlServer:
         expected_environment_id: str | None = None,
         expected_environment_version: str | None = None,
         expected_protocol_version: str = "realtime-v1",
-        expected_action_vocabulary_id: str = "unified-action-v4",
+        expected_action_schema_id: str = "structured-action-v1",
     ) -> None:
         self.backend_factory = backend_factory
         self.socket_path = Path(socket_path).expanduser()
@@ -74,7 +74,7 @@ class HarnessControlServer:
         self.expected_environment_id = expected_environment_id
         self.expected_environment_version = expected_environment_version
         self.expected_protocol_version = expected_protocol_version
-        self.expected_action_vocabulary_id = expected_action_vocabulary_id
+        self.expected_action_schema_id = expected_action_schema_id
         self._backends: dict[str, _SessionState] = {}
         self._lock = threading.RLock()
         self._closed = threading.Event()
@@ -149,7 +149,7 @@ class HarnessControlServer:
                     "environment_id": str(backend.environment_id),
                     "environment_version": str(backend.environment_version),
                     "protocol_version": self.expected_protocol_version,
-                    "action_vocabulary_id": self.expected_action_vocabulary_id,
+                    "action_schema_id": self.expected_action_schema_id,
                 }
                 if (
                     self.expected_environment_id
@@ -285,7 +285,7 @@ class HarnessControlClient:
             "environment_id",
             "environment_version",
             "protocol_version",
-            "action_vocabulary_id",
+            "action_schema_id",
         }
         if not required.issubset(identity):
             raise RuntimeError("Harness identity is incomplete")

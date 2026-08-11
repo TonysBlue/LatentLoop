@@ -7,7 +7,10 @@ import pytest
 sys.path.insert(0, "packages/contracts/src")
 
 from contracts import (  # noqa: E402
+    ActionFrame,
+    ActionKind,
     ActuationSignal,
+    ButtonPhase,
     ControlKind,
     ControlSignal,
     EnvironmentReceipt,
@@ -27,7 +30,7 @@ from contracts.protocol import (  # noqa: E402
     message_to_observation,
     observation_to_message,
 )
-from runtime.action import ActionStreamDecoder
+from runtime.action import ActionFrameDecoder
 
 
 def test_observation_physical_signal_round_trip() -> None:
@@ -48,7 +51,14 @@ def test_actuation_does_not_contain_raw_action_tokens() -> None:
         "session",
         0,
         SpeechSignal(b"x" * 7680, silent=True),
-        (ControlSignal(ControlKind.POINTER_BUTTON, "event", x=0.5, y=0.5, button=0),),
+        (
+            ControlSignal(
+                ControlKind.POINTER_BUTTON,
+                "event",
+                button=0,
+                button_phase=ButtonPhase.CLICK,
+            ),
+        ),
     )
     restored = message_to_actuation(actuation_to_message(value))
     assert restored == value
@@ -67,9 +77,7 @@ def test_receipt_and_reward_protobuf_round_trip() -> None:
     assert payload_to_reward(reward_to_payload(reward)) == reward
 
 
-def test_action_continuation_decodes_only_after_end_action() -> None:
-    decoder = ActionStreamDecoder()
-    assert decoder.push([8, 652 + ord("o")], event_id="event") == ()
-    controls = decoder.push([652 + ord("k"), 1], event_id="event")
-    assert len(controls) == 1
-    assert controls[0].text == "ok"
+def test_action_frame_is_executed_in_its_unit() -> None:
+    decoder = ActionFrameDecoder()
+    controls = decoder.push(ActionFrame(ActionKind.TYPE, text_bytes=b"ok"), event_id="event")
+    assert [control.text for control in controls] == ["ok"]

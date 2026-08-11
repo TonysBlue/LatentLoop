@@ -18,7 +18,7 @@ class Evaluation:
     episodes: int
     speech_mode_accuracy: float
     speech_codec_accuracy: list[float]
-    action_token_accuracy: float
+    action_kind_accuracy: float
     speech_silence_precision: float
     speech_silence_recall: float
     passed: bool | None = None
@@ -54,8 +54,8 @@ def load_evaluation_model(
     require_data_identity: bool = True,
 ) -> StreamingLatentLoop:
     payload = torch.load(Path(checkpoint).expanduser(), map_location="cpu", weights_only=False)
-    if payload.get("format_version") != 5:
-        raise ValueError("evaluation requires a format version 5 checkpoint")
+    if payload.get("format_version") != 6:
+        raise ValueError("evaluation requires a format version 6 checkpoint")
     metadata = payload.get("metadata", {})
     for field, expected in (
         ("codec_id", config.data.codec_id),
@@ -109,7 +109,8 @@ def evaluate_checkpoint(
                     state,
                     unit.speech_codes,
                     speech_teacher_mode=unit.speech_mode,
-                    action_teacher_tokens=unit.action_tokens,
+                    action_teacher_frame=unit.action,
+                    action_teacher_mask=unit.action_supervision_mask,
                 )
                 state = output.state
                 mode = output.speech_mode_logits.argmax(-1)
@@ -126,9 +127,9 @@ def evaluate_checkpoint(
                     .cpu()
                 )
                 codec_total += int(target_codec.sum())
-                action_mask = output.action_token_mask & unit.action_token_mask
+                action_mask = unit.action_supervision_mask
                 action_correct += int(
-                    ((output.action_logits.argmax(-1) == unit.action_tokens) & action_mask).sum()
+                    ((output.action.kind_logits.argmax(-1) == unit.action.kind) & action_mask).sum()
                 )
                 action_total += int(action_mask.sum())
                 silence_target += int((unit.speech_mode == int(SpeechMode.SILENCE)).sum())

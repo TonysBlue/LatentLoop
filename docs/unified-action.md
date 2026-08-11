@@ -1,382 +1,302 @@
 # 统一电脑动作输出协议
 
-> 状态：最终目标 Unified Action Head 协议
-> 日期：2026-08-08
+> 状态：最终目标 Structured ActionFrame v6 协议
+> 日期：2026-08-11
 > 关联顶层架构：[实时流多模态 LatentLoop 完整方案](realtime-multimodal-latent-loop.md)
 > 对称语音协议：[直接流式语音实施说明](direct-speech.md)
 
 ## 1. 完成边界
 
-Action token 是模型内部和训练数据中的统一离散表示。Model Service 在输出边界将
-token 解码为 `ControlSignal`（鼠标、键盘、文本、滚动、等待、取消等物理控制事件）；
-Harness 只接收 `ControlSignal`，然后执行参数、screen revision、安全策略和权限校验。
-Harness 不依赖 Model Core，也不接收 raw action token 作为执行接口。
+Unified Action Head 是模型唯一的电脑操控输出头。统一的是 Action 的语义 schema、
+80 ms 执行边界和联合概率接口，不要求 kind 与不同类型的参数共享扁平 token 序列。
+每个 unit 都产生一个完整的 `ActionFrame`，Model Service 在该 unit 内把 frame 解码成
+零个或多个有序 `ControlSignal`，Harness 校验后立即执行。
 
-Unified Action Head 是实时多模态模型的独立电脑操控输出头。它与 Speech Head 共享 `H_t`，但使用独立 vocabulary、局部 decoder state 和 loss：
-
-~~~text
+```text
 E_t       = InputEncoder(U_t)
 Z_t       = MemoryUpdater(Z_(t-1), H_(t-1))
 H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
-action_t  = ActionHead(H_t, action_local_(t-1))
-~~~
+frame_t   = ActionHead(H_t, action_local_(t-1))
+controls  = decode(frame_t, screen_revision_t)
+```
 
-“统一空间”只指所有电脑操控 action 共用一个离散 token 序列空间，不表示语音与 action 共用输出空间。项目运行时恰好有两个模型输出头：
+Action Head 不调用操作系统。Model Service 和 Harness 之间只传递物理
+`ControlSignal`，不传递模型 logits、训练 target 或 action 参数 token。
 
-~~~text
-Speech Head -> speech mode + Mimi codec tokens
-Action Head -> unified computer-action tokens
-~~~
+## 2. ActionFrame schema
 
-Action Head 只产生动作意图序列，不直接调用操作系统。ActionTokenizer 负责可逆编码和 grammar；外部 Harness 负责权限、安全、screen revision、调度和真实执行。
+### 2.1 Kind
 
-## 2. 统一词表
+`kind` 是七分类变量，协议顺序固定为：
 
-### 2.1 Token 分区
+```text
+NO_ACTION
+NOOP
+POINTER_MOVE
+POINTER_BUTTON
+SCROLL
+TYPE
+HOTKEY
+```
 
-当前协议使用一个版本化词表：
+- `NO_ACTION` 表示本 unit 不提交任何 `ControlSignal`；它也是正常的可监督决策；
+- `NOOP` 表示显式提交一个无副作用控制事件，供协议/评测需要；
+- 等待由连续的 `NO_ACTION` 表达，不存在 `WAIT`；
+- 拖拽由 `POINTER_BUTTON(DOWN) -> POINTER_MOVE* -> POINTER_BUTTON(UP)` 组成；
+- 双击由两个连续的 `POINTER_BUTTON(CLICK)` 组成；
+- 右键由 `POINTER_BUTTON(button=RIGHT, phase=CLICK)` 表达；
+- 不存在 `CANCEL`、`DRAG`、`DOUBLE_CLICK`、`RIGHT_CLICK` 宏 kind；
+- frame 本身就是 unit 边界，不存在 `END_ACTION` 或 `PAD`。
 
-| 分区 | 数量 | 语义 |
-|---|---:|---|
-| 特殊/动作类型 token | 12 | `PAD`、`END_ACTION` 和 10 种 action kind |
-| coordinate bins | 256 | 归一化屏幕坐标 `[0, 1]` |
-| scroll bins | 256 | 有符号滚动量 `[-1, 1]` |
-| duration bins | 128 | `WAIT` 时长 `[0, max_action_duration_ms]` |
-| UTF-8 byte tokens | 256 | `TYPE` 的原始字节 |
-| key tokens | 32 | `HOTKEY` 的版本化按键表 |
+### 2.2 参数
 
-词表布局为：
+逻辑 schema 为：
 
-~~~text
-0   PAD
-1   END_ACTION
-2   NOOP
-3   CLICK
-4   DOUBLE_CLICK
-5   RIGHT_CLICK
-6   DRAG
-7   SCROLL
-8   TYPE
-9   HOTKEY
-10  WAIT
-11  CANCEL
-
-12..267    coordinate bins
-268..523   scroll bins
-524..651   duration bins
-652..907   UTF-8 byte tokens
-908..939   key tokens
-~~~
-
-因此当前 `vocab_size = 940`。action vocabulary 的版本、bin 数量、key table、最大时长和 burst 长度必须写入配置、数据 manifest 与 checkpoint identity；任何改变都属于协议版本变更。
-
-### 2.2 为什么使用一个序列空间
-
-action kind 与参数都离散化成 token 后，点击、拖拽、滚动、输入和快捷键可以使用同一个自回归 decoder 与一个 masked token CE。这样不需要为 type、coordinate、duration、text、confidence 分别建立 head，也避免不同结构化 head 之间的组合和 mask 语义分裂。
-
-统一不等于无 grammar。每种 kind 允许的后续 token 类型和长度仍由确定性状态机约束；统一空间提供共同的生成接口，grammar 提供合法序列边界。
-
-## 3. Action grammar
-
-每个完整事件以 action kind 开始，以 `END_ACTION` 结束：
-
-~~~text
-NOOP         END_ACTION
-CANCEL       END_ACTION
-CLICK        X Y END_ACTION
-DOUBLE_CLICK X Y END_ACTION
-RIGHT_CLICK  X Y END_ACTION
-DRAG         X1 Y1 X2 Y2 END_ACTION
-SCROLL       DX DY END_ACTION
-WAIT         DURATION END_ACTION
-TYPE         BYTE* END_ACTION
-HOTKEY       KEY+ END_ACTION
-~~~
-
-约束如下：
-
-- `X/Y/X1/Y1/X2/Y2` 必须来自 coordinate 分区；
-- `DX/DY` 必须来自 scroll 分区；
-- `DURATION` 必须来自 duration 分区；
-- `BYTE*` 只允许 UTF-8 byte token，空文本由任务协议决定是否允许；
-- `KEY+` 至少包含一个 key token；
-- `NOOP` 与 `CANCEL` 不接受参数；
-- 一个 event 只能有一个终止 `END_ACTION`；
-- `PAD` 不是动作内容，只用于定长 burst 的无效尾部。
-
-训练导入、推理 decode 和 Harness 执行前都必须使用同一 grammar 校验器，不能分别实现含义不同的宽松解析。
-
-## 4. 参数量化与还原
-
-### 4.1 坐标
-
-屏幕坐标先归一化到 `[0, 1]`，再映射到 256 个 bin：
-
-~~~text
-coord_bin = round(value * 255)
-value_hat = coord_bin / 255
-~~~
-
-坐标 token 不绑定某个物理分辨率。执行时 Harness 使用事件关联的目标 screen revision 和当前显示区域恢复像素位置；过期 revision 不允许直接套用到新屏幕。
-
-### 4.2 滚动
-
-滚动分量限制在 `[-1, 1]`：
-
-~~~text
-scroll_bin = round((value + 1) * 0.5 * 255)
-value_hat  = scroll_bin / 127.5 - 1
-~~~
-
-具体滚轮 tick、触控板距离或页面位移由 Harness 的版本化执行适配器映射，模型协议只表达归一化意图。
-
-### 4.3 时长
-
-`WAIT` 在 `[0, max_action_duration_ms]` 内量化到 128 bins：
-
-~~~text
-duration_bin = round(duration_ms / max_duration_ms * 127)
-duration_hat = duration_bin / 127 * max_duration_ms
-~~~
-
-超出配置范围的输入在编码时拒绝，推理时也不能通过 clamp 静默改变意图。
-
-### 4.4 文本与快捷键
-
-`TYPE` 使用 UTF-8 bytes，因而不依赖自然语言 tokenizer，能够表示任意合法 Unicode 文本。decode 必须验证字节序列可构成 UTF-8；无效序列不得传入操作系统。
-
-`HOTKEY` 使用固定 32-key table。key token 只表达协议中的逻辑键，不直接等于平台 scan code；平台映射由 Harness 管理并纳入版本校验。
-
-## 5. Action Head
-
-### 5.1 Decoder 输入输出
-
-Action Head 读取 `H_t` 的当前输出位置和上一 action local state：
-
-~~~text
-context_t = Linear(last_position(H_t))
-
-repeat action_burst_tokens times:
-    decoder_hidden = Decoder(previous_token, context_t, decoder_hidden)
-    action_logits  = VocabularyProjection(decoder_hidden)
-    token          = teacher target or sampled token
-~~~
-
-当前实现使用 token embedding、context projection、GRUCell 和词表线性层。这里的 decoder local state 只负责一个未结束 action 的短期序列连续性，不承担任务规划或长期记忆。
-
-### 5.2 独立输出空间
-
-Action Head 不读取语音 token，Speech Head 也不读取 action token。二者通过共享 Backbone 间接协同：
-
-~~~text
-L_speech -> Backbone parameters
-L_action -> Backbone parameters
-
-speech local 与 action local 彼此独立
-speech vocabulary 与 action vocabulary 彼此独立
-~~~
-
-一个 80 ms unit 可以同时说话和产生电脑动作，两条输出不需要互斥 control head。
-
-### 5.3 NOOP、WAIT 与静默
-
-- 没有需要执行的电脑动作时，数据可以用无效 action mask 表达“本 unit 无 action target”；
-- `NOOP` 是显式动作事件，适合任务确实要求模型确认不操作的场景；
-- `WAIT` 是带时长的动作意图，用于序列中明确需要等待的任务；
-- 语音静默由 Speech Head 的 `SILENCE` 表达，与 Action Head 无关。
-
-不能用 action `NOOP` 代替语音静默，也不能用 Speech `SILENCE` 代替电脑动作缺省。
-
-## 6. 跨 unit continuation
-
-每个 80 ms unit 最多生成 `action_burst_tokens` 个 token，当前默认值为 16。若完整事件超过一个 burst，`action_local` 把未结束事件延续到下一 unit：
-
-~~~text
-ActionLocalState = {
-    hidden,
-    previous_token,
-    active,
-    event_type,
-    burst_tokens,
+```text
+ActionFrame {
+    kind
+    coordinate_cell
+    coordinate_residual
+    button
+    button_phase
+    scroll_delta
+    text_bytes
+    text_length
+    hotkey_keys
+    hotkey_length
 }
-~~~
+```
 
-- `hidden` 保存 decoder 的连续状态；
-- `previous_token` 是下一位置的自回归输入；
-- `active` 表示事件尚未以 `END_ACTION` 结束；
-- `event_type` 保存当前 kind，供 continuation 与校验使用；
-- `burst_tokens` 记录当前事件已经生成的 token 数。
+只有当前 kind 对应的参数有语义并参与概率和监督：
 
-事件跨 unit 时不能重复输出 kind，也不能在 unit 边界自动补 `END_ACTION`。收到 `END_ACTION` 后 local event 结束，固定 burst 的剩余位置为 `PAD` 且 loss mask 为 false。episode/session reset、明确 `CANCEL` 或运行时恢复策略才能终止未完成事件。
+| kind | 有效参数 |
+|---|---|
+| `NO_ACTION` / `NOOP` | 无 |
+| `POINTER_MOVE` | `coordinate_cell`, `coordinate_residual` |
+| `POINTER_BUTTON` | `button`, `button_phase` |
+| `SCROLL` | `scroll_delta` |
+| `TYPE` | `text_length`, `text_bytes[:text_length]` |
+| `HOTKEY` | `hotkey_length`, `hotkey_keys[:hotkey_length]` |
 
-长 `TYPE` 文本天然可能跨越多个 unit。Harness 必须等到完整 grammar 事件结束并通过安全校验后再原子执行，不能逐 byte 边生成边注入键盘。
+`POINTER_BUTTON` 作用于 Harness 的当前指针位置，不携带坐标。一个 frame 可以解码为
+多个有序控制事件；例如 HOTKEY 先按下各键，再按反序释放。
+
+## 3. 参数域与确定性解码
+
+### 3.1 坐标
+
+绝对坐标使用 32x32 joint coarse grid categorical 和 cell 内 bounded residual：
+
+```text
+cell_x = floor(clamp(x, 0, 1) * 32)
+cell_y = floor(clamp(y, 0, 1) * 32)
+cell   = cell_y * 32 + cell_x
+residual = (x * 32 - cell_x, y * 32 - cell_y) in [0, 1]
+
+x_hat = (cell_x + residual_x) / 32
+y_hat = (cell_y + residual_y) / 32
+```
+
+边界值 1.0 映射到最后一个 cell 且 residual 为 1.0。分类项表达全局多峰位置，
+bounded residual 提供 cell 内精度。执行仍绑定 frame 对应的 screen revision。
+
+### 3.2 Pointer button 与 scroll
+
+button 是 `{LEFT, MIDDLE, RIGHT}` 分类变量，phase 是 `{CLICK, DOWN, UP}` 分类变量。
+`DOWN/UP` 更新 action local 的 held-button 状态，Harness 仍需在 session reset 和紧急停止
+时释放残留按键。
+
+scroll 是二维连续量 `(dx, dy) in [-1, 1]^2`。Harness 通过版本化适配器把归一化量
+转换成物理滚轮 tick 或触控板距离。
+
+### 3.3 TYPE
+
+TYPE 使用纯 UTF-8 byte decoder，每个 unit 最多输出 16 bytes。decoder 可以跨 unit
+保留至多 3 个尚未构成完整 Unicode scalar 的 pending bytes：
+
+1. 本 unit byte chunk 追加到 pending bytes；
+2. 确定性 UTF-8 assembler 取出所有已经完成且合法的最长前缀；
+3. 完成的 `text_chunk` 在当前 unit 立即形成 `TEXT_INPUT` 并执行；
+4. 不完整尾部留在 `action_local`，下一 unit 继续；
+5. 连续 TYPE 隐式续接；切换到其他 kind 时 pending 必须为空，否则 frame 非法。
+
+continuation 仅存在于 Action Head local state，不出现在公开 `ActionFrame` schema。
+已经执行的文本不回滚；模型通过后续真实屏幕和声音观察执行结果，需要纠正时继续输出
+退格、快捷键或新的文本动作。
+
+### 3.4 HOTKEY
+
+HOTKEY 使用版本化 32-key table，每 frame 最多 8 keys 且至少一个。key ID 是逻辑键，
+平台 scan code 映射由 Harness 管理。解码产生有序的 `KEY_PRESS*` 和反序
+`KEY_RELEASE*`，因此不会把“组合键”塞进一个平台相关的宏字段。
+
+## 4. Action Head
+
+Action Head 读取当前 `H_t` 和 action-local state，先预测 kind，再只激活对应参数分支：
+
+```text
+context_t = f(last_position(H_t), previous_frame_embedding)
+kind_t    ~ Categorical(kind_logits(context_t))
+
+POINTER_MOVE   -> joint cell categorical + bounded residual distribution
+POINTER_BUTTON -> button categorical + phase categorical
+SCROLL         -> bounded continuous distribution
+TYPE           -> length categorical + autoregressive byte decoder
+HOTKEY         -> length categorical + autoregressive key decoder
+```
+
+这仍然是一个 Unified Action Head：参数分支由同一个 kind 决策条件化，共享 context、
+状态、概率对象和训练/rollout 接口，不是多个可独立调用的动作 head。当前全局
+VisionEncoder token 直接进入 Backbone，不新增 patch-token action vision branch。
+
+## 5. Action local state
+
+跨 unit state 保存结构连续性，而不是未执行的宏事件：
+
+```text
+ActionLocalState {
+    previous_frame_embedding
+    type_decoder_state
+    pending_utf8_bytes[3]
+    pending_utf8_length
+    type_active
+    held_buttons[3]
+    held_keys[32]
+}
+```
+
+state 在 episode/session 边界 reset，在 TBPTT 边界 detach 但不清空。每个 frame 都能
+独立进入执行边界；不存在等待完整 event、原子提交或协议级 rollback。
+
+## 6. 每 unit 执行语义
+
+每 80 ms unit 的顺序固定为：生成 frame、校验当前 kind 参数、解码 controls、Harness
+安全校验、按序提交可执行 controls。TYPE 的完整 UTF-8 前缀、POINTER_MOVE、button 和
+scroll 都在当前 unit 执行。
+
+执行拒绝、receipt、accepted、safety 和 reward 是 Harness/Training control-plane
+metadata，绝不进入下一 `ObservationSignal`。模型只能从下一 unit 的屏幕、混合麦克风
+和时间看到动作结果。没有撤销协议；纠错本身也是后续动作。
 
 ## 7. 数据契约
 
 ### 7.1 Unit targets
 
-Schema v3 在每个 unit 保存：
+Schema v6 的每个 unit 保存结构化 target：
 
-~~~text
-action_tokens      [B, action_burst_tokens]
-action_token_mask  [B, action_burst_tokens]
-screen_revision    [B]
-~~~
+```text
+action_kind                 [B]
+action_supervision_mask     [B]
+action_coordinate_cell      [B]
+action_coordinate_residual  [B, 2]
+action_button               [B]
+action_button_phase         [B]
+action_scroll_delta         [B, 2]
+action_text_bytes           [B, 16]
+action_text_length          [B]
+action_hotkey_keys          [B, 8]
+action_hotkey_length        [B]
+screen_revision             [B]
+```
 
-`action_token_mask=true` 的位置参与 loss；`PAD` 和不存在 action target 的位置为 false。跨 unit 事件必须在完整 episode 时间线上连续编码，并保留同一事件与 screen revision 的关联。
+`action_supervision_mask=false` 表示该 unit 没有 action 标签；这不同于有监督的
+`NO_ACTION`。kind-conditioned 参数 mask 由 kind 和 length 确定，不持久化重复 mask。
 
-### 7.2 轨迹来源
+### 7.2 数据来源与校验
 
-训练 action 轨迹应来自可回放的真实或 sandbox 环境任务，至少记录：
+轨迹按 unit 记录动作、动作前 screen revision、后续物理观察和审计 metadata。模型输入
+不得包含未来结果、receipt、隐藏 DOM、特权坐标或教师计划。导入时拒绝：
 
-~~~text
-timestamp
-screen revision before action
-action event and token sequence
-execution decision
-environment observation after action
-episode/session identity
-~~~
+- 非 v6 schema 或错误 `action_schema_id`；
+- kind 与参数域不一致、坐标/scroll 越界、非法 button/phase/key；
+- TYPE 超过 16 bytes、无效 UTF-8 状态转移或跨非 TYPE frame 留有 pending bytes；
+- HOTKEY 长度不在 1..8；
+- screen revision 缺失或时间线倒退；
+- 任何旧 `action_tokens`/`action_token_mask` flat representation。
 
-模型输入只能看到当时可观测的屏幕、混合音频和时间；未来结果、执行成功标签、隐藏 DOM、特权坐标或教师内部计划不能作为输入旁路。执行后的真实屏幕和声音在后续 unit 进入模型，由后续 action/speech loss 教会模型利用结果。
+## 8. 训练目标与概率接口
 
-### 7.3 数据校验
+一个 frame 的条件化联合 log-prob 为：
 
-导入训练前拒绝：
+```text
+log p(frame|state) = log p(kind|state)
+                   + 1[kind=POINTER_MOVE]   * (log p(cell) + log p(residual|cell))
+                   + 1[kind=POINTER_BUTTON] * (log p(button) + log p(phase))
+                   + 1[kind=SCROLL]         * log p(scroll)
+                   + 1[kind=TYPE]           * (log p(length) + sum_i log p(byte_i))
+                   + 1[kind=HOTKEY]         * (log p(length) + sum_i log p(key_i))
+```
 
-- 非法 kind/参数组合或缺少 `END_ACTION`；
-- 超出 token 分区的参数；
-- 无效 UTF-8 或未知 key token；
-- 坐标、滚动、时长超出协议范围；
-- continuation 在 unit 边界丢失或重复 kind；
-- `PAD` 位置被标为有效 target；
-- screen revision 缺失、倒退或与事件不一致；
-- 同一 session 跨 train/validation/test 泄漏；
-- action vocabulary identity 与配置不一致。
+监督目标是上述有效项的负 log-likelihood。连续参数使用有界分布的 NLL；实现可用
+固定尺度的 bounded regression NLL，但必须和 sampling/log-prob 使用同一参数化。
+各分支先按有效 frame 归一化，再组成唯一 `L_action`，避免 TYPE 长度自动放大其权重。
 
-## 8. 训练目标与梯度
+Online GRPO 保存并重算同一个 frame joint log-prob。clipped ratio 与 reference KL 以
+frame 为动作概率单位，而不是把 kind、每个 byte 和坐标重复当作独立环境 step。
 
-Action Head 只有一个 masked token cross entropy：
-
-~~~text
-L_action = masked_CE(action_logits, action_tokens)
-~~~
-
-action kind、坐标、滚动、时长、UTF-8 byte、key 和 `END_ACTION` 都在同一个 loss 中按有效 token 归一化。没有独立 type loss、coordinate regression、duration regression、confidence、action-control 或 grammar auxiliary loss。
-
-项目总目标为：
-
-~~~text
+```text
 L_total = speech_loss_weight * L_speech
         + action_loss_weight * L_action
-~~~
+```
 
-梯度影响：
-
-| 模块 | Action loss 的影响 |
-|---|---|
-| Action Head | 直接学习 token grammar、参数与 continuation |
-| action local decoder | 直接学习跨位置和跨 unit 的事件连续性 |
-| Backbone | 学习产生支持电脑操控的共享多模态表示 |
-| InputEncoder | 学习从屏幕、混合音频和时间提取动作所需条件 |
-| MemoryUpdater | 通过未来 action loss 学习保留长期目标、约束和早期执行结果 |
-| Speech Head | 不接收 Action loss 的直接参数梯度；只通过共享 Backbone 的联合训练间接受影响 |
-
-长期监督路径为：
-
-~~~text
-future action token loss
- -> future Action Head
- -> future H
- -> future Z
- -> earlier MemoryUpdater
-~~~
-
-真正的长任务、动作后果利用和错误恢复应由轨迹数据与后续 action token loss 提供，不增加 memory probe 或 action-success head。
+Action loss 通过 Action Head、Backbone、InputEncoder 和 MemoryUpdater 训练全模型；没有
+额外 action-control、confidence、success、memory 或 rollback loss。
 
 ## 9. 推理与 Harness 安全边界
 
-模型输出不是执行授权。Harness 在提交操作系统之前必须执行：
-
-1. 按 vocabulary identity 解码并验证完整 grammar；
-2. 检查 event 是否已完整结束，拒绝半个 continuation；
-3. 验证 screen revision 新鲜度和目标屏幕/窗口一致性；
-4. 检查坐标、滚动、时长、文本长度和速率上限；
-5. 应用程序、窗口、区域和动作类型白名单；
-6. 对删除、支付、发送、安装、权限修改等高风险操作请求批准；
-7. 支持队列超时、`CANCEL`、session reset 和全局紧急停止；
-8. 记录原始 token、解码事件、审批、执行结果和时间戳。
-
-Harness 拒绝或执行 action 后，不向模型注入隐藏成功标志。真实环境变化通过后续屏幕、音频和时间输入返回主干，保证训练与推理都依赖可观察闭环。
+Harness 在提交每个 `ControlSignal` 前校验 schema identity、screen revision、参数范围、
+held-input 状态、应用/区域白名单、速率和权限。危险操作仍可被审批或拒绝，session reset
+与全局紧急停止负责释放 held inputs。模型输出不是授权，安全拒绝也不改变模型物理输入
+边界。
 
 ## 10. Checkpoint 与恢复
 
-Checkpoint 必须保存：
+Checkpoint format v6 保存 Action Head 参数、完整 action local state、
+`action_schema_id=structured-action-v1`、grid/type/hotkey/key-table 常量以及 unit/session
+identity。恢复后下一 frame 的 logits、采样和 UTF-8 assembler 状态必须与不中断运行一致。
 
-~~~text
-Action Head parameters
-action_local state
-action vocabulary identity
-coordinate/scroll/duration bin counts
-key table identity
-max_action_duration_ms
-action_burst_tokens
-unit cursor and session identity
-~~~
-
-从 checkpoint 恢复未结束事件后，下一 token logits、mask、local state 和最终解码事件应与不中断连续运行一致。任何 vocabulary、burst、key table 或量化参数不兼容都必须拒绝恢复，不能只加载形状碰巧一致的权重。
+v5 flat-token checkpoint 与数据直接拒绝。没有 vocabulary 映射、形状碰巧一致时的部分
+加载或运行时兼容 decoder；旧资产必须从源轨迹按 v6 重新生成。
 
 ## 11. 验证设计
 
-### 11.1 Tokenizer 与 grammar
+### 11.1 Schema 与 decode
 
-- 每种 ActionEvent encode/decode 往返；
-- 坐标、滚动和时长边界与量化误差；
-- 中文、英文、emoji 等 UTF-8 TYPE 往返；
-- HOTKEY 空参数、未知 key 和上界拒绝；
-- 错误参数分区、缺失 `END_ACTION` 和多余 body 拒绝；
-- vocabulary identity 与配置一致。
+- 七种 kind 的 frame 构造、校验与 ControlSignal 往返；
+- 32x32 joint cell 的边界、cell 内 residual 和像素还原；
+- button CLICK/DOWN/UP、拖拽序列、双击序列和 HOTKEY press/release 顺序；
+- TYPE 中英文和 emoji 分块、跨 unit pending bytes、切 kind 时非法尾部拒绝；
+- 每 unit 立即产生可执行 controls，且不需要 END_ACTION。
 
-### 11.2 Head 与 continuation
+### 11.2 Head、loss 与状态
 
-- teacher forcing 与自由生成 shape/mask；
-- `END_ACTION` 后 PAD 被 mask；
-- 超过 16 token 的 TYPE 跨 unit 连续；
-- checkpoint 中断恢复与连续生成等价；
-- session reset 清除未结束 local event；
-- Action loss 能到达 Action Head、Backbone 和 MemoryUpdater；
-- action mask 全 false 时 loss 有限且不产生虚假监督。
+- teacher forcing 和 sampling 的全部 tensor shape；
+- kind-conditioned mask 只监督当前参数分支；
+- action frame joint log-prob 与监督 NLL 使用相同分解；
+- action 监督全 false 时 loss 有限且无虚假梯度；
+- checkpoint 中断恢复、TBPTT detach 和 session reset；
+- Action loss 到达 Action Head、Backbone 和 MemoryUpdater。
 
-### 11.3 Harness
+### 11.3 边界与回归
 
-- 过期 screen revision 被拒绝；
-- 越界坐标、超长等待、非法文本和不允许按键被拒绝；
-- 高风险操作进入审批而非直接执行；
-- 半个 event 不执行，完整 event 原子提交；
-- 速率限制、超时、取消和紧急停止有效；
-- 执行日志可关联模型 checkpoint、session、unit 和原始 token。
-
-### 11.4 行为评测
-
-- action token accuracy 与完整 event exact match；
-- grammar validity 和可解码率；
-- 坐标量化后命中率、拖拽/滚动/输入成功率；
-- 跨 unit continuation 完成率；
-- screen revision 拒绝率和误执行率；
-- 长任务中早期目标与动作结果的后续利用；
-- Action Head 与 Speech Head 同时输出时的质量和延迟。
+- Model Service 输出无 raw action tensor；
+- receipt/reward/accepted/safety 不进入 ObservationSignal；
+- Harness 拒绝过期 revision、越界参数和非法 held-input 转移；
+- 旧 schema/checkpoint format、flat action array 和旧配置字段 fail closed；
+- formal Pretrain、SFT、Online GRPO 共享同一 Action Head 与概率路径。
 
 ## 12. 结论
 
-Unified Action Head 把所有电脑操控表达为一个版本化离散 token 序列空间：
+最终协议把 action 表达成持续的结构化控制流：
 
-~~~text
+```text
 H_t + action_local_(t-1)
- -> action token burst
- -> cross-unit continuation
- -> complete grammar event
- -> Harness safety/revision/permission checks
- -> operating-system execution
-~~~
+ -> one Structured ActionFrame
+ -> zero or more ordered ControlSignal events
+ -> immediate per-unit execution
+ -> next physical observation
+```
 
-它与 Speech Head 是并列而独立的第二个输出头。Action Head 只使用一个 masked token loss；类型、参数和终止符通过共同 vocabulary 与 grammar 学习。长期任务信息不由额外 control 或 memory loss 监督，而由未来真实 action token loss 通过 `Z_t` 反向塑形。模型负责提出动作，Harness 始终负责是否允许及如何安全执行。
+模型像持续操作电脑的人一样，在每个 80 ms unit 观察、行动并从后续物理信号纠错。
+统一语义与概率接口并不要求把异构参数语言化；这使短动作保持清晰，也使长 TYPE 不再
+付出扁平 token action 序列的结构开销。

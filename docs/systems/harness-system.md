@@ -24,7 +24,7 @@ fail-closed；运行中断返回 `infrastructure_failure`，不得进入策略�
 配置必须声明 base qcow2、QMP/SPICE/audio endpoint、input backend、evaluator endpoint、
 task/reward spec 和资源上限。不存在静音、空画面、NOOP executor、固定 reward 或 fixture
 fallback。每次 reset、崩溃和服务退出都回收 QEMU 进程、所有 socket、临时屏幕文件和 overlay，
-并报告 `environment_id/version/protocol/action_vocabulary_id` 供 control server 比对。
+并报告 `environment_id/version/protocol/action_schema_id` 供 control server 比对。
 
 进程内 fake backend 只用于显式标记的契约/集成测试，正式 Canary、Pilot、Production 配置
 没有 fake fallback。

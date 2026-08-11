@@ -11,9 +11,9 @@ def test_observation_cannot_contain_privileged_reward_fields() -> None:
     assert not hasattr(observation, "task_success")
 
 
-def test_environment_identity_requires_action_vocabulary() -> None:
+def test_environment_identity_requires_action_schema() -> None:
     with pytest.raises(ValueError, match="protocol identity"):
-        ProtocolIdentity(action_vocabulary_id="")
+        ProtocolIdentity(action_schema_id="")
 
 
 def test_reward_breakdown_has_fixed_components() -> None:

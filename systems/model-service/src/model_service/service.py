@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import threading
 import uuid
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 import numpy as np
 import torch
@@ -13,9 +13,9 @@ from contracts import (
     SpeechSignal,
 )
 from model import StreamingLatentLoop
-from model.types import SpeechMode, SpeechSamplingConfig, StreamUnit
+from model.types import ActionFrame, SpeechMode, SpeechSamplingConfig, StreamUnit
 from PIL import Image
-from runtime.action import ActionStreamDecoder
+from runtime.action import ActionFrameDecoder
 from runtime.config import ProjectConfig
 
 
@@ -26,7 +26,7 @@ class ModelSession:
     previous_revision: int = -1
     next_unit: int = 0
     speech_active: bool = False
-    action_decoder: ActionStreamDecoder = field(default_factory=ActionStreamDecoder)
+    action_decoder: ActionFrameDecoder = field(default_factory=ActionFrameDecoder)
 
 
 class ModelService:
@@ -44,7 +44,11 @@ class ModelService:
         self.model = StreamingLatentLoop(config.model).to(self.device)
         if checkpoint:
             payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
-            weights = payload.get("model", payload)
+            if payload.get("format_version") != 6:
+                raise ValueError("model service requires a format v6 checkpoint")
+            if payload.get("metadata", {}).get("action_schema_id") != config.model.action_schema_id:
+                raise ValueError("checkpoint action schema does not match model service")
+            weights = payload.get("model")
             if not isinstance(weights, dict):
                 raise ValueError("model checkpoint has no state dict")
             self.model.load_state_dict(weights, strict=True)
@@ -58,7 +62,7 @@ class ModelService:
             "service": "model-service",
             "version": "1",
             "protocol_version": "realtime-v1",
-            "action_vocabulary_id": "unified-action-v4",
+            "action_schema_id": self.config.model.action_schema_id,
             "codec_id": self.config.data.codec_id,
         }
 
@@ -118,10 +122,8 @@ class ModelService:
             speech_mode_mask=torch.zeros(1, dtype=torch.bool),
             speech_codes=zeros,
             speech_codec_mask=torch.zeros(1, 1, dtype=torch.bool),
-            action_tokens=torch.zeros(1, self.config.model.action_burst_tokens, dtype=torch.long),
-            action_token_mask=torch.zeros(
-                1, self.config.model.action_burst_tokens, dtype=torch.bool
-            ),
+            action=ActionFrame.no_action(1),
+            action_supervision_mask=torch.zeros(1, dtype=torch.bool),
         )
 
     @torch.inference_mode()
@@ -168,13 +170,10 @@ class ModelService:
                     raise RuntimeError("speech codec decoder returned invalid PCM values")
                 speech = SpeechSignal(values.tobytes(), silent=False)
                 session.speech_active = True
-            tokens = generated.action_tokens[0].detach().cpu().tolist()
             controls = session.action_decoder.push(
-                tokens, event_id=f"{observation.session_id}-{observation.unit_index}"
-            )
-            controls = tuple(
-                replace(control, screen_revision=observation.screen.revision)
-                for control in controls
+                generated.action_frame.as_contract(),
+                event_id=f"{observation.session_id}-{observation.unit_index}",
+                screen_revision=observation.screen.revision,
             )
             return ActuationSignal(
                 observation.session_id,

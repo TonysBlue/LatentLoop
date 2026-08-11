@@ -10,6 +10,7 @@ from model.attention import StreamingTransformerLayer
 from model.encoders import StreamingAudioEncoder, TimeEncoder, VisionEncoder
 from model.speech import FactorizedSpeechHead
 from model.types import (
+    ActionFrame,
     GenerationOutput,
     LayerKV,
     RecurrentState,
@@ -145,7 +146,8 @@ class StreamingLatentLoop(nn.Module):
         *,
         speech_teacher_codes: Tensor | None = None,
         speech_teacher_mode: Tensor | None = None,
-        action_teacher_tokens: Tensor | None = None,
+        action_teacher_frame: ActionFrame | None = None,
+        action_teacher_mask: Tensor | None = None,
         sampling: SpeechSamplingConfig | None = None,
     ) -> StepOutput:
         audio, audio_cache = self.audio_encoder(unit.mic_audio, state.audio_cache)
@@ -201,10 +203,11 @@ class StreamingLatentLoop(nn.Module):
         next_codes = torch.where(
             mode[:, None] == int(SpeechMode.SPEECH), next_codes, torch.zeros_like(next_codes)
         )
-        action_logits, action_tokens, action_local, action_token_mask = self.action_head(
+        action, action_local = self.action_head(
             hidden,
             state.action_local,
-            action_teacher_tokens,
+            action_teacher_frame,
+            action_teacher_mask,
             sampling_temperature=(sampling.temperature if sampling is not None else None),
         )
         next_state = RecurrentState(
@@ -220,8 +223,7 @@ class StreamingLatentLoop(nn.Module):
             state=next_state,
             speech_mode_logits=speech_mode_logits,
             speech_codec_logits=speech_codec_logits,
-            action_logits=action_logits,
-            action_token_mask=action_token_mask,
+            action=action,
             hidden=hidden,
         )
 
@@ -232,14 +234,16 @@ class StreamingLatentLoop(nn.Module):
         speech_teacher_codes: Tensor | None = None,
         *,
         speech_teacher_mode: Tensor | None = None,
-        action_teacher_tokens: Tensor | None = None,
+        action_teacher_frame: ActionFrame | None = None,
+        action_teacher_mask: Tensor | None = None,
     ) -> StepOutput:
         return self.forward_step(
             unit,
             state,
             speech_teacher_codes=speech_teacher_codes,
             speech_teacher_mode=speech_teacher_mode,
-            action_teacher_tokens=action_teacher_tokens,
+            action_teacher_frame=action_teacher_frame,
+            action_teacher_mask=action_teacher_mask,
         )
 
     @torch.no_grad()
@@ -251,7 +255,7 @@ class StreamingLatentLoop(nn.Module):
             output=output,
             speech_mode=output.speech_mode_logits.argmax(dim=-1),
             speech_codes=output.state.speech_local.previous_codes[:, None],
-            action_tokens=output.action_logits.argmax(dim=-1),
+            action_frame=output.action.frame,
         )
 
     def parameter_count(self) -> int:

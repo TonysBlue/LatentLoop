@@ -18,12 +18,11 @@ from data.curation import (
     check_readiness,
     fetch_pilot_data,
     prepare_pilot_data,
-    rebuild_schema_v5_shards,
+    rebuild_schema_v6_shards,
     select_pilot_voices,
     synthesize_pilot,
 )
 from data.curation.prepare import codec_client
-from data.migrate import migrate_manifest_v4_to_v5
 from data.overfit import SpeechOverfitDataset
 from data.ray import generate_synthetic_with_ray, write_ray_report
 from data.speech_import import import_speech_manifest
@@ -34,9 +33,6 @@ from data.webdataset import EpisodeShardReader, write_episode_shards
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="data")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    migrate = subparsers.add_parser("migrate-manifest")
-    migrate.add_argument("--source", required=True)
-    migrate.add_argument("--destination", required=True)
     config_commands = {
         "generate-data", "build-overfit-data", "validate-data", "encode-speech",
         "import-speech", "benchmark-codec", "inspect-model",
@@ -61,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     readiness = subparsers.add_parser("check-readiness")
     readiness.add_argument("--config", required=True)
     readiness.add_argument("--root")
-    rebuild = subparsers.add_parser("rebuild-v5")
+    rebuild = subparsers.add_parser("rebuild-v6")
     rebuild.add_argument("--config", required=True)
     rebuild.add_argument("--root")
     rebuild.add_argument("--dataset", required=True, choices=("canary", "pilot", "production"))
@@ -112,19 +108,16 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.choices["build-pilot-manifest"].add_argument("--screen-command")
     subparsers.choices["audit-pilot-data"].add_argument("--mimi-report")
     args = parser.parse_args(argv)
-    if args.command == "migrate-manifest":
-        source_hash = migrate_manifest_v4_to_v5(args.source, args.destination)
-        print(json.dumps({"source_sha256": source_hash, "destination": args.destination}))
-    elif args.command == "check-readiness":
+    if args.command == "check-readiness":
         config = load_config(args.config)
         root = args.root or config.runtime.data_root
         print(json.dumps(check_readiness(root, config=config), indent=2))
-    elif args.command == "rebuild-v5":
+    elif args.command == "rebuild-v6":
         config = load_config(args.config)
         root = args.root or config.runtime.data_root
         client = codec_client(config, args.socket)
         client.health()
-        report = rebuild_schema_v5_shards(
+        report = rebuild_schema_v6_shards(
             root, dataset=args.dataset, config=config, client=client, activate=args.activate
         )
         print(json.dumps(report, indent=2))

@@ -27,7 +27,7 @@ evaluate(task_id, session_id) -> RewardBreakdown
 close(session_id)
 ```
 
-`EnvironmentIdentity` 包含 environment ID、version、protocol version 和 action vocabulary
+`EnvironmentIdentity` 包含 environment ID、version、protocol version 和 action schema
 identity。连接、reset 和每次 apply 都必须校验 session/task/unit 顺序。
 
 模型可见的 `ObservationSignal` 仅包含：
@@ -53,20 +53,20 @@ screen_revision
 初始 snapshot。每个成员由当前 policy 独立采样 Speech Head 和 Unified Action Head，
 直到 environment terminated 或达到 `rollout_horizon_units`。
 
-每个有效 sampled token 保存：
+每个 unit 的 sampled 输出保存：
 
 ```text
-token
-mask
-old_log_probability
-reference_log_probability
+speech token/mask/log-prob
+structured action frame
+action supervision mask
+action frame joint old/reference log-prob
 unit_index
-head_kind
+probability component audit
 ```
 
-Speech mode、speech codec 和 action token 分别按有效 token mask 统计，再组合成策略
-目标。SILENCE unit 只有 speech mode log-prob，不虚构 codec token。动作序列在
-END_ACTION 或 burst 上限结束。
+Speech mode、speech codec 和 action frame 分别按有效 mask 统计，再组合成策略目标。
+SILENCE unit 只有 speech mode log-prob，不虚构 codec token。每个 action frame 是一个
+环境 step 的联合概率单位；TYPE bytes 仍属于该 frame 参数，不能重复计成多个环境 step。
 
 ## 4. Reward
 
@@ -98,7 +98,7 @@ A_i = (R_i - mean(R_group)) / (std(R_group) + eps)
 
 若组内 reward 方差低于 `advantage_epsilon`，整组跳过，不用数值噪声制造梯度。
 
-对 rollout 中 sampled token t：
+对 rollout 中 sampled speech item 或 action frame t：
 
 ```text
 rho_i,t = exp(log pi_theta(a_i,t|s_i,t) - log pi_old(a_i,t|s_i,t))
@@ -119,15 +119,15 @@ L_grpo = L_policy + beta * mean(KL_sample)
 ```
 
 策略比率使用 rollout 时保存的 old log-prob；reference policy 在整个 RL stage 固定。
-Speech mode、codec、action 三类 token 的 loss 分别 mask-normalize 后等权组合，避免 token
-数量较多的 head 自动支配梯度。梯度穿过两个 head、Backbone、InputEncoder 和
+Speech mode、codec、action frame 三类概率的 loss 分别 mask-normalize 后等权组合，避免
+TYPE byte 数量较多时自动支配梯度。梯度穿过两个 head、Backbone、InputEncoder 和
 MemoryUpdater，不存在 value loss 或单独 memory loss。
 
 ## 6. 在线性与安全边界
 
 - rollout 必须由当前 policy 在线产生，训练不得从静态文件冒充 on-policy 数据；
 - policy update 后未消费的旧 rollout 必须丢弃；
-- 每个 action 在执行前由 Harness 验证 grammar、权限、危险操作和 screen revision；
+- 每个 action frame 在当前 unit 解码后由 Harness 验证 schema、权限、危险操作和 screen revision；
 - 环境超时、崩溃、身份变化或 receipt 不完整时，该 rollout 标为 infrastructure failure，
   不当作低 reward 样本训练；
 - 环境 socket 和 snapshot 位于仓库外，连接失败必须 fail closed；

@@ -29,10 +29,12 @@ class ModelConfig:
     speech_depth_layers: int = 2
     speech_depth_heads: int = 4
     speech_depth_ffn_dim: int = 1024
-    max_action_duration_ms: int = 10_000
+    action_schema_id: str = "structured-action-v1"
+    action_coordinate_grid_size: int = 32
+    action_type_bytes_per_unit: int = 16
+    action_hotkey_keys_per_unit: int = 8
     dropout: float = 0.1
     activation_checkpointing: bool = False
-    action_burst_tokens: int = 16
 
     @property
     def tokens_per_unit(self) -> int:
@@ -47,7 +49,7 @@ class DataConfig:
     source: str = "synthetic"
     shards: str | None = None
     manifest: str | None = None
-    schema_version: int = 5
+    schema_version: int = 6
     audio_sample_rate: int = 24_000
     codec_frame_rate: float = 12.5
     codec_id: str = "mimi-24khz-8x2048"
@@ -163,8 +165,14 @@ class ProjectConfig:
         expected_kv_units = -(-self.model.kv_window_ms // self.data.unit_ms)
         if self.model.kv_units != expected_kv_units:
             raise ValueError("kv_units must exactly cover kv_window_ms at the configured unit_ms")
-        if self.model.action_burst_tokens < 1:
-            raise ValueError("action_burst_tokens must be positive")
+        if self.model.action_schema_id != "structured-action-v1":
+            raise ValueError("model.action_schema_id must be structured-action-v1")
+        if self.model.action_coordinate_grid_size != 32:
+            raise ValueError("structured action requires a 32x32 coordinate grid")
+        if self.model.action_type_bytes_per_unit != 16:
+            raise ValueError("structured action requires 16 TYPE bytes per unit")
+        if self.model.action_hotkey_keys_per_unit != 8:
+            raise ValueError("structured action requires at most 8 HOTKEY keys per unit")
         if self.data.dataset not in {
             "synthetic",
             "canary",
@@ -176,8 +184,8 @@ class ProjectConfig:
                 "data.dataset must be synthetic, canary, pilot, production, "
                 "or direct-speech-overfit"
             )
-        if self.data.schema_version != 5:
-            raise ValueError("data.schema_version must be exactly 5; migrate v4 data explicitly")
+        if self.data.schema_version != 6:
+            raise ValueError("data.schema_version must be exactly 6; rebuild old action data")
         if self.data.source not in {"synthetic", "webdataset"}:
             raise ValueError("data.source must be synthetic or webdataset")
         if self.data.dataset != "synthetic" and self.data.source != "webdataset":

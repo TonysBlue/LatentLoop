@@ -1,36 +1,46 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from contracts import ControlSignal, decode_action_tokens
+from contracts import ActionFrame, ControlSignal, decode_action_frame
 
 
-def action_tokens_to_controls(tokens: list[int], *, event_id: str) -> tuple[ControlSignal, ...]:
-    return decode_action_tokens(tokens, event_id=event_id).controls
+def action_frame_to_controls(
+    frame: ActionFrame,
+    *,
+    event_id: str,
+    screen_revision: int | None = None,
+    pending_utf8: bytes = b"",
+) -> tuple[tuple[ControlSignal, ...], bytes]:
+    result = decode_action_frame(
+        frame,
+        event_id=event_id,
+        screen_revision=screen_revision,
+        pending_utf8=pending_utf8,
+    )
+    return result.controls, result.pending_utf8
 
 
 @dataclass(slots=True)
-class ActionStreamDecoder:
-    """Assemble one canonical action that may span multiple 80 ms bursts."""
+class ActionFrameDecoder:
+    """Decode and immediately release every complete control in one 80 ms frame."""
 
-    max_tokens: int = 4096
-    _tokens: list[int] = field(default_factory=list)
+    pending_utf8: bytes = b""
 
-    def push(self, tokens: list[int], *, event_id: str) -> tuple[ControlSignal, ...]:
-        for token in tokens:
-            if token == 0 and not self._tokens:
-                continue
-            if token == 0:
-                self.reset()
-                raise ValueError("PAD cannot appear inside an active action")
-            self._tokens.append(int(token))
-            if len(self._tokens) > self.max_tokens:
-                self.reset()
-                raise ValueError("action stream exceeds its maximum length")
-            if token == 1:
-                complete, self._tokens = self._tokens, []
-                return action_tokens_to_controls(complete, event_id=event_id)
-        return ()
+    def push(
+        self,
+        frame: ActionFrame,
+        *,
+        event_id: str,
+        screen_revision: int | None = None,
+    ) -> tuple[ControlSignal, ...]:
+        controls, self.pending_utf8 = action_frame_to_controls(
+            frame,
+            event_id=event_id,
+            screen_revision=screen_revision,
+            pending_utf8=self.pending_utf8,
+        )
+        return controls
 
     def reset(self) -> None:
-        self._tokens.clear()
+        self.pending_utf8 = b""

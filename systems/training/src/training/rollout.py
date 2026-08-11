@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 import torch
 from contracts import ActuationSignal, EnvironmentReceipt, ObservationSignal, RewardBreakdown
+from model.types import ActionFrame
 
 
 @dataclass(slots=True)
@@ -19,7 +20,7 @@ class Rollout:
     receipts: list[EnvironmentReceipt] = field(default_factory=list)
     speech_modes: list[torch.Tensor] = field(default_factory=list)
     speech_codes: list[torch.Tensor] = field(default_factory=list)
-    action_tokens: list[torch.Tensor] = field(default_factory=list)
+    action_frames: list[ActionFrame] = field(default_factory=list)
     old_logprobs: list[torch.Tensor] = field(default_factory=list)
     reference_logprobs: list[torch.Tensor] = field(default_factory=list)
     reward_breakdown: RewardBreakdown | None = None

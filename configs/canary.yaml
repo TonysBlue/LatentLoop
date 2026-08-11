@@ -19,7 +19,10 @@ model:
   speech_depth_layers: 2
   speech_depth_heads: 4
   speech_depth_ffn_dim: 1024
-  max_action_duration_ms: 10000
+  action_schema_id: structured-action-v1
+  action_coordinate_grid_size: 32
+  action_type_bytes_per_unit: 16
+  action_hotkey_keys_per_unit: 8
   dropout: 0.1
   activation_checkpointing: false
 data:
@@ -27,7 +30,7 @@ data:
   source: webdataset
   shards: ~/latentloop-data/datasets/canary/v1/shards/processed/train/train-*.tar
   manifest: ~/latentloop-data/datasets/canary/v1/shards/processed/train/train-manifest.jsonl
-  schema_version: 5
+  schema_version: 6
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
   codec_id: mimi-24khz-8x2048

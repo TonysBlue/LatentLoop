@@ -32,10 +32,10 @@ class CheckpointMetadata:
     git_commit: str
     codec_revision: str = "unknown"
     parent_sha256: str | None = None
-    schema_version: int = 5
+    schema_version: int = 6
     stage: str = "pretrain"
     objective: str = "supervised"
-    action_vocabulary_id: str = "unified-action-v4"
+    action_schema_id: str = "structured-action-v1"
     reference_checkpoint_sha256: str | None = None
     environment_id: str | None = None
     task_manifest_sha256: str | None = None
@@ -68,11 +68,13 @@ def _serialize_state(state: RecurrentState | None) -> dict[str, Any] | None:
             "previous_codes": state.speech_local.previous_codes.cpu(),
         },
         "action_local": {
-            "hidden": state.action_local.hidden.cpu(),
-            "previous_token": state.action_local.previous_token.cpu(),
-            "active": state.action_local.active.cpu(),
-            "event_type": state.action_local.event_type.cpu(),
-            "burst_tokens": state.action_local.burst_tokens.cpu(),
+            "previous_frame_embedding": state.action_local.previous_frame_embedding.cpu(),
+            "type_decoder_state": state.action_local.type_decoder_state.cpu(),
+            "pending_utf8_bytes": state.action_local.pending_utf8_bytes.cpu(),
+            "pending_utf8_length": state.action_local.pending_utf8_length.cpu(),
+            "type_active": state.action_local.type_active.cpu(),
+            "held_buttons": state.action_local.held_buttons.cpu(),
+            "held_keys": state.action_local.held_keys.cpu(),
         },
         "unit_index": state.unit_index.cpu(),
     }
@@ -96,11 +98,13 @@ def _deserialize_state(
             previous_codes=payload["speech_local"]["previous_codes"].to(device),
         ),
         action_local=ActionLocalState(
-            hidden=payload["action_local"]["hidden"].to(device),
-            previous_token=payload["action_local"]["previous_token"].to(device),
-            active=payload["action_local"]["active"].to(device),
-            event_type=payload["action_local"]["event_type"].to(device),
-            burst_tokens=payload["action_local"]["burst_tokens"].to(device),
+            previous_frame_embedding=payload["action_local"]["previous_frame_embedding"].to(device),
+            type_decoder_state=payload["action_local"]["type_decoder_state"].to(device),
+            pending_utf8_bytes=payload["action_local"]["pending_utf8_bytes"].to(device),
+            pending_utf8_length=payload["action_local"]["pending_utf8_length"].to(device),
+            type_active=payload["action_local"]["type_active"].to(device),
+            held_buttons=payload["action_local"]["held_buttons"].to(device),
+            held_keys=payload["action_local"]["held_keys"].to(device),
         ),
         unit_index=payload["unit_index"].to(device),
     )
@@ -127,7 +131,7 @@ class CheckpointManager:
     ) -> tuple[Path, str]:
         target = self.directory / f"{name}.pt"
         payload = {
-            "format_version": 5,
+            "format_version": 6,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
@@ -225,8 +229,8 @@ class CheckpointManager:
         expected_metadata: CheckpointMetadata,
     ) -> tuple[dict[str, Any], DataCursor, RecurrentState | None, CheckpointMetadata]:
         payload = torch.load(Path(path), map_location=device, weights_only=False)
-        if payload.get("format_version") != 5:
-            raise ValueError("unsupported checkpoint format; format v4 is warm-start only")
+        if payload.get("format_version") != 6:
+            raise ValueError("unsupported checkpoint format; structured action requires v6")
         if payload["config_hash"] != config_hash(config):
             raise ValueError("checkpoint configuration does not match the current run")
         restored_metadata = CheckpointMetadata(**payload["metadata"])
@@ -238,7 +242,7 @@ class CheckpointManager:
             "schema_version",
             "stage",
             "objective",
-            "action_vocabulary_id",
+            "action_schema_id",
             "reference_checkpoint_sha256",
             "environment_id",
             "task_manifest_sha256",

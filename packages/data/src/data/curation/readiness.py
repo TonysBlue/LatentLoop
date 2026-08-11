@@ -123,18 +123,18 @@ def check_readiness(
             processed_manifest = path("shards", "processed", split, f"{split}-manifest.jsonl")
             if processed_manifest.is_file():
                 encoded_entries = read_jsonl(processed_manifest)
-                if any(int(entry.get("schema_version", -1)) != 5 for entry in encoded_entries):
-                    invalid.append(f"{split} processed manifest contains non-v5 samples")
-                required_v5 = {
+                if any(int(entry.get("schema_version", -1)) != 6 for entry in encoded_entries):
+                    invalid.append(f"{split} processed manifest contains non-v6 samples")
+                required_v6 = {
                     "protocol_version",
-                    "action_vocabulary_id",
+                    "action_schema_id",
                     "runtime_identity",
                     "environment_id",
                     "environment_version",
                 }
-                if any(required_v5 - set(entry) for entry in encoded_entries):
+                if any(required_v6 - set(entry) for entry in encoded_entries):
                     invalid.append(
-                        f"{split} processed manifest is missing schema v5 runtime identity"
+                        f"{split} processed manifest is missing schema v6 runtime identity"
                     )
                 if {entry["episode_id"] for entry in source_entries} != {
                     entry["episode_id"] for entry in encoded_entries
@@ -173,8 +173,8 @@ def check_readiness(
         if checkpoint.is_file():
             try:
                 payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
-                if payload.get("format_version") != 5:
-                    invalid.append("initial checkpoint must use format version 5")
+                if payload.get("format_version") != 6:
+                    invalid.append("initial checkpoint must use format version 6")
                 metadata = payload.get("metadata", {})
                 if metadata.get("codec_id") != config.data.codec_id:
                     invalid.append("initial checkpoint codec_id differs from Pilot config")

@@ -8,10 +8,8 @@ class SafetyGate:
         self,
         *,
         require_approval_for: set[ControlKind] | None = None,
-        max_duration_ms: int = 10_000,
     ) -> None:
         self.require_approval_for = require_approval_for or set()
-        self.max_duration_ms = max_duration_ms
 
     def validate(
         self,
@@ -22,11 +20,9 @@ class SafetyGate:
     ) -> None:
         if signal.screen_revision is not None and signal.screen_revision != current_revision:
             raise PermissionError("screen revision is stale")
-        if signal.duration_ms is not None and signal.duration_ms > self.max_duration_ms:
-            raise PermissionError("control duration exceeds safety limit")
         if signal.kind in self.require_approval_for and not approved:
             raise PermissionError(f"control requires approval: {signal.kind}")
-        if signal.kind is ControlKind.TEXT_INPUT and signal.text is None:
+        if signal.kind is ControlKind.TEXT_INPUT and not signal.text:
             raise ValueError("text input requires text")
         if signal.kind in {ControlKind.KEY_PRESS, ControlKind.KEY_RELEASE} and signal.key is None:
             raise ValueError("keyboard signal requires a key")

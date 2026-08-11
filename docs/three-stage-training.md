@@ -18,7 +18,7 @@ reward 公式和同一 checkpoint 格式。规模之间只改变数据数量、�
 group size、环境 worker 数和计算资源，不改变训练目标。
 
 模型始终只有两个输出头：Speech Head 直接输出 speech mode 与 Mimi codec token；
-Unified Action Head 在一个统一 token vocabulary 中输出全部电脑操作。三个阶段均不
+Unified Action Head 通过一个结构化 ActionFrame schema 输出全部电脑操作。三个阶段均不
 增加文本 head、value head、memory head 或阶段专用 head。
 
 ## 2. 三类独立数据
@@ -32,17 +32,17 @@ Unified Action Head 在一个统一 token vocabulary 中输出全部电脑操作
 | Online GRPO | 当前 policy 在真实隔离环境中的在线 rollout | 按任务结果、交互质量、延迟、效率和安全反馈优化策略 |
 
 Pretrain/SFT episode 按 80 ms unit 保存。没有专家 action 的 unit 必须设置
-`action_token_mask=false`；不得把“无 action 标签”伪造成 `NOOP + END_ACTION`。
+`action_supervision_mask=false`；不得把“无 action 标签”伪造成有监督 `NO_ACTION`。
 同理，缺少 speech 标签时必须关闭相应 speech mask。mask 表示监督是否存在，而非
 模型在该时刻应该做什么。
 
 ## 3. Pretrain
 
-Pretrain 使用 teacher forcing 的 masked token loss：
+Pretrain 使用 teacher forcing 的结构化 frame negative log-likelihood：
 
 ```text
 L_pretrain = speech_weight * (L_speech_mode + L_speech_codec)
-           + action_weight * L_action_token
+           + action_weight * L_action_frame
 ```
 
 各项只在自己的有效 mask 上归一化。Speech Head、Unified Action Head、
@@ -68,12 +68,12 @@ Online GRPO 从同一个任务初始状态和 seed 采样 G 条独立 rollout。
 policy ratio，并相对冻结的 SFT reference policy 计算 sampled-token KL。没有 critic
 或 value head。详细数学定义和环境接口见 `online-grpo-training.md`。
 
-## 6. Schema v5
+## 6. Schema v6
 
-监督 episode 与在线 rollout 统一使用 schema v5 identity。监督样本 metadata 至少包含：
+监督 episode 与在线 rollout 统一使用 schema v6 identity。监督样本 metadata 至少包含：
 
 ```text
-schema_version = 5
+schema_version = 6
 stage
 dataset_scale
 sample_kind
@@ -83,19 +83,19 @@ task_id
 environment_id
 environment_version
 protocol_version
-action_vocabulary_id
+action_schema_id = structured-action-v1
 runtime_identity
 decoded_controls
 receipts
 ```
 
-在线 rollout 还必须记录 group/rollout ID、policy/reference hash、采样 token、old
-log-prob、reward components、环境 event/receipt、task ID、seed 和 termination reason。
-schema v3 不得静默兼容；旧资产必须显式重新生成。
+在线 rollout 还必须记录 group/rollout ID、policy/reference hash、采样 frame、frame joint
+old/reference log-prob、reward components、环境 event/receipt、task ID、seed 和 termination
+reason。旧 flat-action schema 不得兼容；旧资产必须从源轨迹显式重新生成。
 
-## 7. Checkpoint v5 与阶段谱系
+## 7. Checkpoint v6 与阶段谱系
 
-正式 checkpoint 使用 format v5，metadata 至少包含：
+正式 checkpoint 使用 format v6，metadata 至少包含：
 
 ```text
 schema_version
@@ -103,7 +103,7 @@ stage
 objective
 data_identity
 codec identity
-action_vocabulary_id
+action_schema_id
 parent_sha256
 reference_checkpoint_sha256
 environment_id
@@ -112,8 +112,8 @@ reward_spec_id
 ```
 
 Pretrain checkpoint 的 parent 可以为空；SFT 的 parent 必须是 Pretrain；GRPO 的 parent
-必须沿训练更新链前进，同时 reference hash 始终指向冻结的 SFT checkpoint。format v4
-只允许显式 warm-start 兼容权重，不能作为 v5 训练的 resume checkpoint。
+必须沿训练更新链前进，同时 reference hash 始终指向冻结的 SFT checkpoint。旧 flat-action
+checkpoint 直接拒绝，不能 resume 或 warm-start Action Head 权重。
 
 ## 8. 三种规模配置
 
@@ -135,10 +135,10 @@ Canary 是完整训练链的小规模证明，不是删减版算法。它同样�
 
 - 配置拒绝错误 stage/objective、正式 RL 缺失环境 identity/socket、非法 GRPO 参数；
 - 三个正式 recipe 都严格包含 `pretrain -> sft -> rl`，且全部 `backbone_train_mode=all`；
-- schema v5 往返保存 mask、runtime identity、decoded controls、receipts 与 metadata，明确拒绝旧 schema；
+- schema v6 往返保存结构化 frame、runtime identity、decoded controls、receipts 与 metadata，明确拒绝旧 schema；
 - speech-only 导入保持 action mask 全 false，显式专家动作可正确编码；
 - 环境客户端校验 identity，并保证 observation 不携带 reward/隐藏状态；
 - rollout 的同组成员使用相同 task/seed 初始状态并记录 old/reference log-prob；
 - GRPO advantage、clipping、KL、零方差跳过和全模型梯度可验证；
-- format v5 resume 校验完整谱系，format v4 只能 warm-start；
+- format v6 resume 校验完整谱系并拒绝旧 Action Head；
 - Canary、Pilot、Production 通过同一 recipe 和 train 分派路径。

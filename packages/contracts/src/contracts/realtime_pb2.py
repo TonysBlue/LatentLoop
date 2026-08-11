@@ -65,17 +65,15 @@ def _build() -> tuple[object, tuple[object, ...]]:
         ("screen_revision", 3, t.TYPE_UINT64),
         ("x", 4, t.TYPE_FLOAT),
         ("y", 5, t.TYPE_FLOAT),
-        ("x2", 6, t.TYPE_FLOAT),
-        ("y2", 7, t.TYPE_FLOAT),
         ("dx", 8, t.TYPE_FLOAT),
         ("dy", 9, t.TYPE_FLOAT),
-        ("duration_ms", 10, t.TYPE_UINT32),
         ("key", 12, t.TYPE_UINT32),
         ("button", 13, t.TYPE_UINT32),
     )
     for name, number, typ in optional:
         _field(control, name, number, typ, proto3_optional=True)
     _field(control, "text", 11, t.TYPE_STRING)
+    _field(control, "button_phase", 14, t.TYPE_STRING)
     speech = file.message_type.add(name="SpeechSignal")
     _field(speech, "sample_rate_hz", 1, t.TYPE_UINT32)
     _field(speech, "channels", 2, t.TYPE_UINT32)

@@ -20,9 +20,9 @@ Model Service   -> speech PCM + decoded ControlSignal
                  -> Harness actuators
 ```
 
-Model Core 内部仍然使用 Speech Head 的 Mimi token 和 Unified Action Head 的 action
-token；这些 token 不作为 Model Service 与 Harness 的执行接口。Model Service 将它们
-解码为 speech PCM 和 ControlSignal 后再发送给 Harness。Harness 不读取或修改
+Model Core 内部使用 Speech Head 的 Mimi token 和 Unified Action Head 的结构化
+ActionFrame；这些模型输出不作为 Model Service 与 Harness 的直接执行接口。Model Service
+将它们解码为 speech PCM 和 ControlSignal 后再发送给 Harness。Harness 不读取或修改
 `Z_t/H_t/KV_t`，Training System 不把 reward、receipt 或隐藏环境信息注入模型输入。
 
 共享 Data 负责 capture、replay、监督 episode、online rollout、manifest、审计和
@@ -45,7 +45,7 @@ readiness，不隶属于 Training System。
           ↙          ↘
      Speech Head   Unified Action Head
           ↓          ↓
-    Mimi codec     Action tokens
+    Mimi codec     ActionFrame
           ↓          ↓
       扬声器       Harness / UI-TARS
           ↘          ↙
@@ -72,7 +72,7 @@ H_t 是主干经过 final normalization 后的完整 hidden 序列，必须暂�
 2. 模型输出语音和电脑 action 时仍持续更新 H、KV、Z 和局部状态。
 3. 支持用户插话、补充、纠正和打断，真实回流进入后续 unit。
 4. 直接从多模态主干 hidden 生成语音 codec，不经过文本或 TTS。
-5. 将所有电脑操控统一到一个 action token vocabulary。
+5. 将所有电脑操控统一到一个结构化 ActionFrame schema 与联合概率接口。
 6. 使用固定容量 Z_t 保存长期目标、约束、计划和环境状态。
 7. 使用有界 KV 保存近期精确多模态历史，控制显存和延迟。
 8. 让未来 Speech/Action loss 通过 Z_t 监督早期 MemoryUpdater。
@@ -120,16 +120,17 @@ H_t + speech_local_(t-1)
 
 ### 3.4 电脑动作输出
 
-Unified Action Head 使用单一离散序列空间表示：
+Unified Action Head 每 80 ms 输出一个结构化 frame：
 
 ~~~
-NOOP, CLICK, DOUBLE_CLICK, RIGHT_CLICK,
-DRAG, SCROLL, TYPE, HOTKEY, WAIT, CANCEL,
-coordinate bins, scroll bins, duration bins,
-UTF-8 byte tokens, key tokens, END_ACTION, PAD
+kind = NO_ACTION | NOOP | POINTER_MOVE | POINTER_BUTTON |
+       SCROLL | TYPE | HOTKEY
+parameters = kind-conditioned coordinate/button/scroll/text/key fields
 ~~~
 
-动作参数不再由独立 regression head 输出。Harness 解码 token、校验 grammar 和安全策略后交给操作系统或 UI-TARS Operator。
+统一的是语义 schema、执行边界和 frame joint probability，不强迫异构参数共享扁平 token
+序列。Model Service 把 frame 解码为零个或多个有序 ControlSignal；Harness 校验 schema、
+screen revision 和安全策略后在当前 unit 立即执行。
 
 ### 3.5 文本旁路边界
 
@@ -147,7 +148,7 @@ UTF-8 byte tokens, key tokens, END_ACTION, PAD
 | Z_t | 固定容量长期 latent memory |
 | H_t | 当前 unit 的完整 final-normalized hidden |
 | speech_local | 语音 temporal state 和上一帧 codec |
-| action_local | action decoder 的跨 unit continuation state |
+| action_local | previous frame、TYPE decoder、pending UTF-8 和 held-input state |
 
 ### 4.1 KV Cache
 
@@ -252,7 +253,7 @@ KV_(t-1), E_t, Z_t --> Backbone --> H_t, KV_t
                                       |             |
                                Speech Head   Unified Action Head
                                       |             |
-                             Mimi waveform     action token burst
+                             Mimi waveform     ActionFrame
 ~~~
 
 ### 6.1 流式音频编码器
@@ -359,44 +360,35 @@ $$
 
 ## 9. Unified Action Head 与 Harness
 
-### 9.1 ActionTokenizer
+### 9.1 Structured ActionFrame
 
-当前统一词表包含：
+kind 固定为 `NO_ACTION/NOOP/POINTER_MOVE/POINTER_BUTTON/SCROLL/TYPE/HOTKEY`。
+POINTER_MOVE 使用 32x32 joint coarse cell categorical 与 cell 内 bounded residual；
+POINTER_BUTTON 使用 button 与 `CLICK/DOWN/UP` phase 且作用于当前指针；SCROLL 使用二维
+bounded delta；TYPE 使用每 unit 至多 16 bytes 的 UTF-8 decoder；HOTKEY 使用版本化 key
+decoder。只有当前 kind 对应的参数参与 loss 与 frame joint log-prob。
 
-~~~
-PAD, END_ACTION, NOOP, CLICK, DOUBLE_CLICK, RIGHT_CLICK,
-DRAG, SCROLL, TYPE, HOTKEY, WAIT, CANCEL,
-coordinate bins: 256
-scroll bins: 256
-duration bins: 128
-UTF-8 byte tokens: 256
-key tokens: 32
-~~~
+### 9.2 组合动作
 
-### 9.2 编码规则
+拖拽由 `button DOWN -> move* -> button UP` 组成，双击由两个 CLICK frame 组成，等待由
+NO_ACTION 表达。宏动作、duration、CANCEL、END_ACTION 和 PAD 均不属于协议。
 
-- 点击类：kind + 2 个 coordinate token + END_ACTION；
-- 拖拽：kind + 4 个 coordinate token + END_ACTION；
-- 滚动：kind + 2 个 signed scroll token + END_ACTION；
-- WAIT：kind + 1 个 duration token + END_ACTION；
-- TYPE：kind + UTF-8 byte tokens + END_ACTION；
-- HOTKEY：kind + key tokens + END_ACTION；
-- NOOP/CANCEL：kind + END_ACTION。
+### 9.3 跨 unit TYPE
 
-### 9.3 跨 unit continuation
-
-每个 unit 最多生成 action_burst_tokens 个 token。event 未结束时，action_local 保存 decoder hidden、previous token、active、event_type 和 burst 计数，下一 unit 继续生成。END_ACTION 后的 PAD 被 mask。
+连续 TYPE frame 隐式续接。action_local 最多保存 3 个 pending UTF-8 bytes，并在每个 unit
+把已经完成的合法文本前缀立即解码、校验和执行；切到其他 kind 时结束 TYPE 且 pending
+必须为空。已经执行的 action 不回滚，模型通过后续真实屏幕/声音继续纠正。
 
 ### 9.4 Harness 安全边界
 
 Harness 在执行前校验：
 
-- grammar 和 token sequence 完整性；
-- 坐标、滚动和时长范围；
+- schema 和 kind-conditioned 参数完整性；
+- 坐标、滚动、文本、key 和 held-input 状态范围；
 - screen_revision 新鲜度；
 - 应用和区域白名单；
 - 删除、支付、发送、安装和权限修改审批；
-- 速率限制、超时、CANCEL 和全局紧急停止。
+- 速率限制、session reset 和全局紧急停止。
 
 执行结果只通过下一 unit 的屏幕和声音反馈进入模型。
 
@@ -406,10 +398,12 @@ Harness 在执行前校验：
 
 ~~~
 H_t -> Speech Head -> SILENCE/SPEECH + codec
-H_t -> Action Head -> unified action token burst
+H_t -> Action Head -> one Structured ActionFrame
 ~~~
 
-不存在独立 Speech Control、Action Control 或 Cognitive Control head。静音由 Speech Head 的 SILENCE mode 表达，等待/取消由 action vocabulary 和运行时队列策略表达。
+不存在独立 Speech Control、Action Control 或 Cognitive Control head。静音由 Speech Head
+的 SILENCE mode 表达，等待由 Action Head 的 NO_ACTION 表达；session reset 和紧急停止是
+Harness control-plane 操作，不是模型 action kind。
 
 ## 11. 完整状态转移
 
@@ -510,20 +504,20 @@ Telemetry           延迟、队列、状态和轨迹
 mic_audio          单路混合麦克风
 screen_frames      带时间戳的屏幕关键帧
 target_speech      仅用于离线 codec 编码的目标音频
-target_actions     统一 action token 序列
+target_actions     每 unit 一个结构化 ActionFrame
 timestamps         unit 时间和 screen revision
 runtime_events     播放、执行、丢帧和延迟审计
 ~~~
 
 构造过程中的来源分离、TTS 中间产物、环境参数和任务标签不能作为模型输入。
 
-当前 WebDataset schema version 为 5。一个 episode 由 `meta.json`、`mic.flac`、
+当前 WebDataset schema version 为 6。一个 episode 由 `meta.json`、`mic.flac`、
 `target_speech.flac`、`screen.npz`、`timeline.npz`、`speech_codes.npy` 和
-`turns.json` 组成；timeline 保存 speech mode/mask、codec mask、统一 action
-tokens/mask、时间戳和 screen revision。旧 `controls.npy`、结构化 action JSON、
-`controls.json` 和 `receipts.json` 只保存 control-plane 审计，不进入模型输入。旧
+`turns.json` 组成；timeline 保存 speech mode/mask、codec mask、结构化 action frame、
+action supervision mask、时间戳和 screen revision。`controls.json` 和 `receipts.json` 只保存
+control-plane 审计，不进入模型输入。旧 flat `action_tokens/action_token_mask`、
 `controls.npy`、memory target 和 schema v1/v2/v3/v4 不属于当前训练协议；旧资产必须
-显式重建为 v5。完整字段、runtime identity 和迁移规则见
+显式从源轨迹重建为 v6。完整字段、runtime identity 和迁移规则见
 `docs/data/trajectory-schema.md`。
 
 ### 14.2 场景覆盖
@@ -560,10 +554,12 @@ mode loss 对有效 SILENCE/SPEECH 标签计算 CE；codec loss 只对 SPEECH un
 ### 15.2 Action loss
 
 $$
-L_{action}=MaskedCE(action\_logits,action\_tokens)
+L_{action}=-E[\log p(ActionFrame_t\mid H_t,action\_local_{t-1})]
 $$
 
-统一处理 action kind、坐标、滚动、时长、UTF-8 byte、key 和 END_ACTION。PAD 与无效 burst 被 mask。
+frame joint log-prob 由 kind categorical 与对应的 coordinate/button/scroll/text/key 参数项
+组成。各分支只在有效 kind 和监督 mask 上归一化；连续参数的训练 NLL 与 sampling
+log-prob 使用同一 bounded 参数化。
 
 ### 15.3 并发输出
 
@@ -622,7 +618,7 @@ $$
 4. 所有 targets 配套 mask；缺失标签屏蔽对应 loss，不伪造 NOOP 或 SILENCE。
 5. 未来输出 loss 必须能够在 TBPTT 范围内回传到早期 MemoryUpdater。
 6. 训练、验证、推理和恢复共享同一 forward_step 语义。
-7. codec、action vocabulary、schema、unit 时钟和 checkpoint identity 必须一致。
+7. codec、action schema、trajectory schema、unit 时钟和 checkpoint identity 必须一致。
 
 ## 18. 推理算法
 
@@ -673,7 +669,7 @@ MiniCPM 或同类多模态主干可以提供视觉编码、音频编码、多模
 - latent_slots、kv_units、kv_window_ms；
 - audio sample rate、unit_ms、screen shape；
 - Mimi codec identity；
-- action_burst_tokens 和 max_action_duration_ms；
+- action_schema_id、coordinate_grid_size、type_bytes_per_unit、hotkey_keys_per_unit；
 - tbptt_units、memory_horizon_units、mixed precision；
 - loss weights、checkpoint cadence、manifest 和 run identity。
 
@@ -704,10 +700,10 @@ MiniCPM 或同类多模态主干可以提供视觉编码、音频编码、多模
 
 ### 21.3 视觉与动作指标
 
-- action token accuracy；
-- grammar validity；
-- 坐标、滚动、时长 token 正确率；
-- 跨 unit continuation；
+- action kind accuracy 与 frame joint NLL；
+- schema validity；
+- 坐标 cell 命中/残差误差、button/phase、scroll 和 text/key accuracy；
+- TYPE UTF-8 跨 unit continuation；
 - screen revision 过期拒绝率；
 - 动作成功率、失败恢复和长任务完成率；
 - 危险动作误执行率。
@@ -763,7 +759,7 @@ UI-TARS/Harness 必须提供：
 - W&B 只负责指标、配置和谱系，不进入模型 forward；
 - Ray 只负责 CPU 数据、环境和评测，不维护 GPU recurrent state；
 - codec worker 通过带身份校验的本地接口提供 encode/decode；
-- runtime、checkpoint、manifest、codec 和 action vocabulary 版本必须一致；
+- runtime、checkpoint、manifest、codec 和 action schema 版本必须一致；
 - 所有异常通过显式失败、隔离、恢复或安全拒绝处理。
 
 ## 25. 成功标准

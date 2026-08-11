@@ -167,7 +167,7 @@ def encode_pilot_shards(
     return report
 
 
-def rebuild_schema_v5_shards(
+def rebuild_schema_v6_shards(
     root: str | Path,
     *,
     dataset: str,
@@ -175,19 +175,19 @@ def rebuild_schema_v5_shards(
     client: CodecWorkerClient,
     activate: bool = False,
 ) -> dict[str, Any]:
-    """Rebuild all processed shards through the v5 writer and Mimi worker.
+    """Rebuild all processed shards through the v6 writer and Mimi worker.
 
-    The output is first written below ``shards/rebuild-v5`` and validated by a
-    v5 reader.  With ``activate=True`` the previous processed tree is moved to
+    The output is first written below ``shards/rebuild-v6`` and validated by a
+    v6 reader. With ``activate=True`` the previous processed tree is moved to
     a recoverable archive before the new tree is atomically installed.
     """
     if dataset not in {"canary", "pilot", "production"}:
-        raise ValueError("schema v5 rebuild supports canary, pilot, or production")
+        raise ValueError("schema v6 rebuild supports canary, pilot, or production")
     root = Path(root).expanduser().resolve()
     source_root_path = dataset_root(root, dataset)
     if not dataset_path(root, dataset, "manifests", "episodes.jsonl").is_file():
         raise FileNotFoundError(f"source manifest is absent for {dataset}")
-    rebuild_root = source_root_path / "shards" / "rebuild-v5"
+    rebuild_root = source_root_path / "shards" / "rebuild-v6"
     if rebuild_root.exists():
         shutil.rmtree(rebuild_root)
     for split in SPLITS:
@@ -210,18 +210,18 @@ def rebuild_schema_v5_shards(
         )
         episodes = sum(1 for _ in encoded)
         if episodes == 0:
-            raise ValueError(f"v5 rebuild produced no episodes for {dataset}/{split}")
+            raise ValueError(f"v6 rebuild produced no episodes for {dataset}/{split}")
     report = {
         "dataset": dataset,
-        "schema_version": 5,
+        "schema_version": 6,
         "rebuild_root": str(rebuild_root),
         "activated": activate,
     }
-    write_json(dataset_path(root, dataset, "reports", "rebuild-v5.json"), report)
+    write_json(dataset_path(root, dataset, "reports", "rebuild-v6.json"), report)
     if activate:
         previous = source_root_path / "shards" / "processed"
         source_identity = sha256_file(dataset_path(root, dataset, "manifests", "episodes.jsonl"))
-        archive = source_root_path / "archive" / f"processed-before-v5-{source_identity[:12]}"
+        archive = source_root_path / "archive" / f"processed-before-v6-{source_identity[:12]}"
         archive.parent.mkdir(parents=True, exist_ok=True)
         if previous.exists():
             if archive.exists():
@@ -229,7 +229,7 @@ def rebuild_schema_v5_shards(
             os.replace(previous, archive)
         os.replace(rebuild_root / "processed", previous)
         report["activated"] = True
-        write_json(dataset_path(root, dataset, "reports", "rebuild-v5.json"), report)
+        write_json(dataset_path(root, dataset, "reports", "rebuild-v6.json"), report)
     return report
 
 
@@ -276,7 +276,7 @@ def prepare_pilot_data(
     if dataset == "production" and not production_manifest.is_file():
         raise FileNotFoundError(
             "Production preparation requires an external locked source manifest; "
-            "use rebuild-v5 after provisioning it"
+            "use rebuild-v6 after provisioning it"
         )
     dataset_names = ("canary", "pilot") if dataset == "all" else (dataset,)
     for dataset_name in dataset_names:

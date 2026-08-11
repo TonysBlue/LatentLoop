@@ -141,8 +141,8 @@ class StreamUnit:
     speech_mode_mask: Tensor
     speech_codes: Tensor
     speech_codec_mask: Tensor
-    action_tokens: Tensor
-    action_token_mask: Tensor
+    action: ActionFrame
+    action_supervision_mask: Tensor
 ```
 
 `delta_ms` 为正，时间戳严格递增；所有 target 都有对应 mask。
@@ -189,8 +189,7 @@ class StepOutput:
     state: RecurrentState
     speech_mode_logits: Tensor
     speech_codec_logits: Tensor
-    action_logits: Tensor
-    action_token_mask: Tensor
+    action: ActionHeadOutput
     hidden: Tensor
 ```
 
@@ -245,7 +244,9 @@ Z_t = MemoryUpdater(Z_(t-1), H_(t-1))
 
 ### 7.5 Unified Action Head
 
-所有 action kind 和参数 token 共用 ActionTokenizer vocabulary。事件可以跨 unit continuation；`END_ACTION` 后的 `PAD` 被 mask。Harness 负责解码 grammar、安全和 screen revision。
+所有 action kind 和 kind-conditioned 参数共用 Structured ActionFrame schema、context、
+local state 和 frame joint probability。每 unit frame 立即解码执行；只有 TYPE decoder 的
+UTF-8 pending bytes 跨 unit。Harness 负责 schema、安全和 screen revision。
 
 ## 8. 模型配置档位
 
@@ -259,7 +260,9 @@ Local profile 用于单 GPU 完整结构验证，包含音频/视觉 encoder、l
 
 ### 8.3 Production-compatible
 
-Production-compatible profile 使用生产 codec、schema、action vocabulary、60 秒 KV（750 units）和 memory horizon 750。模型宽度、batch 和 optimizer 可以按硬件调整，但不得改变状态和数据协议。
+Production-compatible profile 使用生产 codec、trajectory/action schema、60 秒 KV（750
+units）和 memory horizon 750。模型宽度、batch 和 optimizer 可以按硬件调整，但不得改变
+状态和数据协议。
 
 ## 9. 数据格式
 
@@ -318,18 +321,20 @@ optimizer、学习率、梯度累积、FP16、梯度裁剪和 checkpoint cadence
 
 ```text
 L_speech = L_speech_mode + L_speech_codec
-L_action = masked_CE(action_logits, action_tokens)
+L_action = masked_structured_action_nll(action_output, action_frame)
 L_total  = speech_weight * L_speech + action_weight * L_action
 ```
 
-SILENCE unit 的 codec loss 被 mask。没有 memory probe、future auxiliary、write-budget、diversity、control、confidence 或 regression loss。
+SILENCE unit 的 codec loss 被 mask。Action 参数按 kind 激活，连续参数 NLL 与 rollout
+log-prob 使用同一 bounded 参数化。没有 memory probe、future auxiliary、write-budget、
+diversity、control 或 confidence loss。
 
 ### 10.4 梯度与模块影响
 
 | 模块 | 监督来源 | 主要影响 |
 |---|---|---|
 | Speech Head | mode/codec loss | speech mode、codec 和局部连续性 |
-| Action Head | action token loss | grammar、参数 token、continuation |
+| Action Head | structured frame NLL | kind、参数、TYPE continuation |
 | Backbone | Speech + Action loss | 共享多模态表示 |
 | MemoryUpdater/Z | 未来 Speech/Action loss | 长期目标、约束和任务状态 |
 | KV | 无参数 loss | 近期精确上下文 |
@@ -373,7 +378,9 @@ git commit
 
 ### 11.3 恢复校验
 
-恢复时检查 model shape、unit clock、schema、codec identity、action vocabulary、manifest hash、config hash 和 parent checkpoint compatibility。递归状态恢复后下一 unit 的 output/loss 应与连续运行一致。
+恢复时检查 model shape、unit clock、trajectory/action schema、codec identity、manifest
+hash、config hash 和 parent checkpoint compatibility。递归状态恢复后下一 unit 的
+output/loss 应与连续运行一致。
 
 ## 12. W&B Local
 
@@ -407,7 +414,7 @@ CUDA、FP16、codec worker、checkpoint 原子写入和 W&B Local/Offline 可用
 
 ### 14.2 数据与协议
 
-StreamUnit shape、80 ms 时钟、mask、schema v5、manifest/shard identity、runtime identity、codec identity、action grammar 和 split isolation 通过。
+StreamUnit shape、80 ms 时钟、mask、schema v6、manifest/shard identity、runtime identity、codec identity、action schema 和 split isolation 通过。
 
 ### 14.3 状态闭环
 
@@ -415,7 +422,8 @@ KV 长度不超过配置上限；淘汰只发生在完整 unit 边界；Z/H/loca
 
 ### 14.4 语音与 action
 
-speech mode/codebook accuracy、SILENCE codec mask、action token accuracy、grammar validity、跨 unit continuation、screen revision 和 Harness safety gate 通过。
+speech mode/codebook accuracy、SILENCE codec mask、action kind/参数指标、schema validity、
+TYPE 跨 unit continuation、screen revision 和 Harness safety gate 通过。
 
 ### 14.5 性能与稳定性
 

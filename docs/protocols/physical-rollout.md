@@ -2,21 +2,21 @@
 
 Online GRPO 的正式 rollout 使用 Harness 作为唯一环境边界。训练进程在 GPU 上运行
 Model Core，Harness 进程负责采集 ObservationSignal、执行 ActuationSignal，并返回
-receipt/reward。训练进程不再向环境发送 speech/action token。
+receipt/reward。训练进程不再向环境发送 speech token 或 raw ActionFrame tensor。
 
 ```text
 Harness.reset -> ObservationSignal
-Model Core.forward -> Speech/Action token
-Training codec/action decoder -> ActuationSignal
+Model Core.forward -> Speech token + Structured ActionFrame
+Training codec/frame decoder -> ActuationSignal
 Harness.apply(ActuationSignal) -> ObservationSignal + EnvironmentReceipt
 Harness.evaluate -> RewardBreakdown
 ```
 
-模型内部的 token、old/reference log-prob 和 advantage 只保存在训练 trace；物理 socket
+模型内部的 speech token、ActionFrame、old/reference log-prob 和 advantage 只保存在训练 trace；物理 socket
 只传输 protobuf ObservationSignal、ActuationSignal 和控制面的 receipt/reward。
 
 正式 Harness control socket 必须校验 environment identity、session、unit、screen revision
-和 action vocabulary。连接失败、设备失败、QEMU 崩溃或 receipt 不完整时，rollout 标记为
+和 action schema。连接失败、设备失败、QEMU 崩溃或 receipt 不完整时，rollout 标记为
 infrastructure failure，不作为低 reward 样本更新策略。
 
 ## 会话和时钟约束
@@ -45,7 +45,7 @@ NOOP executor 或 fixture reward。
 
 ## 契约测试设计
 
-契约测试必须覆盖 protobuf round-trip、token 不跨物理边界、80 ms PCM 校验、identity 查询不
+契约测试必须覆盖 protobuf round-trip、模型输出张量不跨物理边界、80 ms PCM 校验、identity 查询不
 泄漏 backend、重复 reset 关闭旧 backend、未知 session、错序 unit、错 session、过期 screen
 revision、backend 返回错误 identity、server shutdown 清理全部 session，以及 receipt/reward
 protobuf round-trip。QEMU 生命周期测试使用可控假进程和 QMP server 验证唯一 overlay、readiness、
@@ -55,8 +55,8 @@ protobuf round-trip。QEMU 生命周期测试使用可控假进程和 QMP server
 正式 `train_online_grpo` 和 `PhysicalRolloutClient`。测试固定 `group_size=2`，构造有方差的
 evaluator reward，至少完成一次 optimizer update。它必须断言：
 
-1. speech token 经正式 worker 解码为恰好一个 80 ms PCM，action continuation 解码为
-   `ControlSignal`，Harness 收不到 raw token 数组。
+1. speech token 经正式 worker 解码为恰好一个 80 ms PCM，每 unit ActionFrame 解码为
+   有序 `ControlSignal` 并立即执行，Harness 收不到 raw frame tensor。
 2. reset、apply、receipt 和下一轮 observation 的 session/unit/screen revision 严格递增，
    speech PCM 与 action 均经过 protobuf round-trip。
 3. receipt/reward、任务成功、DOM 和 evaluator 字段只保存在 rollout trace，不能出现在下一

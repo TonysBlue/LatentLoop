@@ -1,6 +1,7 @@
 environment_id: isolated-qemu-v1
 environment_version: "1"
 protocol_version: realtime-v1
+action_schema_id: structured-action-v1
 base_image: ~/latentloop-data/assets/images/production-base.qcow2
 runtime_root: ~/latentloop-data/runtime/production/qemu
 model_service_socket: ~/latentloop-data/runtime/production/model-service.sock

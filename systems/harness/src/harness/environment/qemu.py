@@ -62,6 +62,9 @@ class QemuBackend(ComputerBackend):
     def reset(
         self, task_id: str, seed: int, session_id: str | None = None
     ) -> ObservationSignal:
+        reset = getattr(self.executor, "reset", None)
+        if reset is not None:
+            reset()
         self._terminate_process()
         session_key = session_id or f"{task_id}-{seed}"
         digest = hashlib.sha256(session_key.encode()).hexdigest()[:20]
@@ -166,6 +169,9 @@ class QemuBackend(ComputerBackend):
         return self.evaluator.evaluate(task_id)
 
     def close(self) -> None:
+        reset = getattr(self.executor, "reset", None)
+        if reset is not None:
+            reset()
         self._terminate_process()
         if hasattr(self.observation_factory, "close"):
             self.observation_factory.close()

@@ -33,10 +33,12 @@ def test_webdataset_episode_round_trip(tmp_path: Path, smoke_config: ProjectConf
     assert torch.equal(decoded.units[0].speech_codes, original.units[0].speech_codes)
     assert torch.equal(decoded.target_speech, original.target_speech)
     assert torch.equal(decoded.units[0].speech_mode, original.units[0].speech_mode)
-    assert torch.equal(decoded.units[-1].action_tokens, original.units[-1].action_tokens)
+    for name, expected in original.units[-1].action.items():
+        actual = dict(decoded.units[-1].action.items())[name]
+        assert torch.equal(actual, expected)
     assert torch.equal(
-        decoded.units[-1].action_token_mask,
-        original.units[-1].action_token_mask,
+        decoded.units[-1].action_supervision_mask,
+        original.units[-1].action_supervision_mask,
     )
     assert torch.allclose(decoded.units[0].mic_audio, original.units[0].mic_audio, atol=5e-5)
 

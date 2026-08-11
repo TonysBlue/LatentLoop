@@ -1,7 +1,7 @@
 # Data System
 
 Data 是跨 Capture、Replay、Pretrain、SFT、Online Rollout 和 Evaluation 的共享持久化领域。
-它管理 schema v5、episode/trajectory/rollout、WebDataset、manifest/hash、Mimi target 编码、
+它管理 schema v6、episode/trajectory/rollout、WebDataset、manifest/hash、Mimi target 编码、
 action target、审计和 readiness。数据目录位于仓库外的 `~/latentloop-data/datasets`；大文件、
 权重和 socket 不提交 Git。
 
@@ -9,7 +9,7 @@ Canary、Pilot、Production 共享同一 `data rebuild` 实现，区别只来自
 数据规模和资源预算：
 
 ```text
-locked source manifest -> schema-v5 staging writer -> Mimi worker encode
+locked source manifest -> schema-v6 staging writer -> Mimi worker encode
 -> decode/length/hash audit -> atomic processed shards + manifest -> readiness
 ```
 

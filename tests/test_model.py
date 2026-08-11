@@ -35,7 +35,7 @@ def test_recurrent_state_is_bounded_and_heads_receive_gradients(
     assert model.vision_encoder.encoder[0].weight.grad is not None
     assert model.latent_updater.gate.weight.grad is not None
     assert model.speech_head.depth_embeddings[0].weight.grad is not None
-    assert model.action_head.output.weight.grad is not None
+    assert model.action_head.kind_output.weight.grad is not None
     assert model.speech_head.mode.weight.grad is not None
 
 

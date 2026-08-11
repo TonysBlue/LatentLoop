@@ -13,7 +13,8 @@ import soundfile as sf
 import torch
 import webdataset as wds
 from braceexpand import braceexpand
-from model.types import Episode, StreamUnit
+from contracts import ACTION_SCHEMA_ID
+from model.types import ActionFrame, Episode, StreamUnit
 from runtime.config import DataConfig, ModelConfig
 
 
@@ -77,7 +78,7 @@ def episode_to_sample(episode: Episode) -> dict[str, bytes | str]:
         "episode_id": episode.episode_id,
         "unit_count": len(units),
         "unit_audio_samples": units[0].mic_audio.shape[1],
-        "schema_version": int(episode.metadata.get("schema_version", 5)),
+        "schema_version": int(episode.metadata.get("schema_version", 6)),
     }
     metadata.setdefault(
         "runtime_identity",
@@ -85,7 +86,7 @@ def episode_to_sample(episode: Episode) -> dict[str, bytes | str]:
             "protocol_version": metadata.get("protocol_version", "realtime-v1"),
             "environment_id": metadata.get("environment_id", "recorded"),
             "environment_version": metadata.get("environment_version", "1"),
-            "action_vocabulary_id": metadata.get("action_vocabulary_id", "unified-action-v4"),
+            "action_schema_id": metadata.get("action_schema_id", ACTION_SCHEMA_ID),
         },
     )
     decoded_controls = metadata.get("decoded_controls", [])
@@ -98,11 +99,35 @@ def episode_to_sample(episode: Episode) -> dict[str, bytes | str]:
         "speech_mode": np.asarray([int(u.speech_mode.item()) for u in units], dtype=np.int64),
         "speech_mode_mask": np.asarray([bool(u.speech_mode_mask.item()) for u in units]),
         "speech_codec_mask": np.stack([u.speech_codec_mask[0].cpu().numpy() for u in units]),
-        "action_tokens": torch.cat([u.action_tokens for u in units], dim=0)
-        .cpu()
-        .numpy()
-        .astype(np.int64),
-        "action_token_mask": torch.cat([u.action_token_mask for u in units], dim=0).cpu().numpy(),
+        "action_kind": torch.cat([u.action.kind for u in units], dim=0).cpu().numpy(),
+        "action_supervision_mask": torch.cat(
+            [u.action_supervision_mask for u in units], dim=0
+        ).cpu().numpy(),
+        "action_coordinate_cell": torch.cat(
+            [u.action.coordinate_cell for u in units], dim=0
+        ).cpu().numpy(),
+        "action_coordinate_residual": torch.cat(
+            [u.action.coordinate_residual for u in units], dim=0
+        ).cpu().numpy(),
+        "action_button": torch.cat([u.action.button for u in units], dim=0).cpu().numpy(),
+        "action_button_phase": torch.cat(
+            [u.action.button_phase for u in units], dim=0
+        ).cpu().numpy(),
+        "action_scroll_delta": torch.cat(
+            [u.action.scroll_delta for u in units], dim=0
+        ).cpu().numpy(),
+        "action_text_bytes": torch.cat(
+            [u.action.text_bytes for u in units], dim=0
+        ).cpu().numpy(),
+        "action_text_length": torch.cat(
+            [u.action.text_length for u in units], dim=0
+        ).cpu().numpy(),
+        "action_hotkey_keys": torch.cat(
+            [u.action.hotkey_keys for u in units], dim=0
+        ).cpu().numpy(),
+        "action_hotkey_length": torch.cat(
+            [u.action.hotkey_length for u in units], dim=0
+        ).cpu().numpy(),
     }
     codes = torch.cat([u.speech_codes for u in units], dim=0).cpu().numpy().astype(np.uint16)
     target_speech = (
@@ -235,9 +260,9 @@ class EpisodeShardReader:
         episode_id = str(sample["__key__"])
         if int(metadata.get("schema_version", -1)) != self.data.schema_version:
             raise ValueError(f"schema version mismatch for {episode_id}")
-        if int(metadata.get("schema_version", -1)) != 5:
+        if int(metadata.get("schema_version", -1)) != 6:
             raise ValueError(f"unsupported schema version for {episode_id}")
-        required_v5 = (
+        required_v6 = (
             "stage",
             "dataset_scale",
             "sample_kind",
@@ -247,14 +272,16 @@ class EpisodeShardReader:
             "environment_id",
             "environment_version",
             "protocol_version",
-            "action_vocabulary_id",
+            "action_schema_id",
             "codec_id",
             "codec_revision",
             "runtime_identity",
         )
-        missing = [key for key in required_v5 if key not in metadata]
+        missing = [key for key in required_v6 if key not in metadata]
         if missing:
-            raise ValueError(f"schema v5 metadata is missing for {episode_id}: {missing}")
+            raise ValueError(f"schema v6 metadata is missing for {episode_id}: {missing}")
+        if metadata["action_schema_id"] != ACTION_SCHEMA_ID:
+            raise ValueError(f"action schema mismatch for {episode_id}")
         for key in ("codec_id", "codec_weight_hash", "codec_revision"):
             if metadata.get(key) != getattr(self.data, key):
                 raise ValueError(f"{key} mismatch for {episode_id}")
@@ -314,10 +341,37 @@ class EpisodeShardReader:
                     speech_codec_mask=torch.from_numpy(timeline["speech_codec_mask"][index]).bool()[
                         None
                     ],
-                    action_tokens=torch.from_numpy(timeline["action_tokens"][index]).long()[None],
-                    action_token_mask=torch.from_numpy(timeline["action_token_mask"][index]).bool()[
-                        None
-                    ],
+                    action=ActionFrame(
+                        kind=torch.tensor([timeline["action_kind"][index]], dtype=torch.long),
+                        coordinate_cell=torch.tensor(
+                            [timeline["action_coordinate_cell"][index]], dtype=torch.long
+                        ),
+                        coordinate_residual=torch.from_numpy(
+                            timeline["action_coordinate_residual"][index]
+                        ).float()[None],
+                        button=torch.tensor([timeline["action_button"][index]], dtype=torch.long),
+                        button_phase=torch.tensor(
+                            [timeline["action_button_phase"][index]], dtype=torch.long
+                        ),
+                        scroll_delta=torch.from_numpy(
+                            timeline["action_scroll_delta"][index]
+                        ).float()[None],
+                        text_bytes=torch.from_numpy(
+                            timeline["action_text_bytes"][index]
+                        ).long()[None],
+                        text_length=torch.tensor(
+                            [timeline["action_text_length"][index]], dtype=torch.long
+                        ),
+                        hotkey_keys=torch.from_numpy(
+                            timeline["action_hotkey_keys"][index]
+                        ).long()[None],
+                        hotkey_length=torch.tensor(
+                            [timeline["action_hotkey_length"][index]], dtype=torch.long
+                        ),
+                    ),
+                    action_supervision_mask=torch.tensor(
+                        [timeline["action_supervision_mask"][index]], dtype=torch.bool
+                    ),
                 )
             )
         episode = Episode(

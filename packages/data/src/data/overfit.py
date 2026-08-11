@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import torch
-from model.action_tokens import ActionEvent, ActionTokenizer
-from model.types import ActionType, Episode, SpeechMode, StreamUnit
+from contracts import ACTION_SCHEMA_ID
+from model.types import ActionFrame, Episode, SpeechMode, StreamUnit
 from runtime.config import DataConfig, ModelConfig
 
 
@@ -16,7 +16,6 @@ class SpeechOverfitDataset:
             raise ValueError("speech overfit trajectories require at least 12 units")
         self.data = data
         self.model = model
-        self.actions = ActionTokenizer(model.max_action_duration_ms, model.action_burst_tokens)
 
     def __len__(self) -> int:
         return self.data.train_episodes
@@ -66,8 +65,7 @@ class SpeechOverfitDataset:
                 "environment_id": "synthetic-test-only",
                 "environment_version": "1",
                 "protocol_version": "realtime-v1",
-                "action_vocabulary_id": "unified-action-v4",
-                "action_schema_version": 4,
+                "action_schema_id": ACTION_SCHEMA_ID,
             },
             target_speech=target,
             sample_index_in_shard=episode_index,
@@ -77,7 +75,6 @@ class SpeechOverfitDataset:
             speech_frames=self.model.speech_frames_per_unit,
             speech_codebooks=self.model.speech_codebooks,
             speech_codebook_size=self.model.speech_codebook_size,
-            action_vocab_size=self.actions.vocab_size,
         )
         return episode
 
@@ -128,11 +125,6 @@ class SpeechOverfitDataset:
         frame = self.data.unit_audio_samples
         speaking = start_tick <= index < start_tick + active_ticks
         # The direct codec target is filled by the codec preparation stage.
-        tokens = self.actions.encode(ActionEvent(ActionType.NOOP))
-        action_tokens = torch.full((1, self.model.action_burst_tokens), 0, dtype=torch.long)
-        action_mask = torch.zeros_like(action_tokens, dtype=torch.bool)
-        action_tokens[0, : len(tokens)] = torch.tensor(tokens)
-        action_mask[0, : len(tokens)] = True
         return StreamUnit(
             timestamp_ms=torch.tensor([index * self.data.unit_ms]),
             delta_ms=torch.tensor([self.data.unit_ms]),
@@ -148,6 +140,6 @@ class SpeechOverfitDataset:
             speech_codec_mask=torch.full(
                 (1, self.model.speech_frames_per_unit), speaking, dtype=torch.bool
             ),
-            action_tokens=action_tokens,
-            action_token_mask=action_mask,
+            action=ActionFrame.no_action(1),
+            action_supervision_mask=torch.ones(1, dtype=torch.bool),
         )

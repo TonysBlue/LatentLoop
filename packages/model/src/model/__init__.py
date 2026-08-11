@@ -5,12 +5,13 @@ this package boundary, so they cannot accidentally acquire device or reward
 dependencies.
 """
 
-from model.action import ActionHead
+from model.action import ActionHead, action_frame_log_prob, action_log_prob_components
 from model.core import FactorizedSpeechHead, StreamingLatentLoop
 from model.losses import compute_losses
 from model.types import (
+    ActionFrame,
+    ActionHeadOutput,
     ActionLocalState,
-    ActionType,
     Episode,
     GenerationOutput,
     LayerKV,
@@ -23,8 +24,9 @@ from model.types import (
 )
 
 __all__ = [
-    "ActionHead", "ActionLocalState", "ActionType", "Episode", "FactorizedSpeechHead",
+    "ActionFrame", "ActionHead", "ActionHeadOutput", "ActionLocalState", "Episode",
+    "FactorizedSpeechHead",
     "GenerationOutput", "LayerKV", "RecurrentState", "SpeechLocalState", "SpeechMode",
     "SpeechSamplingConfig", "StepOutput", "StreamUnit", "StreamingLatentLoop",
-    "compute_losses",
+    "action_frame_log_prob", "action_log_prob_components", "compute_losses",
 ]

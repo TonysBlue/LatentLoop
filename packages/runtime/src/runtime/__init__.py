@@ -1,4 +1,4 @@
-from runtime.action import ActionStreamDecoder, action_tokens_to_controls
+from runtime.action import ActionFrameDecoder, action_frame_to_controls
 from runtime.codec import CodecIdentity, FrozenNeuralCodec
 from runtime.codec_worker import CodecWorkerClient
 from runtime.config import (
@@ -15,5 +15,5 @@ from runtime.config import (
 __all__ = [
     "CodecIdentity", "CodecWorkerClient", "DataConfig", "FrozenNeuralCodec", "ModelConfig",
     "ProjectConfig", "RLConfig", "RuntimeConfig", "TrackingConfig", "TrainingConfig",
-    "ActionStreamDecoder", "action_tokens_to_controls", "load_config",
+    "ActionFrameDecoder", "action_frame_to_controls", "load_config",
 ]

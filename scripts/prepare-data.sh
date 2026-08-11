@@ -53,12 +53,12 @@ encode() {
   trap - EXIT
 }
 
-rebuild_v5() {
+rebuild_v6() {
   "$REPO/scripts/download-mimi.sh"
   "$REPO/scripts/bootstrap-codec.sh"
   "$REPO/scripts/canary-mimi-worker.sh" start
   trap '"$REPO/scripts/canary-mimi-worker.sh" stop' EXIT
-  uv run data rebuild-v5 --config "$CFG" --root "$ROOT" --dataset "$DATASET" \
+  uv run data rebuild-v6 --config "$CFG" --root "$ROOT" --dataset "$DATASET" \
     --socket "$RUN_DIR/mimi.sock" --activate
   uv run data check-readiness --config "$CFG" --root "$ROOT"
   "$REPO/scripts/canary-mimi-worker.sh" stop
@@ -69,7 +69,7 @@ case "$ACTION" in
   bootstrap) "$REPO/scripts/bootstrap-canary.sh"; "$REPO/scripts/bootstrap-canary-models.sh" ;;
   prepare) prepare ;;
   encode) encode ;;
-  rebuild-v5) rebuild_v5 ;;
+  rebuild-v6) rebuild_v6 ;;
   all) prepare; encode ;;
-  *) printf 'usage: %s {canary|pilot|production} {bootstrap|prepare|encode|rebuild-v5|all}\n' "$0" >&2; exit 2 ;;
+  *) printf 'usage: %s {canary|pilot|production} {bootstrap|prepare|encode|rebuild-v6|all}\n' "$0" >&2; exit 2 ;;
 esac

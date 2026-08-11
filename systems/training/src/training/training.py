@@ -13,12 +13,11 @@ from typing import Any
 import numpy as np
 import torch
 from accelerate import Accelerator
-from contracts import ObservationSignal
+from contracts import ACTION_SCHEMA_ID, ObservationSignal
 from data import EpisodeShardReader, SyntheticEpisodeDataset
 from data.curation.readiness import check_readiness
-from model import StreamingLatentLoop, compute_losses
-from model.action_tokens import ACTION_VOCABULARY_ID
-from model.types import Episode, RecurrentState, SpeechSamplingConfig, StreamUnit
+from model import StreamingLatentLoop, action_frame_log_prob, compute_losses
+from model.types import ActionFrame, Episode, RecurrentState, SpeechSamplingConfig, StreamUnit
 from runtime.config import ProjectConfig
 
 from training.checkpoint import (
@@ -48,7 +47,7 @@ def _loss_denominators(units: Sequence[StreamUnit]) -> dict[str, float]:
                 1,
             )
         ),
-        "action": float(max(sum(int(u.action_token_mask.sum()) for u in units), 1)),
+        "action": float(max(sum(int(u.action_supervision_mask.sum()) for u in units), 1)),
     }
 
 
@@ -80,7 +79,7 @@ def _aggregate_update_metrics(
             "speech/mode_accuracy": float(
                 mode_correct / max(sum(item["mode_valid"] for item in records), 1)
             ),
-            "action/token_accuracy": float(
+            "action/kind_accuracy": float(
                 action_correct / max(sum(item["action_valid"] for item in records), 1)
             ),
             "speech/valid_frames": float(speech_valid),
@@ -145,7 +144,7 @@ def _checkpoint_metadata(
         schema_version=config.data.schema_version,
         stage=config.training.stage,
         objective=config.training.objective,
-        action_vocabulary_id=ACTION_VOCABULARY_ID,
+        action_schema_id=ACTION_SCHEMA_ID,
         environment_id=config.training.rl.environment_id or None,
         task_manifest_sha256=(
             file_sha256(Path(config.training.rl.task_manifest).expanduser())
@@ -351,7 +350,8 @@ def train(
                                 recurrent,
                                 unit.speech_codes if use_teacher else None,
                                 speech_teacher_mode=unit.speech_mode,
-                                action_teacher_tokens=unit.action_tokens,
+                                action_teacher_frame=unit.action,
+                                action_teacher_mask=unit.action_supervision_mask,
                             )
                             recurrent = output.state
                             unit_losses = compute_losses(
@@ -433,12 +433,12 @@ def train(
                                 ),
                                 "mode_valid": int(unit.speech_mode_mask.sum().item()),
                                 "action_correct": int(
-                                    (output.action_logits.argmax(-1) == unit.action_tokens)
-                                    .masked_select(output.action_token_mask)
+                                    (output.action.kind_logits.argmax(-1) == unit.action.kind)
+                                    .masked_select(unit.action_supervision_mask)
                                     .sum()
                                     .item()
                                 ),
-                                "action_valid": int(output.action_token_mask.sum().item()),
+                                "action_valid": int(unit.action_supervision_mask.sum().item()),
                             }
                         )
                         continue
@@ -461,12 +461,12 @@ def train(
                             ),
                             "mode_valid": int(moved[-1].speech_mode_mask.sum().item()),
                             "action_correct": int(
-                                (output.action_logits.argmax(-1) == moved[-1].action_tokens)
-                                .masked_select(output.action_token_mask)
+                                (output.action.kind_logits.argmax(-1) == moved[-1].action.kind)
+                                .masked_select(moved[-1].action_supervision_mask)
                                 .sum()
                                 .item()
                             ),
-                            "action_valid": int(output.action_token_mask.sum().item()),
+                            "action_valid": int(moved[-1].action_supervision_mask.sum().item()),
                         }
                     )
                     last_metrics = _aggregate_update_metrics(pending_update_metrics, config)
@@ -578,7 +578,12 @@ def train(
 
 def initialize_compatible_weights(model: StreamingLatentLoop, path: str | Path) -> list[str]:
     payload = torch.load(Path(path), map_location="cpu", weights_only=False)
-    source = payload.get("model", payload)
+    if payload.get("format_version") != 6:
+        raise ValueError("initial checkpoint must use format version 6")
+    metadata = payload.get("metadata", {})
+    if metadata.get("action_schema_id") != ACTION_SCHEMA_ID:
+        raise ValueError("initial checkpoint action schema is incompatible")
+    source = payload.get("model")
     if not isinstance(source, dict):
         raise ValueError("initial checkpoint does not contain a model state")
     current = model.state_dict()
@@ -624,7 +629,7 @@ def configure_trainable_parameters(model: StreamingLatentLoop, config: ProjectCo
 
 
 def _sample_logprob(
-    output: Any, mode: torch.Tensor, codes: torch.Tensor, actions: torch.Tensor
+    output: Any, mode: torch.Tensor, codes: torch.Tensor, actions: ActionFrame
 ) -> torch.Tensor:
     mode_lp = (
         torch.log_softmax(output.speech_mode_logits, dim=-1).gather(-1, mode[:, None]).squeeze(-1)
@@ -635,15 +640,12 @@ def _sample_logprob(
         .squeeze(-1)
     )
     codec_lp = codec_lp * mode.eq(1)[:, None, None].to(codec_lp)
-    action_lp = (
-        torch.log_softmax(output.action_logits, dim=-1).gather(-1, actions[..., None]).squeeze(-1)
-    )
-    action_lp = action_lp * output.action_token_mask.to(action_lp)
+    action_lp = action_frame_log_prob(output.action, actions)
     return torch.cat(
         (
             mode_lp.reshape(mode.shape[0], -1),
             codec_lp.reshape(mode.shape[0], -1),
-            action_lp.reshape(mode.shape[0], -1),
+            action_lp[:, None],
         ),
         dim=-1,
     )
@@ -655,7 +657,7 @@ def _sample_mask(output: Any, mode: torch.Tensor) -> torch.Tensor:
         (
             torch.ones_like(mode, dtype=torch.bool).reshape(mode.shape[0], -1),
             codec_mask.reshape(mode.shape[0], -1),
-            output.action_token_mask.reshape(mode.shape[0], -1),
+            torch.ones_like(mode, dtype=torch.bool).reshape(mode.shape[0], -1),
         ),
         dim=-1,
     )
@@ -751,7 +753,7 @@ def train_online_grpo(
                     != config.training.rl.environment_version
                     or identity.get("protocol_version")
                     != config.training.rl.environment_protocol_version
-                    or identity.get("action_vocabulary_id") != ACTION_VOCABULARY_ID
+                    or identity.get("action_schema_id") != ACTION_SCHEMA_ID
                 ):
                     raise ValueError("Harness environment identity does not match configuration")
                 observation = env.reset(task_id, seed, session_id)
@@ -760,7 +762,7 @@ def train_online_grpo(
                 observations: list[ObservationSignal] = []
                 modes: list[torch.Tensor] = []
                 codes_list: list[torch.Tensor] = []
-                actions_list: list[torch.Tensor] = []
+                actions_list: list[ActionFrame] = []
                 old_list: list[torch.Tensor] = []
                 ref_list: list[torch.Tensor] = []
                 mask_list: list[torch.Tensor] = []
@@ -773,7 +775,7 @@ def train_online_grpo(
                             mode, codes, actions = (
                                 generated.speech_mode,
                                 generated.speech_codes,
-                                generated.action_tokens,
+                                generated.action_frame,
                             )
                             old_values = _sample_logprob(
                                 generated.output, mode, codes, actions
@@ -784,7 +786,8 @@ def train_online_grpo(
                                 reference_state,
                                 speech_teacher_codes=codes,
                                 speech_teacher_mode=mode,
-                                action_teacher_tokens=actions,
+                                action_teacher_frame=actions,
+                                action_teacher_mask=torch.ones_like(mode, dtype=torch.bool),
                             )
                             reference_state = ref_output.state
                             ref_values = _sample_logprob(ref_output, mode, codes, actions).squeeze(
@@ -806,7 +809,7 @@ def train_online_grpo(
                         observations.append(observation)
                         modes.append(mode.cpu())
                         codes_list.append(codes.cpu())
-                        actions_list.append(actions.cpu())
+                        actions_list.append(actions.to("cpu"))
                         old_list.append(old_values.cpu())
                         ref_list.append(ref_values.cpu())
                         mask_list.append(old_mask.cpu())
@@ -854,7 +857,10 @@ def train_online_grpo(
                         state,
                         speech_teacher_codes=codes.to(device),
                         speech_teacher_mode=mode.to(device),
-                        action_teacher_tokens=actions.to(device),
+                        action_teacher_frame=actions.to(device),
+                        action_teacher_mask=torch.ones_like(
+                            mode, dtype=torch.bool, device=device
+                        ),
                     )
                     state = output.state
                     current_values = _sample_logprob(

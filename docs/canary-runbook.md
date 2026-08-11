@@ -56,7 +56,7 @@ worker。
 长阶段每 30 秒打印一次 elapsed time。阶段失败时，终端会自动打印对应日志的最后 60 行；
 无需重新运行即可定位失败。需要固定日志路径时设置 `CANARY_LOG_DIR=/path/to/logs`。
 
-## 数据准备、schema v5 重建与训练检查
+## 数据准备、schema v6 重建与训练检查
 
 需要定位问题或观察产物时使用：
 
@@ -67,13 +67,13 @@ scripts/prepare-data.sh canary bootstrap
 # 2. 规范化、生成计划、CosyVoice2 合成、SenseVoice CER/WER 门禁、构造 source manifest
 scripts/prepare-data.sh canary prepare
 
-# 3. 从 source manifest 重建 schema v5 staging shards，Mimi decode 门禁、正式审计和三个 split 的 codec 编码
+# 3. 从 source manifest 重建 schema v6 staging shards，Mimi decode 门禁、正式审计和三个 split 的 codec 编码
 scripts/prepare-data.sh canary encode
 
 # 4. 对已有旧 processed 资产执行可恢复的 v5 重建（不覆盖旧目录）
-scripts/prepare-data.sh canary rebuild-v5
-scripts/prepare-data.sh pilot rebuild-v5
-scripts/prepare-data.sh production rebuild-v5
+scripts/prepare-data.sh canary rebuild-v6
+scripts/prepare-data.sh pilot rebuild-v6
+scripts/prepare-data.sh production rebuild-v6
 
 # 5. 运行完整三阶段的最小闭环并评测 validation/test
 scripts/run-training.sh --recipe configs/recipes/canary.yaml --run-id canary-001 \
@@ -101,8 +101,8 @@ SFT checkpoint 作为 policy 和冻结 reference。
 三个正式 stage 与 Pilot/Production 使用同一条连续 episode 路径：按时间顺序处理每个 episode，持续传递 KV、
 latent、H、speech-local 和 action-local state。生产配置的 `tbptt_units=750` 与
 `memory_horizon_units=750`，确保未来输出 loss 可以回传到长期记忆更新器；smoke 只缩小该数值。
-W&B 中记录 speech mode、有效 codec 帧和 action token 的监督密度。
-训练只使用 speech mode/codec 与统一 action token loss；长期记忆没有独立
+W&B 中记录 speech mode、有效 codec 帧和 action frame 的监督密度。
+训练只使用 speech mode/codec 与 structured action frame loss；长期记忆没有独立
 target 或正则项。cosine 学习率最低保持为初始值的 10%。
 
 ## 验收产物
@@ -125,7 +125,7 @@ target 或正则项。cosine 学习率最低保持为初始值的 10%。
 最后一次训练指标、W&B 实际模式和 run URL。最小闭环只证明真实数据、codec、训练、
 checkpoint 和评测链路可运行；此时 codec accuracy、macro-F1 等质量指标不用于判断收敛。
 
-Pilot 和 Production 使用完全相同的 `rebuild-v5` 路径；Production 必须先提供锁定的真实
+Pilot 和 Production 使用完全相同的 `rebuild-v6` 路径；Production 必须先提供锁定的真实
 source manifest、任务/evaluator spec 和 Mimi worker。缺少任一外部资产时命令以非零状态退出。
 
 ## 自定义目录

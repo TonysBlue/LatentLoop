@@ -34,14 +34,14 @@ message ControlSignal {
   optional uint64 screen_revision = 3;
   optional float x = 4;
   optional float y = 5;
-  optional float x2 = 6;
-  optional float y2 = 7;
+  reserved 6, 7;
   optional float dx = 8;
   optional float dy = 9;
-  optional uint32 duration_ms = 10;
+  reserved 10;
   string text = 11;
   optional uint32 key = 12;
   optional uint32 button = 13;
+  string button_phase = 14;
 }
 
 message SpeechSignal {

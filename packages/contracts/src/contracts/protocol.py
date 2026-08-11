@@ -11,7 +11,13 @@ import socket
 from collections.abc import Callable
 from typing import Any
 
-from contracts.control import ActuationSignal, ControlKind, ControlSignal, SpeechSignal
+from contracts.control import (
+    ActuationSignal,
+    ButtonPhase,
+    ControlKind,
+    ControlSignal,
+    SpeechSignal,
+)
 from contracts.observation import MicSignal, ObservationSignal, ScreenSignal
 from contracts.realtime_pb2 import (
     ActuationSignal as ActuationMessage,
@@ -90,10 +96,13 @@ def message_to_observation(payload: bytes) -> ObservationSignal:
 
 
 def _control_to_message(value: ControlSignal) -> ControlMessage:
-    message = ControlMessage(kind=value.kind.value, event_id=value.event_id, text=value.text or "")
-    optional_fields = (
-        "screen_revision", "x", "y", "x2", "y2", "dx", "dy", "duration_ms", "key", "button"
+    message = ControlMessage(
+        kind=value.kind.value,
+        event_id=value.event_id,
+        text=value.text or "",
+        button_phase=value.button_phase.value if value.button_phase is not None else "",
     )
+    optional_fields = ("screen_revision", "x", "y", "dx", "dy", "key", "button")
     for field in optional_fields:
         _set_optional(message, field, getattr(value, field))
     return message
@@ -101,14 +110,14 @@ def _control_to_message(value: ControlSignal) -> ControlMessage:
 
 def _message_to_control(message: ControlMessage) -> ControlSignal:
     values: dict[str, Any] = {"kind": ControlKind(message.kind), "event_id": message.event_id}
-    optional_fields = (
-        "screen_revision", "x", "y", "x2", "y2", "dx", "dy", "duration_ms", "key", "button"
-    )
+    optional_fields = ("screen_revision", "x", "y", "dx", "dy", "key", "button")
     for field in optional_fields:
         if message.HasField(field):
             values[field] = getattr(message, field)
     if message.text:
         values["text"] = message.text
+    if message.button_phase:
+        values["button_phase"] = ButtonPhase(message.button_phase)
     return ControlSignal(**values)
 
 
