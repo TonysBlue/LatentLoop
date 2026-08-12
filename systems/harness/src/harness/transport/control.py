@@ -52,7 +52,6 @@ class _SessionState:
     backend: Any
     task_id: str
     next_unit: int
-    screen_revision: int
 
 
 class HarnessControlServer:
@@ -65,7 +64,7 @@ class HarnessControlServer:
         *,
         expected_environment_id: str | None = None,
         expected_environment_version: str | None = None,
-        expected_protocol_version: str = "realtime-v1",
+        expected_protocol_version: str = "realtime-v2",
         expected_action_schema_id: str = "structured-action-v1",
     ) -> None:
         self.backend_factory = backend_factory
@@ -179,7 +178,7 @@ class HarnessControlServer:
                     previous.backend.close()
                 try:
                     observation = backend.reset(task_id, int(request["seed"]), session_id)
-                    self._validate_observation(observation, session_id, 0, -1)
+                    self._validate_observation(observation, session_id, 0)
                 except Exception:
                     if hasattr(backend, "close"):
                         backend.close()
@@ -188,7 +187,6 @@ class HarnessControlServer:
                     backend=backend,
                     task_id=task_id,
                     next_unit=0,
-                    screen_revision=observation.screen.revision,
                 )
                 return {
                     "ok": True,
@@ -202,20 +200,11 @@ class HarnessControlServer:
                 output = message_to_actuation(payload)
                 if output.session_id != session_id or output.unit_index != state.next_unit:
                     raise ValueError("actuation session or unit is out of order")
-                for control in output.controls:
-                    if (
-                        control.screen_revision is not None
-                        and control.screen_revision != state.screen_revision
-                    ):
-                        raise ValueError("control screen revision is stale")
                 observation, receipt = self._apply_backend(state, output)
-                self._validate_observation(
-                    observation, session_id, state.next_unit + 1, state.screen_revision
-                )
+                self._validate_observation(observation, session_id, state.next_unit + 1)
                 if receipt.session_id != session_id or receipt.unit_index != state.next_unit:
                     raise ValueError("backend receipt identity is invalid")
                 state.next_unit += 1
-                state.screen_revision = observation.screen.revision
                 return {
                     "ok": True,
                     "observation": base64.b64encode(observation_to_payload(observation)).decode(),
@@ -244,24 +233,15 @@ class HarnessControlServer:
         observation: ObservationSignal,
         session_id: str,
         expected_unit: int,
-        previous_revision: int,
     ) -> None:
         if observation.session_id != session_id or observation.unit_index != expected_unit:
             raise ValueError("backend observation identity is invalid")
-        if observation.screen.revision < previous_revision:
-            raise ValueError("screen revision moved backwards")
 
     @staticmethod
     def _apply_backend(
         state: _SessionState, output: ActuationSignal
     ) -> tuple[ObservationSignal, EnvironmentReceipt]:
-        try:
-            return state.backend.apply(output, current_revision=state.screen_revision)
-        except TypeError as error:
-            # The minimal fixture protocol predates the formal revision keyword.
-            if "current_revision" not in str(error):
-                raise
-            return state.backend.apply(output)
+        return state.backend.apply(output)
 
 
 class HarnessControlClient:

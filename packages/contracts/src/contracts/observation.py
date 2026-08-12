@@ -28,21 +28,17 @@ class ScreenSignal:
     image: bytes
     width: int
     height: int
-    revision: int
-    valid: bool = True
     pixel_format: str = "rgb24"
     encoding: str = "raw"
 
     def __post_init__(self) -> None:
         if self.width < 1 or self.height < 1:
             raise ValueError("screen dimensions must be positive")
-        if self.revision < 0:
-            raise ValueError("screen revision must be non-negative")
         if self.pixel_format not in {"rgb24", "rgba32"}:
             raise ValueError("unsupported screen pixel format")
-        if self.valid and not self.image:
-            raise ValueError("valid screen image is required")
-        if self.encoding == "raw" and self.valid:
+        if not self.image:
+            raise ValueError("screen image is required")
+        if self.encoding == "raw":
             channels = 3 if self.pixel_format == "rgb24" else 4
             if len(self.image) != self.width * self.height * channels:
                 raise ValueError("raw screen image size does not match its dimensions")

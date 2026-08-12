@@ -9,13 +9,11 @@ def action_frame_to_controls(
     frame: ActionFrame,
     *,
     event_id: str,
-    screen_revision: int | None = None,
     pending_utf8: bytes = b"",
 ) -> tuple[tuple[ControlSignal, ...], bytes]:
     result = decode_action_frame(
         frame,
         event_id=event_id,
-        screen_revision=screen_revision,
         pending_utf8=pending_utf8,
     )
     return result.controls, result.pending_utf8
@@ -32,12 +30,10 @@ class ActionFrameDecoder:
         frame: ActionFrame,
         *,
         event_id: str,
-        screen_revision: int | None = None,
     ) -> tuple[ControlSignal, ...]:
         controls, self.pending_utf8 = action_frame_to_controls(
             frame,
             event_id=event_id,
-            screen_revision=screen_revision,
             pending_utf8=self.pending_utf8,
         )
         return controls

@@ -8,7 +8,7 @@ from data.curation import (
     encode_pilot_shards,
     fetch_pilot_data,
     prepare_pilot_data,
-    rebuild_schema_v6_shards,
+    rebuild_schema_v7_shards,
     select_pilot_voices,
     synthesize_pilot,
 )
@@ -34,7 +34,7 @@ __all__ = [
     "check_mimi_decode",
     "check_readiness",
     "encode_pilot_shards",
-    "rebuild_schema_v6_shards",
+    "rebuild_schema_v7_shards",
     "fetch_pilot_data",
     "prepare_pilot_data",
     "select_pilot_voices",

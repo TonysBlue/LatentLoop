@@ -123,8 +123,8 @@ def check_readiness(
             processed_manifest = path("shards", "processed", split, f"{split}-manifest.jsonl")
             if processed_manifest.is_file():
                 encoded_entries = read_jsonl(processed_manifest)
-                if any(int(entry.get("schema_version", -1)) != 6 for entry in encoded_entries):
-                    invalid.append(f"{split} processed manifest contains non-v6 samples")
+                if any(int(entry.get("schema_version", -1)) != 7 for entry in encoded_entries):
+                    invalid.append(f"{split} processed manifest contains non-v7 samples")
                 required_v6 = {
                     "protocol_version",
                     "action_schema_id",
@@ -134,7 +134,7 @@ def check_readiness(
                 }
                 if any(required_v6 - set(entry) for entry in encoded_entries):
                     invalid.append(
-                        f"{split} processed manifest is missing schema v6 runtime identity"
+                        f"{split} processed manifest is missing schema v7 runtime identity"
                     )
                 if {entry["episode_id"] for entry in source_entries} != {
                     entry["episode_id"] for entry in encoded_entries
@@ -173,8 +173,8 @@ def check_readiness(
         if checkpoint.is_file():
             try:
                 payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
-                if payload.get("format_version") != 6:
-                    invalid.append("initial checkpoint must use format version 6")
+                if payload.get("format_version") != 7:
+                    invalid.append("initial checkpoint must use format version 7")
                 metadata = payload.get("metadata", {})
                 if metadata.get("codec_id") != config.data.codec_id:
                     invalid.append("initial checkpoint codec_id differs from Pilot config")

@@ -19,6 +19,9 @@ class ModelConfig:
     audio_tokens: int = 4
     audio_kernel: int = 400
     audio_stride: int = 160
+    vision_tokens: int = 16
+    temporal_kv_units: int = 750
+    vision_kv_units: int = 100
     latent_slots: int = 8
     # Production streaming profile retains the most recent 60 seconds.
     kv_units: int = 750
@@ -38,7 +41,7 @@ class ModelConfig:
 
     @property
     def tokens_per_unit(self) -> int:
-        return self.audio_tokens + 3  # time, vision, and state-query tokens
+        return self.audio_tokens + self.vision_tokens + 2  # time, vision, and state-query
 
 
 @dataclass(slots=True)
@@ -49,7 +52,7 @@ class DataConfig:
     source: str = "synthetic"
     shards: str | None = None
     manifest: str | None = None
-    schema_version: int = 6
+    schema_version: int = 7
     audio_sample_rate: int = 24_000
     codec_frame_rate: float = 12.5
     codec_id: str = "mimi-24khz-8x2048"
@@ -103,9 +106,9 @@ class RLConfig:
     codec_socket: str | None = None
     environment_id: str = ""
     environment_version: str = "1"
-    environment_protocol_version: str = "realtime-v1"
+    environment_protocol_version: str = "realtime-v2"
     task_manifest: str | None = None
-    reward_spec_id: str = "realtime-v1"
+    reward_spec_id: str = "realtime-v2"
     sampling_temperature: float = 0.8
     sampling_top_k: int = 250
     advantage_epsilon: float = 1e-6
@@ -163,8 +166,15 @@ class ProjectConfig:
         if self.model.kv_units < 1 or self.model.latent_slots < 1:
             raise ValueError("kv_units and latent_slots must be positive")
         expected_kv_units = -(-self.model.kv_window_ms // self.data.unit_ms)
-        if self.model.kv_units != expected_kv_units:
-            raise ValueError("kv_units must exactly cover kv_window_ms at the configured unit_ms")
+        if (
+            self.model.kv_units != expected_kv_units
+            or self.model.temporal_kv_units != expected_kv_units
+        ):
+            raise ValueError(
+                "temporal KV must exactly cover kv_window_ms at the configured unit_ms"
+            )
+        if self.model.vision_tokens != 16 or self.model.vision_kv_units < 1:
+            raise ValueError("vision_tokens must be 16 and vision_kv_units must be positive")
         if self.model.action_schema_id != "structured-action-v1":
             raise ValueError("model.action_schema_id must be structured-action-v1")
         if self.model.action_coordinate_grid_size != 32:
@@ -184,8 +194,8 @@ class ProjectConfig:
                 "data.dataset must be synthetic, canary, pilot, production, "
                 "or direct-speech-overfit"
             )
-        if self.data.schema_version != 6:
-            raise ValueError("data.schema_version must be exactly 6; rebuild old action data")
+        if self.data.schema_version != 7:
+            raise ValueError("data.schema_version must be exactly 7; rebuild old visual data")
         if self.data.source not in {"synthetic", "webdataset"}:
             raise ValueError("data.source must be synthetic or webdataset")
         if self.data.dataset != "synthetic" and self.data.source != "webdataset":
@@ -196,6 +206,8 @@ class ProjectConfig:
             raise ValueError("codec identity and weight hash are required")
         if self.data.unit_audio_samples * 1_000 != self.data.audio_sample_rate * self.data.unit_ms:
             raise ValueError("unit_audio_samples must exactly match the audio clock")
+        if self.data.screen_height != 224 or self.data.screen_width != 224:
+            raise ValueError("screen input must be exactly 224x224")
         if self.data.codec_codebooks != self.model.speech_codebooks:
             raise ValueError("data and model codec codebook counts must match")
         if self.data.codec_codebook_size != self.model.speech_codebook_size:

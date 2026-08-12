@@ -6,7 +6,7 @@ from contracts import MicSignal, ObservationSignal, ProtocolIdentity, RewardBrea
 
 def test_observation_cannot_contain_privileged_reward_fields() -> None:
     observation = ObservationSignal(
-        "session", 0, 0, 80, MicSignal(b"x" * 7680), ScreenSignal(b"x" * 48, 4, 4, 0)
+        "session", 0, 0, 80, MicSignal(b"x" * 7680), ScreenSignal(b"x" * 48, 4, 4)
     )
     assert not hasattr(observation, "task_success")
 

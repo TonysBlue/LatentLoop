@@ -55,8 +55,6 @@ def observation_to_payload(value: ObservationSignal) -> bytes:
     message.mic.samples = value.mic.samples
     message.screen.width = value.screen.width
     message.screen.height = value.screen.height
-    message.screen.revision = value.screen.revision
-    message.screen.valid = value.screen.valid
     message.screen.pixel_format = value.screen.pixel_format
     message.screen.encoding = value.screen.encoding
     message.screen.image = value.screen.image
@@ -87,8 +85,6 @@ def message_to_observation(payload: bytes) -> ObservationSignal:
             message.screen.image,
             width=message.screen.width,
             height=message.screen.height,
-            revision=message.screen.revision,
-            valid=message.screen.valid,
             pixel_format=message.screen.pixel_format,
             encoding=message.screen.encoding,
         ),
@@ -102,7 +98,7 @@ def _control_to_message(value: ControlSignal) -> ControlMessage:
         text=value.text or "",
         button_phase=value.button_phase.value if value.button_phase is not None else "",
     )
-    optional_fields = ("screen_revision", "x", "y", "dx", "dy", "key", "button")
+    optional_fields = ("x", "y", "dx", "dy", "key", "button")
     for field in optional_fields:
         _set_optional(message, field, getattr(value, field))
     return message
@@ -110,7 +106,7 @@ def _control_to_message(value: ControlSignal) -> ControlMessage:
 
 def _message_to_control(message: ControlMessage) -> ControlSignal:
     values: dict[str, Any] = {"kind": ControlKind(message.kind), "event_id": message.event_id}
-    optional_fields = ("screen_revision", "x", "y", "dx", "dy", "key", "button")
+    optional_fields = ("x", "y", "dx", "dy", "key", "button")
     for field in optional_fields:
         if message.HasField(field):
             values[field] = getattr(message, field)
@@ -198,7 +194,7 @@ def payload_to_reward(payload: bytes) -> RewardBreakdown:
         latency_quality=message.latency_quality,
         action_efficiency=message.action_efficiency,
         safety=message.safety,
-        spec_id=message.spec_id or "realtime-v1",
+        spec_id=message.spec_id or "realtime-v2",
     )
 
 

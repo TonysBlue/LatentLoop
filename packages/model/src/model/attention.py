@@ -17,7 +17,14 @@ class CachedSelfAttention(nn.Module):
         self.out = nn.Linear(dim, dim, bias=False)
         self.dropout = dropout
 
-    def forward(self, x: Tensor, cache: LayerKV, max_tokens: int) -> tuple[Tensor, LayerKV]:
+    def forward(
+        self,
+        x: Tensor,
+        cache: LayerKV,
+        current_is_visual: Tensor,
+        max_temporal_tokens: int,
+        max_visual_tokens: int,
+    ) -> tuple[Tensor, LayerKV]:
         batch, current_tokens, dim = x.shape
         qkv = self.qkv(x).view(batch, current_tokens, 3, self.heads, self.head_dim)
         query, key, value = qkv.unbind(dim=2)
@@ -28,6 +35,7 @@ class CachedSelfAttention(nn.Module):
         cached_tokens = cache.key.shape[2]
         all_key = torch.cat((cache.key, key), dim=2)
         all_value = torch.cat((cache.value, value), dim=2)
+        all_is_visual = torch.cat((cache.is_visual, current_is_visual), dim=0)
         scores = torch.matmul(query, all_key.transpose(-2, -1)) / math.sqrt(self.head_dim)
 
         current_mask = torch.triu(
@@ -48,9 +56,15 @@ class CachedSelfAttention(nn.Module):
             torch.matmul(weights, all_value).transpose(1, 2).reshape(batch, current_tokens, dim)
         )
 
+        temporal_indices = torch.nonzero(~all_is_visual, as_tuple=False).flatten()
+        visual_indices = torch.nonzero(all_is_visual, as_tuple=False).flatten()
+        temporal_indices = temporal_indices[-max_temporal_tokens:]
+        visual_indices = visual_indices[-max_visual_tokens:]
+        kept_indices = torch.cat((temporal_indices, visual_indices)).sort().values
         new_cache = LayerKV(
-            key=all_key[:, :, -max_tokens:],
-            value=all_value[:, :, -max_tokens:],
+            key=all_key.index_select(2, kept_indices),
+            value=all_value.index_select(2, kept_indices),
+            is_visual=all_is_visual.index_select(0, kept_indices),
         )
         return self.out(output), new_cache
 
@@ -82,9 +96,17 @@ class StreamingTransformerLayer(nn.Module):
         hidden: Tensor,
         latent: Tensor,
         cache: LayerKV,
-        max_tokens: int,
+        current_is_visual: Tensor,
+        max_temporal_tokens: int,
+        max_visual_tokens: int,
     ) -> tuple[Tensor, LayerKV]:
-        attended, new_cache = self.self_attention(self.self_norm(hidden), cache, max_tokens)
+        attended, new_cache = self.self_attention(
+            self.self_norm(hidden),
+            cache,
+            current_is_visual,
+            max_temporal_tokens,
+            max_visual_tokens,
+        )
         hidden = hidden + self.dropout(attended)
         if self.cross_attention is not None and self.cross_norm is not None:
             normalized = self.cross_norm(hidden)

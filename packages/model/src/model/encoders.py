@@ -24,22 +24,25 @@ class StreamingAudioEncoder(nn.Module):
 class VisionEncoder(nn.Module):
     def __init__(self, dim: int) -> None:
         super().__init__()
-        inner = max(dim // 4, 16)
+        inner = max(dim // 8, 16)
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, inner, 5, stride=2, padding=2),
-            nn.GELU(),
+            nn.Conv2d(3, inner, 3, stride=2, padding=1),
+            nn.GroupNorm(4, inner),
+            nn.SiLU(),
             nn.Conv2d(inner, inner * 2, 3, stride=2, padding=1),
-            nn.GELU(),
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(),
-            nn.Linear(inner * 2, dim),
-            nn.LayerNorm(dim),
+            nn.GroupNorm(4, inner * 2),
+            nn.SiLU(),
+            nn.Conv2d(inner * 2, dim, 3, stride=2, padding=1),
+            nn.GroupNorm(8, dim),
+            nn.SiLU(),
+            nn.AdaptiveAvgPool2d((4, 4)),
         )
-        self.empty_token = nn.Parameter(torch.zeros(dim))
+        self.position = nn.Parameter(torch.zeros(1, 16, dim))
+        nn.init.normal_(self.position, std=0.02)
 
-    def forward(self, screen: Tensor, valid: Tensor) -> Tensor:
-        token = self.encoder(screen)
-        return torch.where(valid[:, None], token, self.empty_token[None])[:, None]
+    def forward(self, screen: Tensor) -> Tensor:
+        features = self.encoder(screen)
+        return features.flatten(2).transpose(1, 2) + self.position
 
 
 class TimeEncoder(nn.Module):

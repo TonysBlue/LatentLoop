@@ -1,9 +1,9 @@
-# 轨迹 Schema v6
+# 轨迹 Schema v7
 
-监督 episode、SFT 样本和 Online GRPO rollout 统一使用 schema v6。schema 是数据准备、
+监督 episode、SFT 样本和 Online GRPO rollout 统一使用 schema v7。schema 是数据准备、
 训练、评估和 checkpoint lineage 的稳定身份，不因 Canary/Pilot/Production 规模变化。
 
-每个 `meta.json` 和 manifest entry 必须包含 `schema_version=6`、`dataset_scale`、
+每个 `meta.json` 和 manifest entry 必须包含 `schema_version=7`、`dataset_scale`、
 `sample_kind`、`stage`、`supervision_kind`、`task_id`、`environment_id/version`、
 `protocol_version`、`action_schema_id=structured-action-v1`、codec identity 和完整
 `runtime_identity`。每个 unit 固定 80 ms、24 kHz 单声道、每 unit 一帧 Mimi。
@@ -11,7 +11,7 @@
 timeline 按 unit 保存：
 
 ```text
-timestamp_ms, delta_ms, screen frame/index/revision
+timestamp_ms, delta_ms, dense screen frame
 speech_mode, speech_mode_mask, speech_codes, speech_codec_mask
 action_kind, action_supervision_mask
 action_coordinate_cell, action_coordinate_residual
@@ -49,8 +49,6 @@ class StreamUnit:
     delta_ms: Tensor
     mic_audio: Tensor
     screen: Tensor
-    screen_valid: Tensor
-    screen_revision: Tensor
     speech_mode: Tensor
     speech_mode_mask: Tensor
     speech_codes: Tensor
@@ -59,8 +57,9 @@ class StreamUnit:
     action_supervision_mask: Tensor
 ```
 
-`delta_ms` 为正，时间戳严格递增；每个 target 都有明确监督 mask。reader 必须校验 kind
-条件参数、TYPE/HOTKEY length、数值边界、screen revision 和 episode 时间顺序。
+`delta_ms` 为正，时间戳严格递增；每个 unit 必须有 `[3,224,224]` 屏幕张量。采集缺失时
+输入适配器提供全黑帧并记录控制面统计；模型输入不包含 revision 或 valid 标记。reader 必须
+校验 kind 条件参数、TYPE/HOTKEY length、数值边界和 episode 时间顺序。
 
 ## 2. Online rollout
 
@@ -71,13 +70,13 @@ GRPO ratio 以 frame joint probability 为 action 单位；kind-conditioned 参�
 
 ## 3. Checkpoint identity
 
-checkpoint format v6 锁定 schema version、action schema ID、32x32 coordinate grid、每 unit
+checkpoint format v7 锁定 schema version、action schema ID、32x32 coordinate grid、每 unit
 16 TYPE bytes、最多 8 HOTKEY keys 和 key table identity。旧 flat Action Head checkpoint 直接
 拒绝 resume/warm-start。
 
 ## 4. 验证设计
 
-- v6 episode 写入/读取逐字段往返；
+- v7 episode 写入/读取逐字段往返；
 - 缺失监督与有监督 NO_ACTION 明确区分；
 - kind-conditioned 参数边界及非法冗余参数拒绝；
 - TYPE 跨 unit UTF-8 pending 重放，非 TYPE 切换时不完整序列拒绝；

@@ -8,6 +8,9 @@ model:
   audio_tokens: 2
   audio_kernel: 32
   audio_stride: 16
+  vision_tokens: 16
+  temporal_kv_units: 4
+  vision_kv_units: 2
   latent_slots: 4
   kv_units: 4
   kv_window_ms: 320
@@ -26,7 +29,7 @@ model:
 data:
   dataset: synthetic
   source: synthetic
-  schema_version: 6
+  schema_version: 7
   audio_sample_rate: 4000
   codec_frame_rate: 12.5
   codec_id: synthetic-codec-v1
@@ -36,8 +39,8 @@ data:
   codec_codebook_size: 32
   unit_ms: 80
   unit_audio_samples: 320
-  screen_height: 32
-  screen_width: 32
+  screen_height: 224
+  screen_width: 224
   episode_units: 8
   train_episodes: 4
   seed: 17

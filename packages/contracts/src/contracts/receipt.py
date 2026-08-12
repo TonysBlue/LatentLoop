@@ -29,7 +29,7 @@ class RewardBreakdown:
     latency_quality: float
     action_efficiency: float
     safety: float
-    spec_id: str = "realtime-v1"
+    spec_id: str = "realtime-v2"
 
     def __post_init__(self) -> None:
         if not self.spec_id:

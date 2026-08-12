@@ -61,19 +61,19 @@ Pretrain checkpoint 只能作为 SFT 的父 checkpoint；SFT 数据身份、stag
 ## 5. Online GRPO
 
 Online GRPO 从同一个任务初始状态和 seed 采样 G 条独立 rollout。环境观察只包含
-模型运行时真实可见的混合麦克风、屏幕、screen revision 和时间，不包含任务成功、
+模型运行时真实可见的混合麦克风、完整屏幕帧和时间，不包含任务成功、
 隐藏执行结果或 reward 字段。环境在 rollout 结束后单独给出 reward breakdown。
 
 组内 reward 标准化为 advantage，零方差组不产生 optimizer update。训练采用 clipped
 policy ratio，并相对冻结的 SFT reference policy 计算 sampled-token KL。没有 critic
 或 value head。详细数学定义和环境接口见 `online-grpo-training.md`。
 
-## 6. Schema v6
+## 6. Schema v7
 
-监督 episode 与在线 rollout 统一使用 schema v6 identity。监督样本 metadata 至少包含：
+监督 episode 与在线 rollout 统一使用 schema v7 identity。监督样本 metadata 至少包含：
 
 ```text
-schema_version = 6
+schema_version = 7
 stage
 dataset_scale
 sample_kind
@@ -95,7 +95,7 @@ reason。旧 flat-action schema 不得兼容；旧资产必须从源轨迹显式
 
 ## 7. Checkpoint v6 与阶段谱系
 
-正式 checkpoint 使用 format v6，metadata 至少包含：
+正式 checkpoint 使用 format v7，metadata 至少包含：
 
 ```text
 schema_version
@@ -135,10 +135,10 @@ Canary 是完整训练链的小规模证明，不是删减版算法。它同样�
 
 - 配置拒绝错误 stage/objective、正式 RL 缺失环境 identity/socket、非法 GRPO 参数；
 - 三个正式 recipe 都严格包含 `pretrain -> sft -> rl`，且全部 `backbone_train_mode=all`；
-- schema v6 往返保存结构化 frame、runtime identity、decoded controls、receipts 与 metadata，明确拒绝旧 schema；
+- schema v7 往返保存结构化 frame、runtime identity、decoded controls、receipts 与 metadata，明确拒绝旧 schema；
 - speech-only 导入保持 action mask 全 false，显式专家动作可正确编码；
 - 环境客户端校验 identity，并保证 observation 不携带 reward/隐藏状态；
 - rollout 的同组成员使用相同 task/seed 初始状态并记录 old/reference log-prob；
 - GRPO advantage、clipping、KL、零方差跳过和全模型梯度可验证；
-- format v6 resume 校验完整谱系并拒绝旧 Action Head；
+- format v7 resume 校验完整谱系并拒绝旧视觉状态与 Action Head；
 - Canary、Pilot、Production 通过同一 recipe 和 train 分派路径。

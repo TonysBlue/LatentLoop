@@ -18,9 +18,7 @@ class SensorAdapter(Protocol):
 class ActuatorAdapter(Protocol):
     """Plays speech and executes already-decoded, validated controls."""
 
-    def apply(
-        self, output: ActuationSignal, *, current_revision: int = 0
-    ) -> EnvironmentReceipt: ...
+    def apply(self, output: ActuationSignal) -> EnvironmentReceipt: ...
 
     def close(self) -> None: ...
 

@@ -18,7 +18,7 @@ from data.curation import (
     check_readiness,
     fetch_pilot_data,
     prepare_pilot_data,
-    rebuild_schema_v6_shards,
+    rebuild_schema_v7_shards,
     select_pilot_voices,
     synthesize_pilot,
 )
@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     readiness = subparsers.add_parser("check-readiness")
     readiness.add_argument("--config", required=True)
     readiness.add_argument("--root")
-    rebuild = subparsers.add_parser("rebuild-v6")
+    rebuild = subparsers.add_parser("rebuild-v7")
     rebuild.add_argument("--config", required=True)
     rebuild.add_argument("--root")
     rebuild.add_argument("--dataset", required=True, choices=("canary", "pilot", "production"))
@@ -112,12 +112,12 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(args.config)
         root = args.root or config.runtime.data_root
         print(json.dumps(check_readiness(root, config=config), indent=2))
-    elif args.command == "rebuild-v6":
+    elif args.command == "rebuild-v7":
         config = load_config(args.config)
         root = args.root or config.runtime.data_root
         client = codec_client(config, args.socket)
         client.health()
-        report = rebuild_schema_v6_shards(
+        report = rebuild_schema_v7_shards(
             root, dataset=args.dataset, config=config, client=client, activate=args.activate
         )
         print(json.dumps(report, indent=2))
@@ -183,7 +183,10 @@ def main(argv: list[str] | None = None) -> int:
             report = {
                 "parameters": model.parameter_count(),
                 "tokens_per_unit": config.model.tokens_per_unit,
-                "max_kv_tokens": config.model.tokens_per_unit * config.model.kv_units,
+                "max_kv_tokens": (
+                    config.model.temporal_kv_units * (config.model.audio_tokens + 2)
+                    + config.model.vision_kv_units * config.model.vision_tokens
+                ),
             }
         elif args.command == "generate-data":
             output = args.output or str(config.runtime.data_path() / "generated" / "train-%06d.tar")

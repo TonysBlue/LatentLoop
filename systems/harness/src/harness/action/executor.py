@@ -15,12 +15,11 @@ class ControlExecutor:
         self,
         output: ActuationSignal,
         *,
-        current_revision: int = 0,
         approved: bool = False,
     ) -> EnvironmentReceipt:
         try:
             for signal in output.controls:
-                self.gate.validate(signal, current_revision=current_revision, approved=approved)
+                self.gate.validate(signal, approved=approved)
             if hasattr(self.backend, "apply"):
                 self.backend.apply(output)
             else:

@@ -104,7 +104,6 @@ def decode_action_frame(
     frame: ActionFrame,
     *,
     event_id: str,
-    screen_revision: int | None = None,
     pending_utf8: bytes = b"",
 ) -> ActionDecodeResult:
     """Decode one unit frame into zero or more ordered physical controls."""
@@ -127,7 +126,6 @@ def decode_action_frame(
                 ControlSignal(
                     ControlKind.POINTER_MOVE,
                     event_id,
-                    screen_revision=screen_revision,
                     x=x,
                     y=y,
                 ),
@@ -144,7 +142,6 @@ def decode_action_frame(
                 ControlSignal(
                     ControlKind.POINTER_BUTTON,
                     event_id,
-                    screen_revision=screen_revision,
                     button=int(frame.button),
                     button_phase=phase,
                 ),
@@ -156,7 +153,6 @@ def decode_action_frame(
                 ControlSignal(
                     ControlKind.SCROLL,
                     event_id,
-                    screen_revision=screen_revision,
                     dx=frame.scroll_delta[0],
                     dy=frame.scroll_delta[1],
                 ),

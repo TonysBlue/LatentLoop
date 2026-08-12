@@ -15,7 +15,7 @@ Harness.evaluate -> RewardBreakdown
 模型内部的 speech token、ActionFrame、old/reference log-prob 和 advantage 只保存在训练 trace；物理 socket
 只传输 protobuf ObservationSignal、ActuationSignal 和控制面的 receipt/reward。
 
-正式 Harness control socket 必须校验 environment identity、session、unit、screen revision
+正式 Harness control socket 必须校验 environment identity、session、unit
 和 action schema。连接失败、设备失败、QEMU 崩溃或 receipt 不完整时，rollout 标记为
 infrastructure failure，不作为低 reward 样本更新策略。
 
@@ -23,7 +23,8 @@ infrastructure failure，不作为低 reward 样本更新策略。
 
 `reset(task_id, seed, session_id)` 为唯一的会话创建操作。同一 `session_id` 再次 reset 时，
 Harness 必须先关闭旧 backend 并回收旧 overlay；空 task/session identity、重复或跳跃 unit、
-回退的 screen revision、与当前画面 revision 不一致的控制事件都必须 fail-closed。
+错 session、重复或跳跃 unit 必须 fail-closed。动态画面的动作时延由策略学习处理，控制事件
+不绑定屏幕 revision。
 
 每次 reset 返回 unit 0；unit N 的 ActuationSignal 只能作用于同一 session 的 unit N
 ObservationSignal，并返回 unit N receipt 和 unit N+1 ObservationSignal。80 ms 音频单元固定为
@@ -46,8 +47,8 @@ NOOP executor 或 fixture reward。
 ## 契约测试设计
 
 契约测试必须覆盖 protobuf round-trip、模型输出张量不跨物理边界、80 ms PCM 校验、identity 查询不
-泄漏 backend、重复 reset 关闭旧 backend、未知 session、错序 unit、错 session、过期 screen
-revision、backend 返回错误 identity、server shutdown 清理全部 session，以及 receipt/reward
+泄漏 backend、重复 reset 关闭旧 backend、未知 session、错序 unit、错 session、
+backend 返回错误 identity、server shutdown 清理全部 session，以及 receipt/reward
 protobuf round-trip。QEMU 生命周期测试使用可控假进程和 QMP server 验证唯一 overlay、readiness、
 崩溃诊断和资源回收。
 
@@ -57,7 +58,7 @@ evaluator reward，至少完成一次 optimizer update。它必须断言：
 
 1. speech token 经正式 worker 解码为恰好一个 80 ms PCM，每 unit ActionFrame 解码为
    有序 `ControlSignal` 并立即执行，Harness 收不到 raw frame tensor。
-2. reset、apply、receipt 和下一轮 observation 的 session/unit/screen revision 严格递增，
+2. reset、apply、receipt 和下一轮 observation 的 session/unit 严格递增，
    speech PCM 与 action 均经过 protobuf round-trip。
 3. receipt/reward、任务成功、DOM 和 evaluator 字段只保存在 rollout trace，不能出现在下一
    轮 `ObservationSignal` 或模型输入张量。

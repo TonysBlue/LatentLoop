@@ -161,12 +161,8 @@ def _build_episode(
         raise ValueError("screen tick is outside the episode timeline")
     action_by_tick = _load_action_targets(record.get("actions"), ticks)
     units: list[StreamUnit] = []
-    screen_revision = -1
     empty_screen = torch.zeros(3, data.screen_height, data.screen_width)
     for tick in range(ticks):
-        screen_valid = tick in screens
-        if screen_valid:
-            screen_revision += 1
         speaking = active[tick]
         units.append(
             StreamUnit(
@@ -176,8 +172,6 @@ def _build_episode(
                     None, tick * data.unit_audio_samples : (tick + 1) * data.unit_audio_samples
                 ],
                 screen=screens.get(tick, empty_screen)[None],
-                screen_valid=torch.tensor([screen_valid]),
-                screen_revision=torch.tensor([screen_revision]),
                 speech_mode=torch.tensor(
                     [int(SpeechMode.SPEECH if speaking else SpeechMode.SILENCE)]
                 ),
@@ -213,7 +207,7 @@ def _build_episode(
         "task_id": record.get("task_id", record["episode_id"]),
         "environment_id": record.get("environment_id", "recorded"),
         "environment_version": record.get("environment_version", "1"),
-        "protocol_version": record.get("protocol_version", "realtime-v1"),
+        "protocol_version": record.get("protocol_version", "realtime-v2"),
         "action_schema_id": ACTION_SCHEMA_ID,
     }
     episode = Episode(str(record["episode_id"]), units, metadata, target_speech=target)

@@ -25,12 +25,10 @@ def test_structured_action_frames_decode_without_end_token() -> None:
             coordinate_residual=(0.5, 1.0),
         ),
         event_id="move",
-        screen_revision=7,
     )
     assert move.controls[0].kind is ControlKind.POINTER_MOVE
     assert move.controls[0].x == pytest.approx(8.5 / 32)
     assert move.controls[0].y == 1.0
-    assert move.controls[0].screen_revision == 7
 
     button = decode_action_frame(
         ActionFrame(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import torch
 from data import SyntheticEpisodeDataset
 from model import StreamingLatentLoop
@@ -48,7 +49,7 @@ def test_checkpoint_restores_full_recurrent_step(
         config=smoke_config.as_dict(),
     )
     payload = torch.load(path, map_location="cpu", weights_only=False)
-    assert payload["format_version"] == 6
+    assert payload["format_version"] == 7
     expected = model(episode.units[1], first.state.detach()).speech_codec_logits.detach()
 
     restored_model = StreamingLatentLoop(smoke_config.model)
@@ -111,3 +112,39 @@ def test_checkpoint_rejects_codec_mismatch(tmp_path: Path, smoke_config: Project
         assert "codec_id" in str(error)
     else:
         raise AssertionError("codec mismatch must be rejected")
+
+
+def test_checkpoint_rejects_pre_dense_visual_format(
+    tmp_path: Path, smoke_config: ProjectConfig
+) -> None:
+    model = StreamingLatentLoop(smoke_config.model)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    manager = CheckpointManager(tmp_path)
+    path, _ = manager.save(
+        "v7",
+        model=model,
+        optimizer=optimizer,
+        scheduler=None,
+        scaler=None,
+        recurrent_state=None,
+        train_state={"update": 0},
+        data_cursor=DataCursor(),
+        metadata=CheckpointMetadata("data", "codec", "hash", "test"),
+        config=smoke_config.as_dict(),
+    )
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    payload["format_version"] = 6
+    old_path = tmp_path / "v6.pt"
+    torch.save(payload, old_path)
+
+    with pytest.raises(ValueError, match="dense visual state requires v7"):
+        manager.load(
+            old_path,
+            model=model,
+            optimizer=optimizer,
+            scheduler=None,
+            scaler=None,
+            device=torch.device("cpu"),
+            config=smoke_config.as_dict(),
+            expected_metadata=CheckpointMetadata("data", "codec", "hash", "test"),
+        )

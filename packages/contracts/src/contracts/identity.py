@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class ProtocolIdentity:
-    protocol_version: str = "realtime-v1"
+    protocol_version: str = "realtime-v2"
     action_schema_id: str = "structured-action-v1"
     codec_id: str = "mimi-24khz-8x2048"
 

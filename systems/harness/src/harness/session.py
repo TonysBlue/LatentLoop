@@ -9,14 +9,10 @@ from contracts import ActuationSignal, ObservationSignal
 class Session:
     session_id: str
     next_unit: int = 0
-    screen_revision: int = 0
 
     def accept_observation(self, observation: ObservationSignal) -> None:
         if observation.session_id != self.session_id or observation.unit_index != self.next_unit:
             raise ValueError("observation session or unit is out of order")
-        if observation.screen.revision < self.screen_revision:
-            raise ValueError("screen revision moved backwards")
-        self.screen_revision = observation.screen.revision
 
     def accept_actuation(self, output: ActuationSignal) -> None:
         if output.session_id != self.session_id or output.unit_index != self.next_unit:

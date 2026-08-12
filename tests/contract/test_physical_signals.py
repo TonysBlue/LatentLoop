@@ -30,6 +30,8 @@ from contracts.protocol import (  # noqa: E402
     message_to_observation,
     observation_to_message,
 )
+from contracts.realtime_pb2 import ControlSignal as ControlMessage  # noqa: E402
+from contracts.realtime_pb2 import ScreenFrame as ScreenMessage  # noqa: E402
 from runtime.action import ActionFrameDecoder
 
 
@@ -40,10 +42,16 @@ def test_observation_physical_signal_round_trip() -> None:
         0,
         80,
         MicSignal(b"x" * 7680),
-        ScreenSignal(b"rgb", 1, 1, 3),
+        ScreenSignal(b"rgb", 1, 1),
     )
     restored = message_to_observation(observation_to_message(value))
     assert restored == value
+
+
+def test_realtime_v2_has_no_screen_revision_or_valid_fields() -> None:
+    assert "revision" not in ScreenMessage.DESCRIPTOR.fields_by_name
+    assert "valid" not in ScreenMessage.DESCRIPTOR.fields_by_name
+    assert "screen_revision" not in ControlMessage.DESCRIPTOR.fields_by_name
 
 
 def test_actuation_does_not_contain_raw_action_tokens() -> None:

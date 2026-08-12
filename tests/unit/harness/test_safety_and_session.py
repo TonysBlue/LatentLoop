@@ -6,13 +6,8 @@ from harness.action.safety import SafetyGate
 from harness.session import Session
 
 
-def test_safety_rejects_stale_revision() -> None:
-    gate = SafetyGate()
-    with pytest.raises(PermissionError, match="stale"):
-        gate.validate(
-            ControlSignal(ControlKind.POINTER_MOVE, "event", screen_revision=2, x=0.1, y=0.2),
-            current_revision=1,
-        )
+def test_safety_accepts_pointer_without_screen_revision() -> None:
+    SafetyGate().validate(ControlSignal(ControlKind.POINTER_MOVE, "event", x=0.1, y=0.2))
 
 
 def test_session_rejects_out_of_order_unit() -> None:
@@ -20,7 +15,7 @@ def test_session_rejects_out_of_order_unit() -> None:
     observation = type(
         "Observation",
         (),
-        {"session_id": "s", "unit_index": 1, "screen": type("Screen", (), {"revision": 0})()},
+        {"session_id": "s", "unit_index": 1},
     )()
     with pytest.raises(ValueError, match="out of order"):
         session.accept_observation(observation)

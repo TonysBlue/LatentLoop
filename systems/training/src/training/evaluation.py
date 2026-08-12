@@ -54,8 +54,8 @@ def load_evaluation_model(
     require_data_identity: bool = True,
 ) -> StreamingLatentLoop:
     payload = torch.load(Path(checkpoint).expanduser(), map_location="cpu", weights_only=False)
-    if payload.get("format_version") != 6:
-        raise ValueError("evaluation requires a format version 6 checkpoint")
+    if payload.get("format_version") != 7:
+        raise ValueError("evaluation requires a format version 7 checkpoint")
     metadata = payload.get("metadata", {})
     for field, expected in (
         ("codec_id", config.data.codec_id),

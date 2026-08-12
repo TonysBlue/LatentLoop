@@ -135,8 +135,6 @@ class StreamUnit:
     delta_ms: Tensor
     mic_audio: Tensor
     screen: Tensor
-    screen_valid: Tensor
-    screen_revision: Tensor
     speech_mode: Tensor
     speech_mode_mask: Tensor
     speech_codes: Tensor
@@ -145,7 +143,8 @@ class StreamUnit:
     action_supervision_mask: Tensor
 ```
 
-`delta_ms` 为正，时间戳严格递增；所有 target 都有对应 mask。
+`screen` 始终为当前 224x224 RGB 像素；采集缺帧时由边界生成黑帧。静态与动态画面
+使用同一视觉编码路径。`delta_ms` 为正，时间戳严格递增；所有 target 都有对应 mask。
 
 ### 5.3 编码和状态顺序
 
@@ -161,7 +160,7 @@ Action_t  = ActionHead(H_t, action_local_(t-1))
 
 ### 5.4 Codec 时间对齐
 
-每个 unit 固定一帧 Mimi code。音频、screen revision、speech mask 和 action mask 都按照同一 unit 时钟对齐，不允许累计四舍五入。
+每个 unit 固定一帧 Mimi code。音频、完整屏幕帧、speech mask 和 action mask 都按照同一 unit 时钟对齐，不允许累计四舍五入。
 
 ## 6. 公共训练接口
 
@@ -228,7 +227,9 @@ H_t -> Speech Head + Unified Action Head
 
 ### 7.2 Streaming Backbone
 
-每层执行 causal self-attention、周期性 latent cross-attention、feed-forward 和 final normalization。KV 按完整 unit 追加，最多保留 `kv_units * tokens_per_unit` 个位置；淘汰不能切断 unit。
+每层执行 causal self-attention、周期性 latent cross-attention、feed-forward 和 final normalization。
+非视觉 token 保留最近 750 个 unit，视觉 token 保留最近 100 个 unit；两类 token 独立淘汰，
+保留后仍按原始时间顺序参与 attention。
 
 ### 7.3 MemoryUpdater
 
@@ -246,7 +247,7 @@ Z_t = MemoryUpdater(Z_(t-1), H_(t-1))
 
 所有 action kind 和 kind-conditioned 参数共用 Structured ActionFrame schema、context、
 local state 和 frame joint probability。每 unit frame 立即解码执行；只有 TYPE decoder 的
-UTF-8 pending bytes 跨 unit。Harness 负责 schema、安全和 screen revision。
+UTF-8 pending bytes 跨 unit。Harness 负责 schema、安全和权限校验。
 
 ## 8. 模型配置档位
 
@@ -293,7 +294,7 @@ v5 并通过 readiness。
 
 ### 9.4 数据校验
 
-训练前验证时间戳、音频长度、codec frame 对齐、screen revision、action grammar、mask、manifest/content hash、license 和 split leakage。损坏 episode 进入 quarantine，不静默跳过。
+训练前验证时间戳、音频长度、codec frame 对齐、屏幕帧形状、action grammar、mask、manifest/content hash、license 和 split leakage。损坏 episode 进入 quarantine，不静默跳过。
 
 ## 10. 训练循环
 
@@ -414,7 +415,7 @@ CUDA、FP16、codec worker、checkpoint 原子写入和 W&B Local/Offline 可用
 
 ### 14.2 数据与协议
 
-StreamUnit shape、80 ms 时钟、mask、schema v6、manifest/shard identity、runtime identity、codec identity、action schema 和 split isolation 通过。
+StreamUnit shape、80 ms 时钟、mask、schema v7、manifest/shard identity、runtime identity、codec identity、action schema 和 split isolation 通过。
 
 ### 14.3 状态闭环
 
@@ -423,7 +424,7 @@ KV 长度不超过配置上限；淘汰只发生在完整 unit 边界；Z/H/loca
 ### 14.4 语音与 action
 
 speech mode/codebook accuracy、SILENCE codec mask、action kind/参数指标、schema validity、
-TYPE 跨 unit continuation、screen revision 和 Harness safety gate 通过。
+TYPE 跨 unit continuation、session/unit 顺序和 Harness safety gate 通过。
 
 ### 14.5 性能与稳定性
 

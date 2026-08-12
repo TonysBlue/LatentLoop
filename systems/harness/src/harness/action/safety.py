@@ -15,11 +15,8 @@ class SafetyGate:
         self,
         signal: ControlSignal,
         *,
-        current_revision: int,
         approved: bool = False,
     ) -> None:
-        if signal.screen_revision is not None and signal.screen_revision != current_revision:
-            raise PermissionError("screen revision is stale")
         if signal.kind in self.require_approval_for and not approved:
             raise PermissionError(f"control requires approval: {signal.kind}")
         if signal.kind is ControlKind.TEXT_INPUT and not signal.text:

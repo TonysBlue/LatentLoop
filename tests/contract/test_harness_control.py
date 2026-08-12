@@ -28,7 +28,7 @@ class FakeBackend:
             0,
             80,
             MicSignal(b"x" * 7680),
-            ScreenSignal(b"rgb", 1, 1, 0),
+            ScreenSignal(b"rgb", 1, 1),
         )
 
     def apply(self, output: ActuationSignal):
@@ -39,7 +39,7 @@ class FakeBackend:
                 80,
                 80,
                 MicSignal(b"x" * 7680),
-                ScreenSignal(b"rgb", 1, 1, output.unit_index + 1),
+                ScreenSignal(b"rgb", 1, 1),
             ),
             EnvironmentReceipt(output.session_id, output.unit_index, True),
         )

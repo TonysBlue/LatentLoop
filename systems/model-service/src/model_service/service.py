@@ -23,7 +23,6 @@ from runtime.config import ProjectConfig
 class ModelSession:
     session_id: str
     state: object
-    previous_revision: int = -1
     next_unit: int = 0
     speech_active: bool = False
     action_decoder: ActionFrameDecoder = field(default_factory=ActionFrameDecoder)
@@ -44,8 +43,8 @@ class ModelService:
         self.model = StreamingLatentLoop(config.model).to(self.device)
         if checkpoint:
             payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
-            if payload.get("format_version") != 6:
-                raise ValueError("model service requires a format v6 checkpoint")
+            if payload.get("format_version") != 7:
+                raise ValueError("model service requires a format v7 checkpoint")
             if payload.get("metadata", {}).get("action_schema_id") != config.model.action_schema_id:
                 raise ValueError("checkpoint action schema does not match model service")
             weights = payload.get("model")
@@ -61,7 +60,7 @@ class ModelService:
         return {
             "service": "model-service",
             "version": "1",
-            "protocol_version": "realtime-v1",
+            "protocol_version": "realtime-v2",
             "action_schema_id": self.config.model.action_schema_id,
             "codec_id": self.config.data.codec_id,
         }
@@ -116,8 +115,6 @@ class ModelService:
             delta_ms=torch.tensor([observation.delta_ms], dtype=torch.long),
             mic_audio=torch.from_numpy(mic.copy()).reshape(1, -1),
             screen=screen,
-            screen_valid=torch.tensor([observation.screen.valid]),
-            screen_revision=torch.tensor([observation.screen.revision], dtype=torch.long),
             speech_mode=torch.zeros(1, dtype=torch.long),
             speech_mode_mask=torch.zeros(1, dtype=torch.bool),
             speech_codes=zeros,
@@ -134,8 +131,6 @@ class ModelService:
                 raise KeyError("unknown model session")
             if observation.unit_index != session.next_unit:
                 raise ValueError("model unit index is out of order")
-            if observation.screen.revision < session.previous_revision:
-                raise ValueError("screen revision moved backwards")
             unit = self._unit(observation).to(self.device)
             generated = self.model.generate_step(
                 unit,
@@ -144,7 +139,6 @@ class ModelService:
             )
             session.state = generated.output.state
             session.next_unit += 1
-            session.previous_revision = observation.screen.revision
             mode = int(generated.speech_mode.item())
             if mode == int(SpeechMode.SILENCE):
                 session.speech_active = False
@@ -173,7 +167,6 @@ class ModelService:
             controls = session.action_decoder.push(
                 generated.action_frame.as_contract(),
                 event_id=f"{observation.session_id}-{observation.unit_index}",
-                screen_revision=observation.screen.revision,
             )
             return ActuationSignal(
                 observation.session_id,

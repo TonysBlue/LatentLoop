@@ -7,7 +7,7 @@ from runtime.config import load_config
 def test_load_config_with_override() -> None:
     config = load_config("configs/smoke.yaml", ["model.latent_slots=6"])
     assert config.model.latent_slots == 6
-    assert config.model.tokens_per_unit == config.model.audio_tokens + 3
+    assert config.model.tokens_per_unit == config.model.audio_tokens + 18
     assert config.data.unit_ms == 80
     assert config.data.codec_frame_rate == 12.5
 
@@ -18,7 +18,7 @@ def test_local_dev_and_production_profiles_are_explicit() -> None:
     assert local.data.dataset == "synthetic"
     assert production.data.dataset == "production"
     assert production.model.model_dim == 896
-    assert production.data.schema_version == 6
+    assert production.data.schema_version == 7
     assert production.model.action_schema_id == "structured-action-v1"
 
 

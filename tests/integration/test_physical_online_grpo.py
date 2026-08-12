@@ -85,10 +85,10 @@ class _PhysicalBackend:
             0,
             80,
             MicSignal(b"x" * 7680),
-            ScreenSignal(b"x" * (32 * 32 * 3), 32, 32, 0),
+            ScreenSignal(b"x" * (224 * 224 * 3), 224, 224),
         )
 
-    def apply(self, output: ActuationSignal, *, current_revision: int | None = None):
+    def apply(self, output: ActuationSignal):
         assert isinstance(output, ActuationSignal)
         self.seen.append(output)
         receipt = EnvironmentReceipt(output.session_id, output.unit_index, True)
@@ -96,7 +96,7 @@ class _PhysicalBackend:
             ObservationSignal(
                 output.session_id, output.unit_index + 1, (output.unit_index + 1) * 80, 80,
                 MicSignal(b"x" * 7680),
-                ScreenSignal(b"x" * (32 * 32 * 3), 32, 32, output.unit_index + 1),
+                ScreenSignal(b"x" * (224 * 224 * 3), 224, 224),
             ),
             receipt,
         )
@@ -136,7 +136,7 @@ def test_formal_physical_online_grpo_runs_one_update(tmp_path: Path, monkeypatch
     config.training.rl.codec_socket = str(tmp_path / "codec.sock")
     config.training.rl.environment_id = "test-physical"
     config.training.rl.environment_version = "1"
-    config.training.rl.environment_protocol_version = "realtime-v1"
+    config.training.rl.environment_protocol_version = "realtime-v2"
     identity = CodecIdentity(
         "synthetic-codec-v1", "synthetic", "synthetic", sample_rate=24000,
         frame_samples=1920, codebooks=2, codebook_size=32

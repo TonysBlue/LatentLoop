@@ -101,20 +101,19 @@ class SpiceScreenCapture:
     def health(self) -> None:
         self.device.health()
 
-    def capture(self, session_id: str, unit_index: int) -> tuple[int, int, int, bytes]:
+    def capture(self, session_id: str, unit_index: int) -> tuple[int, int, bytes]:
         value = self.device.request(
             {"operation": "capture", "session_id": session_id, "unit_index": unit_index}
         )
         image = base64.b64decode(str(value.get("image_b64", "")), validate=True)
         width = int(value.get("width", self.width))
         height = int(value.get("height", self.height))
-        revision = int(value["revision"])
         if width != self.width or height != self.height:
             raise RuntimeError("SPICE screen dimensions differ from deployment config")
         expected = width * height * 3
         if len(image) != expected:
             raise RuntimeError("SPICE screen bridge did not return an RGB frame")
-        return int(value["timestamp_ms"]), int(value.get("delta_ms", 80)), revision, image
+        return int(value["timestamp_ms"]), int(value.get("delta_ms", 80)), image
 
     def close(self) -> None:
         self.device.close()
@@ -144,14 +143,14 @@ class SpicePhysicalSensor(SensorAdapter):
         self.audio.health()
 
     def capture(self, session_id: str, unit_index: int) -> ObservationSignal:
-        timestamp_ms, delta_ms, revision, image = self.screen.capture(session_id, unit_index)
+        timestamp_ms, delta_ms, image = self.screen.capture(session_id, unit_index)
         return ObservationSignal(
             session_id=session_id,
             unit_index=unit_index,
             timestamp_ms=timestamp_ms,
             delta_ms=delta_ms,
             mic=MicSignal(self.audio.capture_pcm(session_id, unit_index)),
-            screen=ScreenSignal(image, self.screen.width, self.screen.height, revision),
+            screen=ScreenSignal(image, self.screen.width, self.screen.height),
         )
 
     def close(self) -> None:
@@ -168,9 +167,7 @@ class SpiceAudioActuator(ActuatorAdapter):
     def health(self) -> None:
         self.device.health()
 
-    def apply(
-        self, output: ActuationSignal, *, current_revision: int = 0
-    ) -> EnvironmentReceipt:
+    def apply(self, output: ActuationSignal) -> EnvironmentReceipt:
         value = self.device.request(
             {
                 "operation": "play",
@@ -202,9 +199,7 @@ class QmpInputInjector:
         self._held_buttons: set[int] = set()
         self._held_keys: set[int] = set()
 
-    def apply(
-        self, output: ActuationSignal, *, current_revision: int = 0
-    ) -> EnvironmentReceipt:
+    def apply(self, output: ActuationSignal) -> EnvironmentReceipt:
         started = time.perf_counter()
         try:
             for control in output.controls:
@@ -353,7 +348,7 @@ class TaskEvaluator(EvaluatorAdapter):
             raise RuntimeError("task evaluator response is missing reward fields")
         return RewardBreakdown(
             *(float(value[key]) for key in required),
-            spec_id=str(value.get("spec_id", "realtime-v1")),
+            spec_id=str(value.get("spec_id", "realtime-v2")),
         )
 
     def terminated(self, task_id: str) -> bool:
@@ -369,11 +364,11 @@ class _CompositeActuator(ActuatorAdapter):
         self.playback = playback
         self.input = input_injector
 
-    def apply(self, output: ActuationSignal, *, current_revision: int = 0) -> EnvironmentReceipt:
-        speech_receipt = self.playback.apply(output, current_revision=current_revision)
+    def apply(self, output: ActuationSignal) -> EnvironmentReceipt:
+        speech_receipt = self.playback.apply(output)
         if speech_receipt.infrastructure_failure:
             return speech_receipt
-        input_receipt = self.input.apply(output, current_revision=current_revision)
+        input_receipt = self.input.apply(output)
         if input_receipt.infrastructure_failure:
             return input_receipt
         return EnvironmentReceipt(

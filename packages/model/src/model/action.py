@@ -53,6 +53,22 @@ def _pending_from_state(state: ActionLocalState, index: int) -> bytes:
     return bytes(int(value) for value in state.pending_utf8_bytes[index, :length].tolist())
 
 
+class _VisualContext(nn.Module):
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.query_proj = nn.Linear(dim, dim, bias=False)
+        self.key_proj = nn.Linear(dim, dim, bias=False)
+        self.value_proj = nn.Linear(dim, dim, bias=False)
+        self.norm = nn.LayerNorm(dim)
+
+    def forward(self, query: Tensor, visual: Tensor) -> Tensor:
+        q = self.query_proj(query)[:, None]
+        k = self.key_proj(visual)
+        v = self.value_proj(visual)
+        weights = torch.softmax((q * k).sum(dim=-1) / (query.shape[-1] ** 0.5), dim=-1)
+        return self.norm((weights[:, :, None] * v).sum(dim=1))
+
+
 class ActionHead(nn.Module):
     """One kind-conditioned structured action distribution per stream unit."""
 
@@ -61,9 +77,14 @@ class ActionHead(nn.Module):
         dim = config.model_dim
         self.kind_count = len(ActionKind)
         self.context = nn.Sequential(nn.Linear(dim * 2, dim), nn.GELU(), nn.Linear(dim, dim))
+        self.visual_attention = _VisualContext(dim)
+        self.visual_grid_size = 4
+        self.local_coordinate_grid_size = 8
         self.kind_output = nn.Linear(dim, self.kind_count)
-        self.coordinate_cell_output = nn.Linear(dim, config.action_coordinate_grid_size**2)
-        self.coordinate_residual_output = nn.Linear(dim, 2 * 2)
+        self.coordinate_cell_output = nn.Linear(
+            dim * 2, self.local_coordinate_grid_size**2
+        )
+        self.coordinate_residual_output = nn.Linear(dim * 2, 2 * 2)
         self.button_output = nn.Linear(dim, 3)
         self.button_phase_output = nn.Linear(dim, 3)
         self.scroll_output = nn.Linear(dim, 2 * 2)
@@ -262,8 +283,14 @@ class ActionHead(nn.Module):
         teacher_mask: Tensor | None = None,
         sampling_temperature: float | None = None,
     ) -> tuple[ActionHeadOutput, ActionLocalState]:
+        state_query = hidden[:, -1]
+        visual_hidden = hidden[:, -(self.visual_grid_size**2 + 1) : -1]
+        visual_context = self.visual_attention(state_query, visual_hidden)
+        recurrent_context = torch.cat(
+            (state_query + visual_context, state.previous_frame_embedding), dim=-1
+        )
         context = torch.nan_to_num(
-            self.context(torch.cat((hidden[:, -1], state.previous_frame_embedding), dim=-1)),
+            self.context(recurrent_context),
             nan=0.0,
             posinf=30.0,
             neginf=-30.0,
@@ -290,10 +317,39 @@ class ActionHead(nn.Module):
         else:
             frame_kind = _categorical(kind_logits, sampling_temperature)
 
-        cell_logits = torch.nan_to_num(
-            self.coordinate_cell_output(context), nan=0.0, posinf=30.0, neginf=-30.0
+        position_context = context[:, None].expand(-1, self.visual_grid_size**2, -1)
+        local_cell_logits = self.coordinate_cell_output(
+            torch.cat((position_context, visual_hidden), dim=-1)
         )
-        coordinate_raw = self.coordinate_residual_output(context).view(-1, 2, 2)
+        cell_logits = (
+            local_cell_logits.view(
+                -1,
+                self.visual_grid_size,
+                self.visual_grid_size,
+                self.local_coordinate_grid_size,
+                self.local_coordinate_grid_size,
+            )
+            .permute(0, 1, 3, 2, 4)
+            .reshape(-1, (self.visual_grid_size * self.local_coordinate_grid_size) ** 2)
+        )
+        cell_logits = torch.nan_to_num(cell_logits, nan=0.0, posinf=30.0, neginf=-30.0)
+        sampled_cell = _categorical(cell_logits, sampling_temperature)
+        selected_cell = (
+            torch.where(teacher_mask, teacher_frame.coordinate_cell, sampled_cell)
+            if teacher_frame is not None and teacher_mask is not None
+            else sampled_cell
+        )
+        cell_x = selected_cell % (self.visual_grid_size * self.local_coordinate_grid_size)
+        cell_y = selected_cell // (self.visual_grid_size * self.local_coordinate_grid_size)
+        visual_index = (cell_y // self.local_coordinate_grid_size) * self.visual_grid_size + (
+            cell_x // self.local_coordinate_grid_size
+        )
+        selected_visual = visual_hidden.gather(
+            1, visual_index[:, None, None].expand(-1, 1, visual_hidden.shape[-1])
+        ).squeeze(1)
+        coordinate_raw = self.coordinate_residual_output(
+            torch.cat((context, selected_visual), dim=-1)
+        ).view(-1, 2, 2)
         coordinate_alpha, coordinate_beta = _beta_parameters(coordinate_raw)
         button_logits = torch.nan_to_num(
             self.button_output(context), nan=0.0, posinf=30.0, neginf=-30.0
@@ -334,7 +390,7 @@ class ActionHead(nn.Module):
         sample_continuous = sampling_temperature is not None and sampling_temperature > 0
         sampled_frame = ActionFrame(
             kind=frame_kind,
-            coordinate_cell=_categorical(cell_logits, sampling_temperature),
+            coordinate_cell=sampled_cell,
             coordinate_residual=_beta_value(
                 coordinate_alpha, coordinate_beta, sample_continuous
             ),

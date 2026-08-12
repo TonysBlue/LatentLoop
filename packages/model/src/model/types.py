@@ -210,8 +210,6 @@ class StreamUnit:
     delta_ms: Tensor
     mic_audio: Tensor
     screen: Tensor
-    screen_valid: Tensor
-    screen_revision: Tensor
     speech_mode: Tensor
     speech_mode_mask: Tensor
     speech_codes: Tensor
@@ -229,8 +227,6 @@ class StreamUnit:
             delta_ms=self.delta_ms.to(device),
             mic_audio=self.mic_audio.to(device),
             screen=self.screen.to(device),
-            screen_valid=self.screen_valid.to(device),
-            screen_revision=self.screen_revision.to(device),
             speech_mode=self.speech_mode.to(device),
             speech_mode_mask=self.speech_mode_mask.to(device),
             speech_codes=self.speech_codes.to(device),
@@ -251,8 +247,8 @@ class StreamUnit:
         batch = self.batch_size
         if self.mic_audio.shape != (batch, audio_samples):
             raise ValueError(f"mic_audio must have shape [B, {audio_samples}]")
-        if self.screen.ndim != 4 or self.screen.shape[:2] != (batch, 3):
-            raise ValueError("screen must have shape [B, 3, H, W]")
+        if self.screen.shape != (batch, 3, 224, 224):
+            raise ValueError("screen must have shape [B, 3, 224, 224]")
         if self.speech_mode.shape != (batch,) or self.speech_mode_mask.shape != (batch,):
             raise ValueError("speech mode tensors must have shape [B]")
         if torch.any((self.speech_mode < 0) | (self.speech_mode > 1)):
@@ -336,9 +332,10 @@ class Episode:
 class LayerKV:
     key: Tensor
     value: Tensor
+    is_visual: Tensor
 
     def detach(self) -> LayerKV:
-        return LayerKV(self.key.detach(), self.value.detach())
+        return LayerKV(self.key.detach(), self.value.detach(), self.is_visual.detach())
 
 
 @dataclass(slots=True)

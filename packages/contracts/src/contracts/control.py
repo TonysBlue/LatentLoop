@@ -24,7 +24,6 @@ class ButtonPhase(StrEnum):
 class ControlSignal:
     kind: ControlKind
     event_id: str
-    screen_revision: int | None = None
     x: float | None = None
     y: float | None = None
     dx: float | None = None

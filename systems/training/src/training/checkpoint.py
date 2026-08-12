@@ -32,7 +32,7 @@ class CheckpointMetadata:
     git_commit: str
     codec_revision: str = "unknown"
     parent_sha256: str | None = None
-    schema_version: int = 6
+    schema_version: int = 7
     stage: str = "pretrain"
     objective: str = "supervised"
     action_schema_id: str = "structured-action-v1"
@@ -59,7 +59,10 @@ def _serialize_state(state: RecurrentState | None) -> dict[str, Any] | None:
     if state is None:
         return None
     return {
-        "layer_kv": [(cache.key.cpu(), cache.value.cpu()) for cache in state.layer_kv],
+        "layer_kv": [
+            (cache.key.cpu(), cache.value.cpu(), cache.is_visual.cpu())
+            for cache in state.layer_kv
+        ],
         "latent": state.latent.cpu(),
         "audio_cache": state.audio_cache.cpu(),
         "hidden": state.hidden.cpu(),
@@ -87,8 +90,12 @@ def _deserialize_state(
         return None
     return RecurrentState(
         layer_kv=tuple(
-            LayerKV(key=key.to(device), value=value.to(device))
-            for key, value in payload["layer_kv"]
+            LayerKV(
+                key=key.to(device),
+                value=value.to(device),
+                is_visual=is_visual.to(device),
+            )
+            for key, value, is_visual in payload["layer_kv"]
         ),
         latent=payload["latent"].to(device),
         audio_cache=payload["audio_cache"].to(device),
@@ -131,7 +138,7 @@ class CheckpointManager:
     ) -> tuple[Path, str]:
         target = self.directory / f"{name}.pt"
         payload = {
-            "format_version": 6,
+            "format_version": 7,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
@@ -229,8 +236,8 @@ class CheckpointManager:
         expected_metadata: CheckpointMetadata,
     ) -> tuple[dict[str, Any], DataCursor, RecurrentState | None, CheckpointMetadata]:
         payload = torch.load(Path(path), map_location=device, weights_only=False)
-        if payload.get("format_version") != 6:
-            raise ValueError("unsupported checkpoint format; structured action requires v6")
+        if payload.get("format_version") != 7:
+            raise ValueError("unsupported checkpoint format; dense visual state requires v7")
         if payload["config_hash"] != config_hash(config):
             raise ValueError("checkpoint configuration does not match the current run")
         restored_metadata = CheckpointMetadata(**payload["metadata"])

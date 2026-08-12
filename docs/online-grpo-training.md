@@ -36,10 +36,10 @@ identity。连接、reset 和每次 apply 都必须校验 session/task/unit 顺�
 timestamp_ms
 delta_ms
 mixed_microphone[1920]
-screen[3,H,W]
-screen_valid
-screen_revision
+screen[3,224,224]
 ```
+
+每个 unit 都携带一帧完整屏幕；采集缺帧表示为黑帧，不使用 valid 或 revision 分支。
 
 是否继续 rollout 由 Harness receipt 的 `terminated` 控制字段表示；它不属于模型物理
 输入，也不携带任务成功原因。
@@ -84,7 +84,7 @@ R_interaction = 0.4 * speech_quality
 - `speech_quality`：可懂度、内容正确性、打断处理和不必要发言；
 - `latency_quality`：从观察到首个有效响应/动作的时延；
 - `action_efficiency`：完成任务所需动作数、无效重复和路径长度；
-- `R_safety`：非法 grammar、过期 screen revision、越权、危险操作和安全策略拒绝的惩罚。
+- `R_safety`：非法 grammar、越权、危险操作和安全策略拒绝的惩罚。
 
 reward breakdown 必须保存所有分量和 `reward_spec_id`，不能只保存总分。
 
@@ -127,7 +127,7 @@ MemoryUpdater，不存在 value loss 或单独 memory loss。
 
 - rollout 必须由当前 policy 在线产生，训练不得从静态文件冒充 on-policy 数据；
 - policy update 后未消费的旧 rollout 必须丢弃；
-- 每个 action frame 在当前 unit 解码后由 Harness 验证 schema、权限、危险操作和 screen revision；
+- 每个 action frame 在当前 unit 解码后由 Harness 验证 schema、权限和危险操作；
 - 环境超时、崩溃、身份变化或 receipt 不完整时，该 rollout 标为 infrastructure failure，
   不当作低 reward 样本训练；
 - 环境 socket 和 snapshot 位于仓库外，连接失败必须 fail closed；

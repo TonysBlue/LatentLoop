@@ -578,8 +578,8 @@ def train(
 
 def initialize_compatible_weights(model: StreamingLatentLoop, path: str | Path) -> list[str]:
     payload = torch.load(Path(path), map_location="cpu", weights_only=False)
-    if payload.get("format_version") != 6:
-        raise ValueError("initial checkpoint must use format version 6")
+    if payload.get("format_version") != 7:
+        raise ValueError("initial checkpoint must use format version 7")
     metadata = payload.get("metadata", {})
     if metadata.get("action_schema_id") != ACTION_SCHEMA_ID:
         raise ValueError("initial checkpoint action schema is incompatible")

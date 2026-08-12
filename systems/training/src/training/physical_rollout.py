@@ -93,7 +93,6 @@ class PhysicalRolloutClient:
         controls = self.actions.push(
             action_frame.as_contract(),
             event_id=f"{observation.session_id}-{observation.unit_index}",
-            screen_revision=observation.screen.revision,
         )
         return ActuationSignal(observation.session_id, observation.unit_index, speech, controls)
 
@@ -142,8 +141,6 @@ def observation_to_stream_unit(observation: ObservationSignal, config: ProjectCo
         delta_ms=torch.tensor([observation.delta_ms], dtype=torch.long),
         mic_audio=torch.from_numpy(mic.copy()).reshape(1, -1),
         screen=screen,
-        screen_valid=torch.tensor([observation.screen.valid]),
-        screen_revision=torch.tensor([observation.screen.revision], dtype=torch.long),
         speech_mode=torch.zeros(1, dtype=torch.long),
         speech_mode_mask=torch.zeros(1, dtype=torch.bool),
         speech_codes=torch.zeros(

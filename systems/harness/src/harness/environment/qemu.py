@@ -130,9 +130,7 @@ class QemuBackend(ComputerBackend):
             raise
         return self.observation_factory.capture(self.session_id, 0)
 
-    def apply(
-        self, output: ActuationSignal, *, current_revision: int | None = None
-    ) -> tuple[ObservationSignal, EnvironmentReceipt]:
+    def apply(self, output: ActuationSignal) -> tuple[ObservationSignal, EnvironmentReceipt]:
         if self.process is None or self.task_id is None:
             raise RuntimeError("QEMU session is not active")
         if self.process.poll() is not None:
@@ -140,8 +138,7 @@ class QemuBackend(ComputerBackend):
         if output.unit_index != self._last_unit + 1:
             raise ValueError("control unit index is out of order")
         started = time.perf_counter()
-        revision = current_revision if current_revision is not None else 0
-        receipt = self.executor.apply(output, current_revision=revision)
+        receipt = self.executor.apply(output)
         if receipt.session_id != output.session_id or receipt.unit_index != output.unit_index:
             raise RuntimeError("actuator returned an invalid receipt identity")
         observation = self.observation_factory.capture(

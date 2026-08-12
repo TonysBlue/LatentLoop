@@ -98,6 +98,7 @@ class StreamingLatentLoop(nn.Module):
                 value=torch.empty(
                     batch_size, self.config.num_heads, 0, head_dim, device=device, dtype=dtype
                 ),
+                is_visual=torch.empty(0, device=device, dtype=torch.bool),
             )
             for _ in self.layers
         )
@@ -151,12 +152,18 @@ class StreamingLatentLoop(nn.Module):
         sampling: SpeechSamplingConfig | None = None,
     ) -> StepOutput:
         audio, audio_cache = self.audio_encoder(unit.mic_audio, state.audio_cache)
-        vision = self.vision_encoder(unit.screen, unit.screen_valid)
+        vision = self.vision_encoder(unit.screen)
         encoded = self._pack_unit(unit, audio, vision)
         updated_latent = self.latent_updater(state.latent, state.hidden)
         latent_for_read = self.latent_reader(updated_latent)
         new_caches: list[LayerKV] = []
-        max_tokens = self.config.kv_units * self.config.tokens_per_unit
+        temporal_tokens = self.config.temporal_kv_units * (self.config.audio_tokens + 2)
+        visual_tokens = self.config.vision_kv_units * self.config.vision_tokens
+        current_is_visual = torch.zeros(
+            self.config.tokens_per_unit, dtype=torch.bool, device=encoded.device
+        )
+        visual_start = 1 + self.config.audio_tokens
+        current_is_visual[visual_start : visual_start + self.config.vision_tokens] = True
         hidden = encoded
         for layer, cache in zip(self.layers, state.layer_kv, strict=True):
             if self.training and self.config.activation_checkpointing:
@@ -166,22 +173,38 @@ class StreamingLatentLoop(nn.Module):
                     latent: Tensor,
                     key: Tensor,
                     value: Tensor,
+                    cached_is_visual: Tensor,
                     layer: StreamingTransformerLayer = layer,
-                ) -> tuple[Tensor, Tensor, Tensor]:
-                    output, updated = layer(current, latent, LayerKV(key, value), max_tokens)
-                    return output, updated.key, updated.value
+                ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+                    output, updated = layer(
+                        current,
+                        latent,
+                        LayerKV(key, value, cached_is_visual),
+                        current_is_visual,
+                        temporal_tokens,
+                        visual_tokens,
+                    )
+                    return output, updated.key, updated.value, updated.is_visual
 
-                hidden, key, value = checkpoint(
+                hidden, key, value, is_visual = checkpoint(
                     layer_forward,
                     hidden,
                     latent_for_read,
                     cache.key,
                     cache.value,
+                    cache.is_visual,
                     use_reentrant=False,
                 )
-                new_cache = LayerKV(key, value)
+                new_cache = LayerKV(key, value, is_visual)
             else:
-                hidden, new_cache = layer(hidden, latent_for_read, cache, max_tokens)
+                hidden, new_cache = layer(
+                    hidden,
+                    latent_for_read,
+                    cache,
+                    current_is_visual,
+                    temporal_tokens,
+                    visual_tokens,
+                )
             new_caches.append(new_cache)
         hidden = self.final_norm(hidden)
         speech_temporal = self.speech_head.update_temporal(hidden, state.speech_local)

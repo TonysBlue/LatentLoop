@@ -18,7 +18,7 @@ from model_service.transport.server import UnixModelServer
 
 class FakeModelService:
     def identity(self) -> dict[str, str]:
-        return {"service": "fake", "protocol_version": "realtime-v1"}
+        return {"service": "fake", "protocol_version": "realtime-v2"}
 
     def open_session(self, session_id: str) -> str:
         return session_id
@@ -51,9 +51,9 @@ def test_model_service_and_harness_use_one_physical_signal_frame(tmp_path) -> No
         0,
         80,
         MicSignal(b"x" * 7680),
-        ScreenSignal(b"rgb", 1, 1, 0),
+        ScreenSignal(b"rgb", 1, 1),
     )
     assert client.infer(observation).controls[0].kind is ControlKind.NOOP
     assert client.open_session("session") == "session"
-    assert client.identity()["protocol_version"] == "realtime-v1"
+    assert client.identity()["protocol_version"] == "realtime-v2"
     client.close_session("session")

@@ -60,30 +60,18 @@ def _load_timeline(data: bytes) -> dict[str, np.ndarray]:
 def episode_to_sample(episode: Episode) -> dict[str, bytes | str]:
     units = episode.units
     audio = torch.cat([unit.mic_audio for unit in units], dim=0).cpu().numpy()
-    sparse_screens: list[np.ndarray] = []
-    screen_indices: list[int] = []
-    for unit in units:
-        if bool(unit.screen_valid.item()):
-            screen_indices.append(len(sparse_screens))
-            sparse_screens.append(unit.screen[0].cpu().numpy())
-        else:
-            screen_indices.append(-1)
-    if sparse_screens:
-        screens = np.stack(sparse_screens)
-    else:
-        height, width = units[0].screen.shape[-2:]
-        screens = np.empty((0, 3, height, width), dtype=np.float32)
+    screens = np.stack([unit.screen[0].cpu().numpy() for unit in units])
     metadata = {
         **episode.metadata,
         "episode_id": episode.episode_id,
         "unit_count": len(units),
         "unit_audio_samples": units[0].mic_audio.shape[1],
-        "schema_version": int(episode.metadata.get("schema_version", 6)),
+        "schema_version": int(episode.metadata.get("schema_version", 7)),
     }
     metadata.setdefault(
         "runtime_identity",
         {
-            "protocol_version": metadata.get("protocol_version", "realtime-v1"),
+            "protocol_version": metadata.get("protocol_version", "realtime-v2"),
             "environment_id": metadata.get("environment_id", "recorded"),
             "environment_version": metadata.get("environment_version", "1"),
             "action_schema_id": metadata.get("action_schema_id", ACTION_SCHEMA_ID),
@@ -94,8 +82,6 @@ def episode_to_sample(episode: Episode) -> dict[str, bytes | str]:
     timeline = {
         "timestamps_ms": np.asarray([int(u.timestamp_ms.item()) for u in units]),
         "delta_ms": np.asarray([int(u.delta_ms.item()) for u in units]),
-        "screen_indices": np.asarray(screen_indices),
-        "screen_revision": np.asarray([int(u.screen_revision.item()) for u in units]),
         "speech_mode": np.asarray([int(u.speech_mode.item()) for u in units], dtype=np.int64),
         "speech_mode_mask": np.asarray([bool(u.speech_mode_mask.item()) for u in units]),
         "speech_codec_mask": np.stack([u.speech_codec_mask[0].cpu().numpy() for u in units]),
@@ -260,9 +246,9 @@ class EpisodeShardReader:
         episode_id = str(sample["__key__"])
         if int(metadata.get("schema_version", -1)) != self.data.schema_version:
             raise ValueError(f"schema version mismatch for {episode_id}")
-        if int(metadata.get("schema_version", -1)) != 6:
+        if int(metadata.get("schema_version", -1)) != 7:
             raise ValueError(f"unsupported schema version for {episode_id}")
-        required_v6 = (
+        required_v7 = (
             "stage",
             "dataset_scale",
             "sample_kind",
@@ -277,9 +263,9 @@ class EpisodeShardReader:
             "codec_revision",
             "runtime_identity",
         )
-        missing = [key for key in required_v6 if key not in metadata]
+        missing = [key for key in required_v7 if key not in metadata]
         if missing:
-            raise ValueError(f"schema v6 metadata is missing for {episode_id}: {missing}")
+            raise ValueError(f"schema v7 metadata is missing for {episode_id}: {missing}")
         if metadata["action_schema_id"] != ACTION_SCHEMA_ID:
             raise ValueError(f"action schema mismatch for {episode_id}")
         for key in ("codec_id", "codec_weight_hash", "codec_revision"):
@@ -315,24 +301,15 @@ class EpisodeShardReader:
         audio = audio.reshape(unit_count, int(metadata["unit_audio_samples"]))
         units: list[StreamUnit] = []
         for index in range(unit_count):
-            screen_index = int(timeline["screen_indices"][index])
-            screen_valid = screen_index >= 0
-            if screen_valid:
-                if screen_index >= len(screens):
-                    raise ValueError("screen timeline index is outside screen.npz")
-                screen = screens[screen_index]
-            else:
-                screen = np.zeros(
-                    (3, self.data.screen_height, self.data.screen_width), dtype=np.float32
-                )
+            if index >= len(screens):
+                raise ValueError("screen timeline is shorter than episode")
+            screen = screens[index]
             units.append(
                 StreamUnit(
                     timestamp_ms=torch.tensor([timeline["timestamps_ms"][index]], dtype=torch.long),
                     delta_ms=torch.tensor([timeline["delta_ms"][index]], dtype=torch.long),
                     mic_audio=torch.from_numpy(audio[index]).float()[None],
                     screen=torch.from_numpy(screen).float()[None],
-                    screen_valid=torch.tensor([screen_valid]),
-                    screen_revision=torch.tensor([timeline["screen_revision"][index]]),
                     speech_mode=torch.tensor([timeline["speech_mode"][index]], dtype=torch.long),
                     speech_mode_mask=torch.tensor(
                         [timeline["speech_mode_mask"][index]], dtype=torch.bool

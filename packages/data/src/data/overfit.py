@@ -64,7 +64,7 @@ class SpeechOverfitDataset:
                 "task_id": f"overfit-task-{episode_index}",
                 "environment_id": "synthetic-test-only",
                 "environment_version": "1",
-                "protocol_version": "realtime-v1",
+                "protocol_version": "realtime-v2",
                 "action_schema_id": ACTION_SCHEMA_ID,
             },
             target_speech=target,
@@ -130,8 +130,6 @@ class SpeechOverfitDataset:
             delta_ms=torch.tensor([self.data.unit_ms]),
             mic_audio=microphone[None, index * frame : (index + 1) * frame],
             screen=torch.zeros(1, 3, self.data.screen_height, self.data.screen_width),
-            screen_valid=torch.tensor([False]),
-            screen_revision=torch.tensor([-1]),
             speech_mode=torch.tensor([int(SpeechMode.SPEECH if speaking else SpeechMode.SILENCE)]),
             speech_mode_mask=torch.tensor([True]),
             speech_codes=torch.zeros(

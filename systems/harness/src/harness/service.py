@@ -39,10 +39,8 @@ class HarnessService:
         self.session.accept_observation(observation)
         output = self.model_client.infer(observation)
         for control in output.controls:
-            self.executor.gate.validate(control, current_revision=observation.screen.revision)
-        next_observation, receipt = self.environment.apply(
-            output, current_revision=observation.screen.revision
-        )
+            self.executor.gate.validate(control)
+        next_observation, receipt = self.environment.apply(output)
         self.session.accept_actuation(output)
         return next_observation, receipt, output
 

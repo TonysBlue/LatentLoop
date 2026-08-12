@@ -8,6 +8,9 @@ model:
   audio_tokens: 4
   audio_kernel: 400
   audio_stride: 160
+  vision_tokens: 16
+  temporal_kv_units: 750
+  vision_kv_units: 100
   latent_slots: 8
   kv_units: 750
   kv_window_ms: 60000
@@ -28,7 +31,7 @@ data:
   source: webdataset
   shards: ~/latentloop-data/datasets/gates/direct-speech-overfit/v1/shards/processed/train/train-*.tar
   manifest: ~/latentloop-data/datasets/gates/direct-speech-overfit/v1/shards/processed/train/train-manifest.jsonl
-  schema_version: 6
+  schema_version: 7
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
   codec_id: mimi-24khz-8x2048

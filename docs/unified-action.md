@@ -1,6 +1,6 @@
 # 统一电脑动作输出协议
 
-> 状态：最终目标 Structured ActionFrame v6 协议
+> 状态：最终目标 Structured ActionFrame v7 协议
 > 日期：2026-08-11
 > 关联顶层架构：[实时流多模态 LatentLoop 完整方案](realtime-multimodal-latent-loop.md)
 > 对称语音协议：[直接流式语音实施说明](direct-speech.md)
@@ -17,7 +17,7 @@ E_t       = InputEncoder(U_t)
 Z_t       = MemoryUpdater(Z_(t-1), H_(t-1))
 H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
 frame_t   = ActionHead(H_t, action_local_(t-1))
-controls  = decode(frame_t, screen_revision_t)
+controls  = decode(frame_t)
 ```
 
 Action Head 不调用操作系统。Model Service 和 Harness 之间只传递物理
@@ -98,7 +98,8 @@ y_hat = (cell_y + residual_y) / 32
 ```
 
 边界值 1.0 映射到最后一个 cell 且 residual 为 1.0。分类项表达全局多峰位置，
-bounded residual 提供 cell 内精度。执行仍绑定 frame 对应的 screen revision。
+bounded residual 提供 cell 内精度。动态画面中的运动与动作时延由连续视觉流训练学习，
+执行协议不绑定 screen revision。
 
 ### 3.2 Pointer button 与 scroll
 
@@ -135,7 +136,9 @@ HOTKEY 使用版本化 32-key table，每 frame 最多 8 keys 且至少一个。
 Action Head 读取当前 `H_t` 和 action-local state，先预测 kind，再只激活对应参数分支：
 
 ```text
-context_t = f(last_position(H_t), previous_frame_embedding)
+action_query_t = f(H_t[STATE_QUERY], previous_frame_embedding)
+visual_context_t = Attention(action_query_t, H_t[VISION_0:VISION_15])
+context_t = action_query_t + visual_context_t
 kind_t    ~ Categorical(kind_logits(context_t))
 
 POINTER_MOVE   -> joint cell categorical + bounded residual distribution
@@ -146,8 +149,8 @@ HOTKEY         -> length categorical + autoregressive key decoder
 ```
 
 这仍然是一个 Unified Action Head：参数分支由同一个 kind 决策条件化，共享 context、
-状态、概率对象和训练/rollout 接口，不是多个可独立调用的动作 head。当前全局
-VisionEncoder token 直接进入 Backbone，不新增 patch-token action vision branch。
+状态、概率对象和训练/rollout 接口，不是多个可独立调用的动作 head。视觉编码器不直接
+连接 Action Head；动作头只读取已经融合音频、时间、视觉和历史状态的 Backbone hidden。
 
 ## 5. Action local state
 
@@ -182,7 +185,7 @@ metadata，绝不进入下一 `ObservationSignal`。模型只能从下一 unit �
 
 ### 7.1 Unit targets
 
-Schema v6 的每个 unit 保存结构化 target：
+Schema v7 的每个 unit 保存结构化 target：
 
 ```text
 action_kind                 [B]
@@ -196,7 +199,6 @@ action_text_bytes           [B, 16]
 action_text_length          [B]
 action_hotkey_keys          [B, 8]
 action_hotkey_length        [B]
-screen_revision             [B]
 ```
 
 `action_supervision_mask=false` 表示该 unit 没有 action 标签；这不同于有监督的
@@ -204,14 +206,14 @@ screen_revision             [B]
 
 ### 7.2 数据来源与校验
 
-轨迹按 unit 记录动作、动作前 screen revision、后续物理观察和审计 metadata。模型输入
+轨迹按 unit 记录动作、当时的完整屏幕帧、后续物理观察和审计 metadata。模型输入
 不得包含未来结果、receipt、隐藏 DOM、特权坐标或教师计划。导入时拒绝：
 
-- 非 v6 schema 或错误 `action_schema_id`；
+- 非 v7 schema 或错误 `action_schema_id`；
 - kind 与参数域不一致、坐标/scroll 越界、非法 button/phase/key；
 - TYPE 超过 16 bytes、无效 UTF-8 状态转移或跨非 TYPE frame 留有 pending bytes；
 - HOTKEY 长度不在 1..8；
-- screen revision 缺失或时间线倒退；
+- 屏幕帧缺失且未按协议填充黑帧，或时间线倒退；
 - 任何旧 `action_tokens`/`action_token_mask` flat representation。
 
 ## 8. 训练目标与概率接口
@@ -244,18 +246,18 @@ Action loss 通过 Action Head、Backbone、InputEncoder 和 MemoryUpdater 训�
 
 ## 9. 推理与 Harness 安全边界
 
-Harness 在提交每个 `ControlSignal` 前校验 schema identity、screen revision、参数范围、
+Harness 在提交每个 `ControlSignal` 前校验 schema identity、参数范围、
 held-input 状态、应用/区域白名单、速率和权限。危险操作仍可被审批或拒绝，session reset
 与全局紧急停止负责释放 held inputs。模型输出不是授权，安全拒绝也不改变模型物理输入
 边界。
 
 ## 10. Checkpoint 与恢复
 
-Checkpoint format v6 保存 Action Head 参数、完整 action local state、
+Checkpoint format v7 保存 Action Head 参数、完整 action local state、
 `action_schema_id=structured-action-v1`、grid/type/hotkey/key-table 常量以及 unit/session
 identity。恢复后下一 frame 的 logits、采样和 UTF-8 assembler 状态必须与不中断运行一致。
 
-v5 flat-token checkpoint 与数据直接拒绝。没有 vocabulary 映射、形状碰巧一致时的部分
+v6 及更旧 flat-token checkpoint 与数据直接拒绝。没有 vocabulary 映射、形状碰巧一致时的部分
 加载或运行时兼容 decoder；旧资产必须从源轨迹按 v6 重新生成。
 
 ## 11. 验证设计
@@ -281,7 +283,7 @@ v5 flat-token checkpoint 与数据直接拒绝。没有 vocabulary 映射、形�
 
 - Model Service 输出无 raw action tensor；
 - receipt/reward/accepted/safety 不进入 ObservationSignal；
-- Harness 拒绝过期 revision、越界参数和非法 held-input 转移；
+- Harness 拒绝越界参数和非法 held-input 转移；
 - 旧 schema/checkpoint format、flat action array 和旧配置字段 fail closed；
 - formal Pretrain、SFT、Online GRPO 共享同一 Action Head 与概率路径。
 

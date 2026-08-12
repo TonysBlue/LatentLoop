@@ -14,7 +14,7 @@ LatentLoop 由 Model Core、Model Service、Training System、Harness System 和
 Data 组成。Model Service 的数据平面只接受物理信号并返回物理输出：
 
 ```text
-Harness sensors -> mic PCM + screen pixels/revision + time
+Harness sensors -> mic PCM + screen pixels + time
                  -> Model Service
 Model Service   -> speech PCM + decoded ControlSignal
                  -> Harness actuators
@@ -77,7 +77,7 @@ H_t 是主干经过 final normalization 后的完整 hidden 序列，必须暂�
 7. 使用有界 KV 保存近期精确多模态历史，控制显存和延迟。
 8. 让未来 Speech/Action loss 通过 Z_t 监督早期 MemoryUpdater。
 9. 训练、验证、checkpoint 恢复和推理使用同一状态转移。
-10. 由 Harness 提供动作安全、权限和 screen revision 校验。
+10. 由 Harness 提供动作语法、安全和权限校验。
 11. Pretrain、SFT、Online GRPO 使用同一双头模型和状态转移完整训练全模型。
 
 ## 3. 输入与输出
@@ -101,7 +101,8 @@ $$
 
 ### 3.2 屏幕视觉输入
 
-屏幕输入包括当前桌面或应用关键帧、屏幕有效标志、屏幕 revision 和必要的变化区域。采集器可以高频检测变化、低频编码语义，但送入模型的 unit 必须保持时间顺序和 revision 一致。
+每个 80 ms unit 输入一帧完整的 224x224 RGB 屏幕。静态和动态画面走同一 CNN 与
+Backbone 路径；采集缺帧时输入黑帧，不引入有效标志、revision 或变化区域旁路。
 
 ### 3.3 直接语音输出
 
@@ -129,8 +130,8 @@ parameters = kind-conditioned coordinate/button/scroll/text/key fields
 ~~~
 
 统一的是语义 schema、执行边界和 frame joint probability，不强迫异构参数共享扁平 token
-序列。Model Service 把 frame 解码为零个或多个有序 ControlSignal；Harness 校验 schema、
-screen revision 和安全策略后在当前 unit 立即执行。
+序列。Model Service 把 frame 解码为零个或多个有序 ControlSignal；Harness 校验 schema
+和安全策略后在当前 unit 立即执行。
 
 ### 3.5 文本旁路边界
 
@@ -202,9 +203,7 @@ episode/session 开始时：
 timestamp_ms       [B] int64
 delta_ms           [B] int64
 mic_audio          [B, 1920] float32
-screen             [B, 3, H, W] float32
-screen_valid       [B] bool
-screen_revision    [B] int64
+screen             [B, 3, 224, 224] float32
 ~~~
 
 delta_ms 必须为正，时间戳严格递增。
@@ -216,11 +215,13 @@ InputEncoder 将 unit 组织为带 type embedding 的统一序列：
 ~~~
 <TIME>
 <AUDIO_0> ... <AUDIO_N>
-<VISION_OR_EMPTY>
+<VISION_0> ... <VISION_15>
 <STATE_QUERY>
 ~~~
 
-当前实现的 tokens_per_unit 为 audio_tokens + 3。STATE_QUERY 是主干序列中的一个位置，但不形成独立跨步状态；完整 H_t 才会保存给下一步 updater。
+视觉编码器输出 4x4 空间特征并 reshape 为 16 个带二维位置编码的视觉 token。
+`tokens_per_unit` 为 `audio_tokens + 18`。STATE_QUERY 是主干序列中的一个位置；完整
+H_t 会保存给下一步 updater。静态和动态屏幕每个 unit 都走同一条编码路径。
 
 ### 5.3 Codec 时间对齐
 
@@ -262,7 +263,16 @@ KV_(t-1), E_t, Z_t --> Backbone --> H_t, KV_t
 
 ### 6.2 视觉编码器
 
-视觉编码器处理当前有效关键帧或视觉空事件，并保持 screen_revision 与 unit 时间一致。稳定屏幕可以复用最新有效帧，但不能改变时间序列的 unit 数量。
+视觉编码器是纯 PyTorch 轻量残差 CNN，从 `224x224` RGB 屏幕帧输出 `[B,16,model_dim]`。
+16 个 token 对应 4x4 空间网格并带可学习二维位置编码；不使用全局池化为单 token，也不
+区分静态和动态画面。缺失屏幕帧在输入适配器中变为全黑帧，仍按正常 unit 推进时间和状态。
+
+视觉 token 经过 Backbone 后才进入 Action Head。Action Head 读取 `H_t` 中的 STATE_QUERY
+hidden 和 16 个视觉位置 hidden，并通过统一 context 预测 ActionFrame；不存在
+VisionEncoder 到 ActionHead 的旁路。
+
+时间 KV 保留最近 750 个 unit（60 秒）；视觉位置 KV 单独保留最近 100 个 unit（8 秒）。
+两类 KV 都按 unit 顺序追加、按各自 horizon 淘汰，并由 checkpoint 和 TBPTT detach 一起维护。
 
 ### 6.3 多模态主干
 
@@ -385,7 +395,6 @@ Harness 在执行前校验：
 
 - schema 和 kind-conditioned 参数完整性；
 - 坐标、滚动、文本、key 和 held-input 状态范围；
-- screen_revision 新鲜度；
 - 应用和区域白名单；
 - 删除、支付、发送、安装和权限修改审批；
 - 速率限制、session reset 和全局紧急停止。
@@ -449,13 +458,14 @@ $$
 
 ### 12.1 有界 KV
 
-KV 只保留最近配置窗口内的完整 unit：
+KV 按模态保留最近配置窗口：
 
 ~~~
-KV_t = KV(UNIT[t-W+1], ..., UNIT[t])
+KV_t = ordered_merge(TEMPORAL[t-749:t], VISUAL[t-99:t])
 ~~~
 
-生产 W 为 750 units。淘汰必须发生在 unit 边界，保持音频、视觉、时间和 revision 对齐。
+生产非视觉上下文为 750 units（60 秒），视觉上下文为 100 units（8 秒）。两类 token
+独立淘汰，保留后的 token 仍按原始时间顺序参与 causal attention。
 
 ### 12.2 Latent memory 读取
 
@@ -471,7 +481,7 @@ checkpoint 保存 Z、H、KV、audio cache、speech local、action local 和 uni
 
 ~~~
 Audio Capture       音频环形缓冲
-Screen Capture      屏幕关键帧与 revision
+Screen Capture      每 unit 完整屏幕帧
 InputEncoder        音频/视觉/时间编码
 Backbone Worker     MemoryUpdater、Backbone、KV/Z 状态
 Speech Worker       codec frame 和播放块
@@ -488,9 +498,9 @@ Telemetry           延迟、队列、状态和轨迹
 当计算延迟超过实时 tick：
 
 - 音频块可以合并，但必须更新 delta_ms；
-- 视觉只保留最新关键帧和累计变化；
+- 视觉按 unit 输入当前完整帧；采集缺帧填充黑帧并记录 telemetry；
 - 播放队列和 action 队列保持有界；
-- 过期 action 在 Harness 被拒绝；
+- action 队列保持有界并按 unit 顺序执行；
 - 超时、取消和紧急停止优先级最高；
 - 任何丢帧、时间跳跃或 worker 错误都写入 telemetry。
 
@@ -502,22 +512,22 @@ Telemetry           延迟、队列、状态和轨迹
 
 ~~~
 mic_audio          单路混合麦克风
-screen_frames      带时间戳的屏幕关键帧
+screen_frames      每 unit 一帧完整屏幕
 target_speech      仅用于离线 codec 编码的目标音频
 target_actions     每 unit 一个结构化 ActionFrame
-timestamps         unit 时间和 screen revision
+timestamps         unit 时间
 runtime_events     播放、执行、丢帧和延迟审计
 ~~~
 
 构造过程中的来源分离、TTS 中间产物、环境参数和任务标签不能作为模型输入。
 
-当前 WebDataset schema version 为 6。一个 episode 由 `meta.json`、`mic.flac`、
+当前 WebDataset schema version 为 7。一个 episode 由 `meta.json`、`mic.flac`、
 `target_speech.flac`、`screen.npz`、`timeline.npz`、`speech_codes.npy` 和
 `turns.json` 组成；timeline 保存 speech mode/mask、codec mask、结构化 action frame、
-action supervision mask、时间戳和 screen revision。`controls.json` 和 `receipts.json` 只保存
+action supervision mask 和时间戳。`controls.json` 和 `receipts.json` 只保存
 control-plane 审计，不进入模型输入。旧 flat `action_tokens/action_token_mask`、
 `controls.npy`、memory target 和 schema v1/v2/v3/v4 不属于当前训练协议；旧资产必须
-显式从源轨迹重建为 v6。完整字段、runtime identity 和迁移规则见
+显式从源轨迹重建为 v7。完整字段、runtime identity 和迁移规则见
 `docs/data/trajectory-schema.md`。
 
 ### 14.2 场景覆盖
@@ -528,7 +538,7 @@ control-plane 审计，不进入模型输入。旧 flat `action_tokens/action_to
 - 用户打断、重叠语音和多人环境；
 - 键盘、风扇、音乐、电视和系统声音；
 - 播放延迟、混响、设备频响、回流衰减和回流缺失；
-- 静态屏幕、窗口切换、动态 UI 和 screen revision 变化；
+- 静态屏幕、窗口切换、动态 UI 和连续运动目标；
 - 点击、拖拽、滚动、输入、快捷键、等待、取消；
 - 动作失败、用户纠正、长任务和跨应用任务；
 - 长时间无语音、纯屏幕观察和模型静音。
@@ -600,7 +610,7 @@ $$
 
 ### 16.2 环境反馈建模
 
-声学环境可包含播放延迟、房间响应、设备频响、噪声、重叠、截断和回流缺失。视觉环境可包含窗口变化、动作延迟、动作失败和 screen revision 变化。
+声学环境可包含播放延迟、房间响应、设备频响、噪声、重叠、截断和回流缺失。视觉环境可包含窗口变化、连续运动、动作延迟和动作失败。
 
 ### 16.3 梯度路径
 
@@ -704,7 +714,7 @@ MiniCPM 或同类多模态主干可以提供视觉编码、音频编码、多模
 - schema validity；
 - 坐标 cell 命中/残差误差、button/phase、scroll 和 text/key accuracy；
 - TYPE UTF-8 跨 unit continuation；
-- screen revision 过期拒绝率；
+- 动态目标动作时延与命中率；
 - 动作成功率、失败恢复和长任务完成率；
 - 危险动作误执行率。
 
@@ -734,7 +744,7 @@ MiniCPM 或同类多模态主干可以提供视觉编码、音频编码、多模
 | slots 同质化 | learned slot identity、行为消融和容量监控 |
 | 声学回流导致重复响应 | 回流延迟/音量/缺失随机化、重复行为评测 |
 | 用户插话导致状态错乱 | 真实混合音频、严格 unit 顺序和完整 H 暂存 |
-| 动作基于过期屏幕 | screen_revision 和 Harness 执行前校验 |
+| 动态画面导致动作滞后 | 连续视觉流训练、80 ms unit 时序和运动任务评测 |
 | 单卡吞吐跟不上 | 音频合并、视觉降频、activation checkpoint、显式背压 |
 | 长时间队列增长 | 有界队列、超时、取消和实时 telemetry |
 | 隐状态难审计 | action approval、完整轨迹、checkpoint lineage 和紧急停止 |
@@ -745,7 +755,7 @@ UI-TARS/Harness 必须提供：
 
 - 删除、支付、发送、安装和权限修改审批；
 - 应用和区域白名单；
-- 坐标、时长、速率和 revision 校验；
+- 坐标、时长和速率校验；
 - 全局停止快捷键；
 - 操作轨迹记录和回放；
 - 输入文本和屏幕媒体脱敏；
