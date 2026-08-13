@@ -57,7 +57,7 @@ uv run data generate-data \
   --ray
 ```
 
-运行 smoke 训练或恢复 checkpoint：
+运行 smoke 训练或恢复当前 checkpoint：
 
 ```bash
 uv run training train --config configs/smoke.yaml
@@ -66,8 +66,8 @@ uv run training train \
   --resume "$HOME/latentloop-data/checkpoints/smoke/step-00000002.pt"
 ```
 
-训练数据默认写入 `~/latentloop-data/datasets`；实验、稳定 checkpoint、W&B 和运行时文件分别
-写入 `experiments/`、`checkpoints/`、`tracking/` 和 `runtime/`。
+训练数据默认写入 `~/latentloop-data/datasets`；当前实验、checkpoint、W&B 和运行时文件分别
+写入 `experiments/`、`checkpoints/`、`tracking/` 和 `runtime/`，不保留历史运行产物。
 
 ## W&B Local
 
@@ -87,13 +87,11 @@ uv run training train \
   --set tracking.mode=online
 ```
 
-服务不可用或未登录时，Tracker 自动写入本地 offline run。服务管理与备份命令：
+服务不可用或未登录时，Tracker 自动写入本地 offline run。服务管理命令：
 
 ```bash
 scripts/wandb-local.sh logs
-scripts/backup-wandb.sh
 scripts/wandb-local.sh down
-scripts/restore-wandb.sh ~/latentloop-data/backups/wandb/wandb-local-<timestamp>.tar.gz
 ```
 直接流式语音使用 80 ms 主时钟与 Mimi 24 kHz codec。实现和运行命令见
 [`docs/direct-speech.md`](docs/direct-speech.md)。

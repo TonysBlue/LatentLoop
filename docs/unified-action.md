@@ -1,6 +1,6 @@
 # 统一电脑动作输出协议
 
-> 状态：最终目标 Structured ActionFrame v7 协议
+> 状态：最终目标 Structured ActionFrame 协议
 > 日期：2026-08-11
 > 关联顶层架构：[实时流多模态 LatentLoop 完整方案](realtime-multimodal-latent-loop.md)
 > 对称语音协议：[直接流式语音实施说明](direct-speech.md)
@@ -185,7 +185,7 @@ metadata，绝不进入下一 `ObservationSignal`。模型只能从下一 unit �
 
 ### 7.1 Unit targets
 
-Schema v7 的每个 unit 保存结构化 target：
+当前数据契约的每个 unit 保存结构化 target：
 
 ```text
 action_kind                 [B]
@@ -209,7 +209,7 @@ action_hotkey_length        [B]
 轨迹按 unit 记录动作、当时的完整屏幕帧、后续物理观察和审计 metadata。模型输入
 不得包含未来结果、receipt、隐藏 DOM、特权坐标或教师计划。导入时拒绝：
 
-- 非 v7 schema 或错误 `action_schema_id`；
+- 不完整轨迹 metadata 或错误 `action_schema_id`；
 - kind 与参数域不一致、坐标/scroll 越界、非法 button/phase/key；
 - TYPE 超过 16 bytes、无效 UTF-8 状态转移或跨非 TYPE frame 留有 pending bytes；
 - HOTKEY 长度不在 1..8；
@@ -253,12 +253,12 @@ held-input 状态、应用/区域白名单、速率和权限。危险操作仍�
 
 ## 10. Checkpoint 与恢复
 
-Checkpoint format v8 保存 Action Head 参数、完整 action local state、
+Checkpoint 保存 Action Head 参数、完整 action local state、
 `action_schema_id=structured-action-v1`、grid/type/hotkey/key-table 常量以及 unit/session
 identity。恢复后下一 frame 的 logits、采样和 UTF-8 assembler 状态必须与不中断运行一致。
 
-v6 及更旧 flat-token checkpoint 与数据直接拒绝。没有 vocabulary 映射、形状碰巧一致时的部分
-加载或运行时兼容 decoder；旧资产必须从源轨迹按 v6 重新生成。
+不完整 checkpoint、flat-token 数据和旧配置字段直接拒绝；没有 vocabulary 映射、形状碰巧一致时
+的部分加载或运行时兼容 decoder。历史资产已清理，后续只从源轨迹生成当前数据。
 
 ## 11. 验证设计
 
@@ -284,7 +284,7 @@ v6 及更旧 flat-token checkpoint 与数据直接拒绝。没有 vocabulary 映
 - Model Service 输出无 raw action tensor；
 - receipt/reward/accepted/safety 不进入 ObservationSignal；
 - Harness 拒绝越界参数和非法 held-input 转移；
-- 旧 schema/checkpoint format、flat action array 和旧配置字段 fail closed；
+- 不完整 checkpoint、flat action array 和旧配置字段 fail closed；
 - formal Pretrain、SFT、Online GRPO 共享同一 Action Head 与概率路径。
 
 ## 12. 结论

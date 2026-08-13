@@ -57,7 +57,7 @@ Speech Head 的 temporal state 和 previous codes 只负责相邻声学帧连续
 
 ## 4. 数据契约
 
-### 4.1 Schema v3
+### 4.1 当前数据契约
 
 每个 episode 主要包含：
 
@@ -80,7 +80,7 @@ speech_codes         [B, 1, 8]
 speech_codec_mask    [B, 1]
 ~~~
 
-`mic.flac` 是模型唯一音频输入。`target_speech.flac` 只用于离线编码、审计和评测；纯静音 unit 的 codec mask 为 false。旧的 `controls.npy`、SpeechControl 状态标签和 schema v1/v2 不属于当前协议。
+`mic.flac` 是模型唯一音频输入。`target_speech.flac` 只用于离线编码、审计和评测；纯静音 unit 的 codec mask 为 false。旧的 `controls.npy`、SpeechControl 状态标签不属于当前协议；历史数据已清理。
 
 ### 4.2 编码和校验
 

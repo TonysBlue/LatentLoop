@@ -188,7 +188,6 @@ def _build_episode(
         )
     metadata = {
         **record,
-        "schema_version": data.schema_version,
         "sample_rate": data.audio_sample_rate,
         "unit_ms": data.unit_ms,
         "codec_frame_rate": data.codec_frame_rate,

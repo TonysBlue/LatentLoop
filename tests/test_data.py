@@ -24,7 +24,7 @@ def test_webdataset_episode_round_trip(tmp_path: Path, smoke_config: ProjectConf
 
     assert manifest[0]["episode_id"] == original.episode_id
     assert len(manifest[0]["content_sha256"]) == 64
-    assert manifest[0]["schema_version"] == smoke_config.data.schema_version
+    assert "schema_version" not in manifest[0]
     assert manifest[0]["codec_id"] == smoke_config.data.codec_id
     assert decoded.episode_id == original.episode_id
     assert decoded.ordered_shard_index == 0
@@ -92,14 +92,14 @@ def test_reader_rejects_manifest_content_mismatch(
         next(iter(reader))
 
 
-def test_reader_rejects_schema_v3_metadata(tmp_path: Path, smoke_config: ProjectConfig) -> None:
+def test_reader_rejects_incomplete_metadata(tmp_path: Path, smoke_config: ProjectConfig) -> None:
     episode = SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(0)
-    episode.metadata["schema_version"] = 3
+    episode.metadata.pop("action_schema_id")
     write_episode_shards([episode], tmp_path / "train-%06d.tar", max_size=10_000_000)
     reader = EpisodeShardReader(
         str(tmp_path / "train-*.tar"), smoke_config.data, smoke_config.model
     )
-    with pytest.raises(ValueError, match="schema version mismatch"):
+    with pytest.raises(ValueError, match="metadata is missing"):
         next(iter(reader))
 
 

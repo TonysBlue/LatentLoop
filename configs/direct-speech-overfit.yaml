@@ -32,9 +32,8 @@ model:
 data:
   dataset: direct-speech-overfit
   source: webdataset
-  shards: ~/latentloop-data/datasets/gates/direct-speech-overfit/v1/shards/processed/train/train-*.tar
-  manifest: ~/latentloop-data/datasets/gates/direct-speech-overfit/v1/shards/processed/train/train-manifest.jsonl
-  schema_version: 7
+  shards: ~/latentloop-data/datasets/gates/direct-speech-overfit/shards/processed/train/train-*.tar
+  manifest: ~/latentloop-data/datasets/gates/direct-speech-overfit/shards/processed/train/train-manifest.jsonl
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
   codec_id: mimi-24khz-8x2048

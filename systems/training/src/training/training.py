@@ -141,7 +141,6 @@ def _checkpoint_metadata(
         codec_revision=config.data.codec_revision,
         parent_sha256=parent_sha256,
         reference_checkpoint_sha256=reference_checkpoint_sha256,
-        schema_version=config.data.schema_version,
         stage=config.training.stage,
         objective=config.training.objective,
         action_schema_id=ACTION_SCHEMA_ID,
@@ -578,8 +577,10 @@ def train(
 
 def initialize_compatible_weights(model: StreamingLatentLoop, path: str | Path) -> list[str]:
     payload = torch.load(Path(path), map_location="cpu", weights_only=False)
-    if payload.get("format_version") != 8:
-        raise ValueError("initial checkpoint must use format version 8")
+    if not isinstance(payload.get("model"), dict) or not isinstance(
+        payload.get("metadata"), dict
+    ):
+        raise ValueError("initial checkpoint is incomplete")
     metadata = payload.get("metadata", {})
     if metadata.get("action_schema_id") != ACTION_SCHEMA_ID:
         raise ValueError("initial checkpoint action schema is incompatible")

@@ -18,7 +18,6 @@ from data.curation import (
     check_readiness,
     fetch_pilot_data,
     prepare_pilot_data,
-    rebuild_schema_v7_shards,
     select_pilot_voices,
     synthesize_pilot,
 )
@@ -57,12 +56,6 @@ def main(argv: list[str] | None = None) -> int:
     readiness = subparsers.add_parser("check-readiness")
     readiness.add_argument("--config", required=True)
     readiness.add_argument("--root")
-    rebuild = subparsers.add_parser("rebuild-v7")
-    rebuild.add_argument("--config", required=True)
-    rebuild.add_argument("--root")
-    rebuild.add_argument("--dataset", required=True, choices=("canary", "pilot", "production"))
-    rebuild.add_argument("--socket", required=True)
-    rebuild.add_argument("--activate", action="store_true")
     prepare = subparsers.add_parser("prepare-pilot-data")
     prepare.add_argument("--config", required=True)
     prepare.add_argument("--root")
@@ -112,15 +105,6 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(args.config)
         root = args.root or config.runtime.data_root
         print(json.dumps(check_readiness(root, config=config), indent=2))
-    elif args.command == "rebuild-v7":
-        config = load_config(args.config)
-        root = args.root or config.runtime.data_root
-        client = codec_client(config, args.socket)
-        client.health()
-        report = rebuild_schema_v7_shards(
-            root, dataset=args.dataset, config=config, client=client, activate=args.activate
-        )
-        print(json.dumps(report, indent=2))
     elif args.command == "prepare-pilot-data":
         config = load_config(args.config)
         root = args.root or config.runtime.data_root

@@ -38,7 +38,6 @@ class SpeechOverfitDataset:
             episode_id=f"direct-speech-overfit-{episode_index:04d}",
             units=units,
             metadata={
-                "schema_version": self.data.schema_version,
                 "source": "synthetic",
                 "source_license": "project-generated",
                 "redistribution_allowed": True,

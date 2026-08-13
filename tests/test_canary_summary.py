@@ -18,7 +18,7 @@ def run_summary(*args: str) -> str:
 
 
 def test_prepare_summary_reports_key_counts(tmp_path: Path) -> None:
-    reports = tmp_path / "canary" / "v1" / "reports"
+    reports = tmp_path / "canary" / "reports"
     registry = tmp_path / "registry"
     write_json(
         registry / "prepare.json",

@@ -31,7 +31,6 @@ class SyntheticEpisodeDataset:
             episode_id=f"synthetic-{episode_index:08d}",
             units=units,
             metadata={
-                "schema_version": self.data.schema_version,
                 "source": "synthetic",
                 "source_license": "project-generated",
                 "redistribution_allowed": True,

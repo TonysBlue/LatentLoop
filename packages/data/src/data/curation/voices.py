@@ -104,7 +104,6 @@ def select_pilot_voices(
     if any(len(splits) != 1 for splits in user_voice_splits.values()):
         raise ValueError("a user voice cannot cross dataset splits")
     registry = {
-        "schema_version": 1,
         "assistant_voice_id": assistants[0]["voice_id"],
         "voices": voices,
     }

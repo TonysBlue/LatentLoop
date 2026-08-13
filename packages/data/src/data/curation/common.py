@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 DATASETS = ("canary", "pilot", "production")
-DATASET_VERSION = "v1"
 SPLITS = ("train", "validation", "test")
 CATEGORIES = ("public_speech", "synthetic_dialogue", "adjacent_turns", "screen_task")
 LANGUAGES = ("zh", "en")
@@ -38,7 +37,7 @@ def registry_path(root: str | Path, *parts: str) -> Path:
 
 
 def dataset_root(root: str | Path, dataset: str) -> Path:
-    return Path(root).expanduser().resolve() / dataset / DATASET_VERSION
+    return Path(root).expanduser().resolve() / dataset
 
 
 def dataset_path(root: str | Path, dataset: str, *parts: str) -> Path:

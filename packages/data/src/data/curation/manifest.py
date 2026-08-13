@@ -42,8 +42,6 @@ from data.curation.spec import (
 # Episode audio is quantized to PCM16 by ``write_flac``.  Keep a small amount
 # of headroom so quantization cannot turn a nominally safe source peak into a
 # value above the audit gate's -1 dBFS limit.
-EPISODE_FORMAT_VERSION = 4
-TIMELINE_CALIBRATION_VERSION = 2
 AUDIO_PEAK_LIMIT_DBFS = -1.5
 AUDIO_PEAK_LIMIT = 10 ** (AUDIO_PEAK_LIMIT_DBFS / 20.0)
 
@@ -188,8 +186,6 @@ def _cached_episode(path: Path, recipe_hash: str) -> dict[str, Any] | None:
     record = read_json(path)
     if (
         record.get("recipe_sha256") != recipe_hash
-        or record.get("format_version") != EPISODE_FORMAT_VERSION
-        or record.get("timeline_calibration_version") != TIMELINE_CALIBRATION_VERSION
     ):
         return None
     for field in ("mic_audio", "target_speech"):
@@ -323,7 +319,6 @@ def _calibrate_split_durations(root: Path, dataset: str, records: list[dict[str,
                 _write_episode_audio(mic_path, target_path, mic, target)
                 record["mic_audio_sha256"] = sha256_file(mic_path)
                 record["target_speech_sha256"] = sha256_file(target_path)
-                record["timeline_calibration_version"] = TIMELINE_CALIBRATION_VERSION
                 record["timeline_trimmed_ticks"] = trim
                 write_json(_record_path(root, dataset, record["episode_id"]), record)
                 requested_ticks -= trim
@@ -421,8 +416,6 @@ def _compose_plan(
             "voice_registry": registry["registry_sha256"],
             "screen_adapter": screen_command if plan["category"] == "screen_task" else None,
             "fixture": fixture,
-            "format_version": EPISODE_FORMAT_VERSION,
-            "timeline_calibration_version": TIMELINE_CALIBRATION_VERSION,
         }
     )
     audio_dir = dataset_path(root, dataset, "normalized", "episodes")
@@ -506,8 +499,6 @@ def _compose_plan(
         "turns": turns,
         "target_segments": segments,
         "recipe_sha256": recipe_hash,
-        "format_version": EPISODE_FORMAT_VERSION,
-        "timeline_calibration_version": TIMELINE_CALIBRATION_VERSION,
         "fixture": fixture,
     }
     if plan["category"] == "screen_task":
@@ -617,8 +608,6 @@ def _compose_source(
         "turns": turns,
         "target_segments": segments,
         "recipe_sha256": recipe_hash,
-        "format_version": EPISODE_FORMAT_VERSION,
-        "timeline_calibration_version": TIMELINE_CALIBRATION_VERSION,
         "source_normalization": item.get("normalization"),
         "fixture": fixture,
     }

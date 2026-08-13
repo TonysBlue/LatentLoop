@@ -66,7 +66,6 @@ def episode_to_sample(episode: Episode) -> dict[str, bytes | str]:
         "episode_id": episode.episode_id,
         "unit_count": len(units),
         "unit_audio_samples": units[0].mic_audio.shape[1],
-        "schema_version": int(episode.metadata.get("schema_version", 7)),
     }
     metadata.setdefault(
         "runtime_identity",
@@ -244,11 +243,7 @@ class EpisodeShardReader:
     def _validate_sample_identity(self, sample: dict[str, Any]) -> None:
         metadata = json.loads(sample["meta.json"])
         episode_id = str(sample["__key__"])
-        if int(metadata.get("schema_version", -1)) != self.data.schema_version:
-            raise ValueError(f"schema version mismatch for {episode_id}")
-        if int(metadata.get("schema_version", -1)) != 7:
-            raise ValueError(f"unsupported schema version for {episode_id}")
-        required_v7 = (
+        required_metadata = (
             "stage",
             "dataset_scale",
             "sample_kind",
@@ -263,9 +258,9 @@ class EpisodeShardReader:
             "codec_revision",
             "runtime_identity",
         )
-        missing = [key for key in required_v7 if key not in metadata]
+        missing = [key for key in required_metadata if key not in metadata]
         if missing:
-            raise ValueError(f"schema v7 metadata is missing for {episode_id}: {missing}")
+            raise ValueError(f"trajectory metadata is missing for {episode_id}: {missing}")
         if metadata["action_schema_id"] != ACTION_SCHEMA_ID:
             raise ValueError(f"action schema mismatch for {episode_id}")
         for key in ("codec_id", "codec_weight_hash", "codec_revision"):

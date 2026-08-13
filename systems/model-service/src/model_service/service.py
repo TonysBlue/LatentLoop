@@ -43,8 +43,10 @@ class ModelService:
         self.model = StreamingLatentLoop(config.model).to(self.device)
         if checkpoint:
             payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
-            if payload.get("format_version") != 8:
-                raise ValueError("model service requires a format v8 checkpoint")
+            if not isinstance(payload.get("model"), dict) or not isinstance(
+                payload.get("metadata"), dict
+            ):
+                raise ValueError("model service requires a complete current checkpoint")
             if payload.get("metadata", {}).get("action_schema_id") != config.model.action_schema_id:
                 raise ValueError("checkpoint action schema does not match model service")
             weights = payload.get("model")
@@ -59,7 +61,6 @@ class ModelService:
     def identity(self) -> dict[str, str]:
         return {
             "service": "model-service",
-            "version": "1",
             "protocol_version": "realtime-v2",
             "action_schema_id": self.config.model.action_schema_id,
             "codec_id": self.config.data.codec_id,

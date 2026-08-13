@@ -1,6 +1,6 @@
 # LatentLoop：双通道连续状态自回归语言模型方案
 
-> 状态：最终目标纯文本输出方案 v0.2
+> 状态：最终目标纯文本输出方案
 > 日期：2026-08-08
 > 适用范围：以文本 token 为输入和输出的 LatentLoop 模型思想、状态转移、训练监督和可验证假设。实时语音与电脑操控项目的实现契约见 [实时流多模态 LatentLoop 完整方案](realtime-multimodal-latent-loop.md)。
 

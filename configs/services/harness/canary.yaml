@@ -12,4 +12,4 @@ screen_height: 224
 spice_screen_command: '["latentloop-spice-bridge", "--display", "${SPICE_DISPLAY}"]'
 spice_audio_capture_command: '["latentloop-audio-bridge", "--capture", "${SPICE_AUDIO_SOCKET}"]'
 spice_audio_playback_command: '["latentloop-audio-bridge", "--playback", "${SPICE_AUDIO_SOCKET}"]'
-evaluator_command: '["latentloop-task-evaluator", "--manifest", "~/latentloop-data/datasets/canary/v1/rl/tasks.jsonl"]'
+evaluator_command: '["latentloop-task-evaluator", "--manifest", "~/latentloop-data/datasets/canary/rl/tasks.jsonl"]'

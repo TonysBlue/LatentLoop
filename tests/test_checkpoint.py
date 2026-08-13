@@ -49,9 +49,9 @@ def test_checkpoint_restores_full_recurrent_step(
         config=smoke_config.as_dict(),
     )
     payload = torch.load(path, map_location="cpu", weights_only=False)
-    assert payload["format_version"] == 8
-    assert payload["metadata"]["world_state_update_version"] == "gated-residual-v1"
-    assert payload["metadata"]["delta_time_encoder_version"] == "fourier-delta-v1"
+    assert "format_version" not in payload
+    assert "world_state_update_version" not in payload["metadata"]
+    assert "delta_time_encoder_version" not in payload["metadata"]
     expected = model(episode.units[1], first.state.detach()).speech_codec_logits.detach()
 
     restored_model = StreamingLatentLoop(smoke_config.model)
@@ -116,14 +116,14 @@ def test_checkpoint_rejects_codec_mismatch(tmp_path: Path, smoke_config: Project
         raise AssertionError("codec mismatch must be rejected")
 
 
-def test_checkpoint_rejects_pre_dense_visual_format(
+def test_checkpoint_rejects_incomplete_current_payload(
     tmp_path: Path, smoke_config: ProjectConfig
 ) -> None:
     model = StreamingLatentLoop(smoke_config.model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     manager = CheckpointManager(tmp_path)
     path, _ = manager.save(
-        "v7",
+        "incomplete",
         model=model,
         optimizer=optimizer,
         scheduler=None,
@@ -135,13 +135,13 @@ def test_checkpoint_rejects_pre_dense_visual_format(
         config=smoke_config.as_dict(),
     )
     payload = torch.load(path, map_location="cpu", weights_only=False)
-    payload["format_version"] = 7
-    old_path = tmp_path / "v6.pt"
-    torch.save(payload, old_path)
+    del payload["metadata"]
+    incomplete_path = tmp_path / "incomplete.pt"
+    torch.save(payload, incomplete_path)
 
-    with pytest.raises(ValueError, match="abstract world state requires v8"):
+    with pytest.raises(ValueError, match="checkpoint is incomplete"):
         manager.load(
-            old_path,
+            incomplete_path,
             model=model,
             optimizer=optimizer,
             scheduler=None,
@@ -149,4 +149,45 @@ def test_checkpoint_rejects_pre_dense_visual_format(
             device=torch.device("cpu"),
             config=smoke_config.as_dict(),
             expected_metadata=CheckpointMetadata("data", "codec", "hash", "test"),
+        )
+
+
+def test_checkpoint_manifest_rejects_obsolete_format_field(
+    tmp_path: Path, smoke_config: ProjectConfig
+) -> None:
+    model = StreamingLatentLoop(smoke_config.model)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    manager = CheckpointManager(tmp_path)
+    manager.save(
+        "current",
+        model=model,
+        optimizer=optimizer,
+        scheduler=None,
+        scaler=None,
+        recurrent_state=None,
+        train_state={"update": 0},
+        data_cursor=DataCursor(),
+        metadata=CheckpointMetadata("data", "codec", "hash", "test"),
+        config=smoke_config.as_dict(),
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        manifest_path.read_text(encoding="utf-8").replace(
+            '{\n  "checkpoints":', '{\n  "format_version": 1,\n  "checkpoints":'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="obsolete format_version"):
+        manager.save(
+            "next",
+            model=model,
+            optimizer=optimizer,
+            scheduler=None,
+            scaler=None,
+            recurrent_state=None,
+            train_state={"update": 1},
+            data_cursor=DataCursor(),
+            metadata=CheckpointMetadata("data", "codec", "hash", "test"),
+            config=smoke_config.as_dict(),
         )

@@ -68,12 +68,12 @@ Online GRPO 从同一个任务初始状态和 seed 采样 G 条独立 rollout。
 policy ratio，并相对冻结的 SFT reference policy 计算 sampled-token KL。没有 critic
 或 value head。详细数学定义和环境接口见 `online-grpo-training.md`。
 
-## 6. Schema v7
+## 6. 当前数据契约
 
-监督 episode 与在线 rollout 统一使用 schema v7 identity。监督样本 metadata 至少包含：
+监督 episode 与在线 rollout 统一使用当前数据契约。项目不维护 schema 编号或历史迁移路径。
+监督样本 metadata 至少包含：
 
 ```text
-schema_version = 7
 stage
 dataset_scale
 sample_kind
@@ -91,14 +91,13 @@ receipts
 
 在线 rollout 还必须记录 group/rollout ID、policy/reference hash、采样 frame、frame joint
 old/reference log-prob、reward components、环境 event/receipt、task ID、seed 和 termination
-reason。旧 flat-action schema 不得兼容；旧资产必须从源轨迹显式重新生成。
+reason。旧 flat-action 数据不属于当前输入；历史资产已清理，后续只从源轨迹生成当前数据。
 
-## 7. Checkpoint v8 与阶段谱系
+## 7. 当前 checkpoint 与阶段谱系
 
-正式 checkpoint 使用 format v8，metadata 至少包含：
+checkpoint 不写入 format/schema 编号，metadata 至少包含：
 
 ```text
-schema_version
 stage
 objective
 data_identity
@@ -135,10 +134,10 @@ Canary 是完整训练链的小规模证明，不是删减版算法。它同样�
 
 - 配置拒绝错误 stage/objective、正式 RL 缺失环境 identity/socket、非法 GRPO 参数；
 - 三个正式 recipe 都严格包含 `pretrain -> sft -> rl`，且全部 `backbone_train_mode=all`；
-- schema v7 往返保存结构化 frame、runtime identity、decoded controls、receipts 与 metadata，明确拒绝旧 schema；
+- 当前数据契约往返保存结构化 frame、runtime identity、decoded controls、receipts 与 metadata；
 - speech-only 导入保持 action mask 全 false，显式专家动作可正确编码；
 - 环境客户端校验 identity，并保证 observation 不携带 reward/隐藏状态；
 - rollout 的同组成员使用相同 task/seed 初始状态并记录 old/reference log-prob；
 - GRPO advantage、clipping、KL、零方差跳过和全模型梯度可验证；
-- format v8 resume 校验完整谱系、WorldStateUpdate 版本和 DeltaTimeEncoder 版本，并拒绝旧视觉状态与 Action Head；
+- resume 校验完整谱系和当前模型状态，并拒绝不完整 checkpoint；
 - Canary、Pilot、Production 通过同一 recipe 和 train 分派路径。

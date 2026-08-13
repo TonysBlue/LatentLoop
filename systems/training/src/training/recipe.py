@@ -101,8 +101,7 @@ def _checkpoint_matches(path: Path, config: ProjectConfig) -> bool:
 
         payload = torch.load(path, map_location="cpu", weights_only=False)
         return (
-            payload.get("format_version") == 8
-            and payload.get("config_hash") == config_hash(config.as_dict())
+            payload.get("config_hash") == config_hash(config.as_dict())
             and payload.get("metadata", {}).get("data_identity") == _data_identity(config)
             and payload.get("metadata", {}).get("codec_id") == config.data.codec_id
             and payload.get("metadata", {}).get("codec_revision") == config.data.codec_revision
@@ -133,7 +132,6 @@ def _checkpoint_metadata(path: Path) -> dict[str, Any]:
     except Exception as error:
         return {"error": str(error)}
     return {
-        "format_version": payload.get("format_version"),
         "config_hash": payload.get("config_hash"),
         "metadata": payload.get("metadata", {}),
         "train_state": payload.get("train_state", {}),
@@ -147,8 +145,10 @@ def _require_parent_stage(path: Path, *, stage: str, objective: str) -> None:
         payload = torch.load(path, map_location="cpu", weights_only=False)
     except (OSError, RuntimeError, ValueError, TypeError) as error:
         raise ValueError(f"cannot inspect parent checkpoint {path}: {error}") from error
-    if payload.get("format_version") != 8:
-        raise ValueError("formal stage parent checkpoint must use format version 8")
+    if not isinstance(payload.get("model"), dict) or not isinstance(
+        payload.get("metadata"), dict
+    ):
+        raise ValueError("formal stage parent checkpoint is incomplete")
     metadata = payload.get("metadata", {})
     if metadata.get("stage") != stage or metadata.get("objective") != objective:
         raise ValueError(

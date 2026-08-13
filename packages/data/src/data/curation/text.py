@@ -384,7 +384,6 @@ def build_pilot_text(
         _calibrate_plan_mix(plans, dataset)
     path = dataset_path(root, dataset, "text", "plans.json")
     value = {
-        "schema_version": 1,
         "dataset": dataset,
         "fixture": fixture,
         "seed": seed,

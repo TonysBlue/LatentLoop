@@ -57,7 +57,6 @@ def test_overfit_evaluation_covers_complete_encoded_dataset(
     )
     torch.save(
         {
-            "format_version": 8,
             "metadata": asdict(metadata),
             "model": model.state_dict(),
         },

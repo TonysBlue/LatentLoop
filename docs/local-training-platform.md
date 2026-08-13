@@ -87,7 +87,6 @@ LatentLoop/
 ├── checkpoints/
 ├── runtime/
 ├── tracking/
-└── archive/
 ```
 
 数据、音频、codec 权重、socket、checkpoint 和 W&B 媒体不提交 Git。manifest、hash、resolved config 和 parent checkpoint 组成实验谱系。
@@ -286,7 +285,7 @@ units）和 memory horizon 750。模型宽度、batch 和 optimizer 可以按硬
 
 ### 9.1 WebDataset episode
 
-schema version 为 5。每个 episode 主要保存：
+每个 episode 主要保存：
 
 ```text
 meta.json
@@ -298,8 +297,7 @@ speech_codes.npy
 turns.json
 ```
 
-训练协议不读取旧 `controls.npy`、memory target 或 schema 1/2/3/4；旧资产必须显式重建为
-v5 并通过 readiness。
+训练协议不读取旧 `controls.npy` 或 memory target；历史资产已清理，后续只从源轨迹构建当前数据。
 
 ### 9.2 Split 规则
 
@@ -373,7 +371,7 @@ TBPTT 不能短于要验证的 memory horizon；生产使用 750 units。
 
 ### 11.1 保存内容
 
-checkpoint format 为 8，包含：
+checkpoint 保存：
 
 ```text
 model weights
@@ -386,8 +384,6 @@ global update and consumed units
 resolved config + config hash
 data manifest hash
 codec identity
-WorldStateUpdate version
-DeltaTimeEncoder version
 parent checkpoint hash
 git commit
 ```
@@ -434,7 +430,7 @@ CUDA、FP16、codec worker、checkpoint 原子写入和 W&B Local/Offline 可用
 
 ### 14.2 数据与协议
 
-StreamUnit shape、80 ms 时钟、mask、schema v7、manifest/shard identity、runtime identity、codec identity、action schema 和 split isolation 通过。
+StreamUnit shape、80 ms 时钟、mask、manifest/shard identity、runtime identity、codec identity、action schema 和 split isolation 通过。
 
 ### 14.3 状态闭环
 

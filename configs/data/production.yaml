@@ -1,3 +1,2 @@
 dataset: production
-schema_version: 7
-root: ~/latentloop-data/datasets/production/v1
+root: ~/latentloop-data/datasets/production

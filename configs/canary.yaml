@@ -34,9 +34,8 @@ model:
 data:
   dataset: canary
   source: webdataset
-  shards: ~/latentloop-data/datasets/canary/v1/shards/processed/train/train-*.tar
-  manifest: ~/latentloop-data/datasets/canary/v1/shards/processed/train/train-manifest.jsonl
-  schema_version: 7
+  shards: ~/latentloop-data/datasets/canary/shards/processed/train/train-*.tar
+  manifest: ~/latentloop-data/datasets/canary/shards/processed/train/train-manifest.jsonl
   audio_sample_rate: 24000
   codec_frame_rate: 12.5
   codec_id: mimi-24khz-8x2048
@@ -84,7 +83,7 @@ training:
     environment_id: isolated-desktop-v1
     environment_version: "1"
     environment_protocol_version: realtime-v2
-    task_manifest: ~/latentloop-data/datasets/canary/v1/rl/tasks.jsonl
+    task_manifest: ~/latentloop-data/datasets/canary/rl/tasks.jsonl
     reward_spec_id: realtime-v2
     sampling_temperature: 0.8
     sampling_top_k: 250

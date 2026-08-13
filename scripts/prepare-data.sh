@@ -45,21 +45,9 @@ encode() {
   trap '"$REPO/scripts/canary-mimi-worker.sh" stop' EXIT
   uv run data benchmark-codec \
     --config "$CFG" --socket "$RUN_DIR/mimi.sock" \
-    --report "$ROOT/$DATASET/v1/reports/codec-benchmark.json"
+    --report "$ROOT/$DATASET/reports/codec-benchmark.json"
   uv run python "$REPO/tools/curation/finalize_data.py" \
     --config "$CFG" --root "$ROOT" --dataset "$DATASET" --socket "$RUN_DIR/mimi.sock"
-  uv run data check-readiness --config "$CFG" --root "$ROOT"
-  "$REPO/scripts/canary-mimi-worker.sh" stop
-  trap - EXIT
-}
-
-rebuild_v7() {
-  "$REPO/scripts/download-mimi.sh"
-  "$REPO/scripts/bootstrap-codec.sh"
-  "$REPO/scripts/canary-mimi-worker.sh" start
-  trap '"$REPO/scripts/canary-mimi-worker.sh" stop' EXIT
-  uv run data rebuild-v7 --config "$CFG" --root "$ROOT" --dataset "$DATASET" \
-    --socket "$RUN_DIR/mimi.sock" --activate
   uv run data check-readiness --config "$CFG" --root "$ROOT"
   "$REPO/scripts/canary-mimi-worker.sh" stop
   trap - EXIT
@@ -69,7 +57,6 @@ case "$ACTION" in
   bootstrap) "$REPO/scripts/bootstrap-canary.sh"; "$REPO/scripts/bootstrap-canary-models.sh" ;;
   prepare) prepare ;;
   encode) encode ;;
-  rebuild-v7) rebuild_v7 ;;
   all) prepare; encode ;;
-  *) printf 'usage: %s {canary|pilot|production} {bootstrap|prepare|encode|rebuild-v7|all}\n' "$0" >&2; exit 2 ;;
+  *) printf 'usage: %s {canary|pilot|production} {bootstrap|prepare|encode|all}\n' "$0" >&2; exit 2 ;;
 esac

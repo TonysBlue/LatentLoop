@@ -210,8 +210,8 @@ def _automatic_quality_report(
 def _validate_text_plan(root: Path, dataset: str, fixture: bool) -> dict[str, Any]:
     path = dataset_path(root, dataset, "text", "plans.json")
     payload = read_json(path)
-    if payload.get("dataset") != dataset or int(payload.get("schema_version", -1)) != 1:
-        raise ValueError(f"{dataset} text plan schema or dataset is invalid")
+    if payload.get("dataset") != dataset:
+        raise ValueError(f"{dataset} text plan dataset is invalid")
     plans = payload.get("plans")
     if not isinstance(plans, list) or not plans:
         raise ValueError(f"{dataset} text plan is empty")

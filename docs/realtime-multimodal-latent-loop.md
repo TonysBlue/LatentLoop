@@ -503,7 +503,7 @@ Z_t 在主干指定层通过 latent cross-attention 读取。Z_t 不并入普通
 
 ### 12.3 持久化
 
-checkpoint 保存 Z、H、KV、audio cache、speech local、action local 和 unit cursor。会话持久化必须记录 model/schema/codec identity；不兼容版本拒绝恢复。
+checkpoint 保存 Z、H、KV、audio cache、speech local、action local 和 unit cursor。会话持久化必须记录当前 model、codec 和 action identity；不完整身份拒绝恢复。
 
 ## 13. 实时运行时
 
@@ -551,13 +551,13 @@ runtime_events     播放、执行、丢帧和延迟审计
 
 构造过程中的来源分离、TTS 中间产物、环境参数和任务标签不能作为模型输入。
 
-当前 WebDataset schema version 为 7。一个 episode 由 `meta.json`、`mic.flac`、
+当前 WebDataset episode 由 `meta.json`、`mic.flac`、
 `target_speech.flac`、`screen.npz`、`timeline.npz`、`speech_codes.npy` 和
 `turns.json` 组成；timeline 保存 speech mode/mask、codec mask、结构化 action frame、
 action supervision mask 和时间戳。`controls.json` 和 `receipts.json` 只保存
 control-plane 审计，不进入模型输入。旧 flat `action_tokens/action_token_mask`、
-`controls.npy`、memory target 和 schema v1/v2/v3/v4 不属于当前训练协议；旧资产必须
-显式从源轨迹重建为 v7。完整字段、runtime identity 和迁移规则见
+`controls.npy` 和 memory target 不属于当前训练协议；历史资产已清理，后续只从源轨迹
+构建当前数据。完整字段见
 `docs/data/trajectory-schema.md`。
 
 ### 14.2 场景覆盖
@@ -579,7 +579,7 @@ control-plane 审计，不进入模型输入。旧 flat `action_tokens/action_to
 
 ### 14.4 数据隔离
 
-按 device/session 分组切分 train/validation/test。同一 session 不得跨 split。每个 manifest 锁定 source、license、content hash、codec identity、schema version 和 session hash。
+按 device/session 分组切分 train/validation/test。同一 session 不得跨 split。每个 manifest 锁定 source、license、content hash、codec identity 和 session hash。
 
 ## 15. 训练目标
 
@@ -697,7 +697,7 @@ MiniCPM 或同类多模态主干可以提供视觉编码、音频编码、多模
 5. Unified Action Head；
 6. 单路混合麦克风输入；
 7. 有界 KV 和固定 latent slots；
-8. 同一 checkpoint/data/schema identity。
+8. 同一 checkpoint/data/trajectory identity。
 
 不得引入与上述状态协议不一致的 control、memory 或 action 过渡接口。
 
@@ -799,7 +799,7 @@ UI-TARS/Harness 必须提供：
 - W&B 只负责指标、配置和谱系，不进入模型 forward；
 - Ray 只负责 CPU 数据、环境和评测，不维护 GPU recurrent state；
 - codec worker 通过带身份校验的本地接口提供 encode/decode；
-- runtime、checkpoint、manifest、codec 和 action schema 版本必须一致；
+- runtime、checkpoint、manifest、codec 和 action schema identity 必须一致；
 - 所有异常通过显式失败、隔离、恢复或安全拒绝处理。
 
 ## 25. 成功标准

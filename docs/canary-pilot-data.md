@@ -27,7 +27,7 @@ Canary 清单并拒绝任何 source 或 plan 复用。episode 时长是完整时
 
 ```text
 registry/{source-lock.json,licenses/,normalized/,voices/,reports/}
-{canary,pilot}/v1/{text/,synthesized/,normalized/,manifests/,shards/,reports/}
+{canary,pilot}/{text/,synthesized/,normalized/,manifests/,shards/,reports/}
 ```
 
 运行期音频、shard、模型和审计报告都在该根目录，不进入 Git。
@@ -88,8 +88,8 @@ mask 在 Pilot 保持 false，`PAUSE` 不使用。
 ```bash
 uv run data audit-pilot-data --config "$CFG" --root "$ROOT" --dataset pilot
 uv run data import-speech --config "$CFG" \
-  --manifest "$ROOT/pilot/v1/manifests/train.jsonl" \
-  --output "$ROOT/pilot/v1/shards/staging/train/train-%06d.tar"
+  --manifest "$ROOT/pilot/manifests/train.jsonl" \
+  --output "$ROOT/pilot/shards/staging/train/train-%06d.tar"
 ```
 
 审计拒绝重复 ID、跨 split speaker/session/template/scenario、时间戳和音频错误、错误的
