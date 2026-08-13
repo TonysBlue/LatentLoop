@@ -46,7 +46,7 @@ L_pretrain = speech_weight * (L_speech_mode + L_speech_codec)
 ```
 
 各项只在自己的有效 mask 上归一化。Speech Head、Unified Action Head、
-InputEncoder、Backbone 和 MemoryUpdater 全部更新。MemoryUpdater 没有独立 target；
+InputEncoder、Backbone 和 WorldStateUpdate 全部更新。WorldStateUpdate 没有独立 target；
 未来 speech/action loss 通过 `Z_t -> Backbone -> H_t -> heads` 反向监督记忆更新。
 
 ## 4. SFT
@@ -93,9 +93,9 @@ receipts
 old/reference log-prob、reward components、环境 event/receipt、task ID、seed 和 termination
 reason。旧 flat-action schema 不得兼容；旧资产必须从源轨迹显式重新生成。
 
-## 7. Checkpoint v6 与阶段谱系
+## 7. Checkpoint v8 与阶段谱系
 
-正式 checkpoint 使用 format v7，metadata 至少包含：
+正式 checkpoint 使用 format v8，metadata 至少包含：
 
 ```text
 schema_version
@@ -140,5 +140,5 @@ Canary 是完整训练链的小规模证明，不是删减版算法。它同样�
 - 环境客户端校验 identity，并保证 observation 不携带 reward/隐藏状态；
 - rollout 的同组成员使用相同 task/seed 初始状态并记录 old/reference log-prob；
 - GRPO advantage、clipping、KL、零方差跳过和全模型梯度可验证；
-- format v7 resume 校验完整谱系并拒绝旧视觉状态与 Action Head；
+- format v8 resume 校验完整谱系、WorldStateUpdate 版本和 DeltaTimeEncoder 版本，并拒绝旧视觉状态与 Action Head；
 - Canary、Pilot、Production 通过同一 recipe 和 train 分派路径。

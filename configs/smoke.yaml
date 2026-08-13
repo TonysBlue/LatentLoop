@@ -12,6 +12,9 @@ model:
   temporal_kv_units: 4
   vision_kv_units: 2
   latent_slots: 4
+  world_state_update_type: gated_residual
+  delta_time_fourier_bands: 8
+  delta_time_base_period_ms: 80
   kv_units: 4
   kv_window_ms: 320
   speech_frames_per_unit: 1

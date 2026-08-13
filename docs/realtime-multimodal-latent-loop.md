@@ -28,7 +28,7 @@ ActionFrame；这些模型输出不作为 Model Service 与 Harness 的直接执
 共享 Data 负责 capture、replay、监督 episode、online rollout、manifest、审计和
 readiness，不隶属于 Training System。
 
-实时流多模态 LatentLoop 是一个运行在真实环境反馈闭环中的递归多模态模型。模型以 80 ms 为一个统一时间单元，持续接收单路混合麦克风音频、屏幕输入和时间信息，通过有界逐层 KV Cache 保存近期精确历史，通过固定容量 latent memory Z_t 保存长期任务状态，并使用独立 Speech Head 与 Unified Action Head 并行输出。
+实时流多模态 LatentLoop 是一个运行在真实环境反馈闭环中的递归多模态模型。模型以 80 ms 为一个统一时间单元，持续接收单路混合麦克风音频、屏幕输入和当前观察的时间间隔，通过有界逐层 KV Cache 保存近期精确历史，通过固定容量的抽象 latent workspace `Z_t` 保存长期任务状态，并使用独立 Speech Head 与 Unified Action Head 并行输出。`Z_t` 是模型内部的递归表示，不要求逐一对应真实世界的物理变量，也不要求遵循严格的连续时间动力学。
 
 完整闭环为：
 
@@ -37,7 +37,7 @@ readiness，不隶属于 Training System。
               ↓
        InputEncoder(U_t)
               ↓
-    MemoryUpdater(Z_(t-1), H_(t-1))
+    WorldStateUpdate(Z_(t-1), H_(t-1))
               ↓
    Backbone(E_t, KV_(t-1), Z_t)
               ↓
@@ -58,7 +58,7 @@ readiness，不隶属于 Training System。
 
 ~~~
 E_t       = InputEncoder(U_t)
-Z_t       = MemoryUpdater(Z_(t-1), H_(t-1))
+Z_t       = WorldStateUpdate(Z_(t-1), H_(t-1))
 H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
 speech_t  = SpeechHead(H_t, speech_local_(t-1))
 action_t  = ActionHead(H_t, action_local_(t-1))
@@ -75,7 +75,7 @@ H_t 是主干经过 final normalization 后的完整 hidden 序列，必须暂�
 5. 将所有电脑操控统一到一个结构化 ActionFrame schema 与联合概率接口。
 6. 使用固定容量 Z_t 保存长期目标、约束、计划和环境状态。
 7. 使用有界 KV 保存近期精确多模态历史，控制显存和延迟。
-8. 让未来 Speech/Action loss 通过 Z_t 监督早期 MemoryUpdater。
+8. 让未来 Speech/Action loss 通过 Z_t 监督早期 WorldStateUpdate。
 9. 训练、验证、checkpoint 恢复和推理使用同一状态转移。
 10. 由 Harness 提供动作语法、安全和权限校验。
 11. Pretrain、SFT、Online GRPO 使用同一双头模型和状态转移完整训练全模型。
@@ -146,7 +146,7 @@ parameters = kind-conditioned coordinate/button/scroll/text/key fields
 | U_t | 当前混合音频、屏幕和时间输入 |
 | E_t | InputEncoder(U_t) 的统一表示 |
 | KV_t | 有界逐层 Transformer Key/Value Cache |
-| Z_t | 固定容量长期 latent memory |
+| Z_t | 固定容量抽象 latent workspace |
 | H_t | 当前 unit 的完整 final-normalized hidden |
 | speech_local | 语音 temporal state 和上一帧 codec |
 | action_local | previous frame、TYPE decoder、pending UTF-8 和 held-input state |
@@ -177,7 +177,7 @@ $$
 H_t\in\mathbb R^{B\times tokens\_per\_unit\times d_{model}}
 $$
 
-H_t 是当前 unit 的完整主干输出，而不是单个 query 或 pooled summary。它必须保存在 RecurrentState.hidden，并作为下一时刻 MemoryUpdater 的唯一 hidden 输入。
+H_t 是当前 unit 的完整主干输出，而不是单个 query 或 pooled summary。它必须保存在 RecurrentState.hidden，并作为下一时刻 WorldStateUpdate 的唯一 hidden 输入。
 
 ### 4.4 局部状态
 
@@ -241,14 +241,36 @@ vocabulary           2048
 
 采集器可以高频采集音频和屏幕，编码器可以使用内部帧率，但主干状态转移和输出协议统一在 80 ms unit 上。任何降频、合并或背压都必须显式记录 delta_ms，并保持状态顺序。
 
+### 5.5 时间间隔编码
+
+模型不直接接收绝对时间。`timestamp_ms` 只用于 unit 排序、计算 `delta_ms`、延迟统计和
+轨迹记录。当前观察间隔通过 DeltaTimeEncoder 进入 Backbone：
+
+$$
+T_t^{\Delta} = \operatorname{DeltaTimeEncoder}(\Delta t_t)
+$$
+
+DeltaTimeEncoder 使用 log-scaled interval 和多尺度 Fourier 特征：
+
+$$
+\phi_k(\Delta t) =
+\left[
+\sin\left(2\pi\frac{\Delta t}{p_k}\right),
+\cos\left(2\pi\frac{\Delta t}{p_k}\right)
+\right]
+$$
+
+其中周期集合默认为 `80, 160, 320, 640, 1280, 2560, 5120, 10240 ms`。时间间隔不进入
+WorldStateUpdate，也不要求 `Z` 遵循物理时间动力学。
+
 ## 6. 模型架构
 
 ~~~
 MIC_MIXED --> Streaming Audio Encoder --┐
 SCREEN   --> Vision Encoder -----------+--> InputEncoder(E_t)
-TIME     --> Time Encoder -------------┘
+DELTA_T  --> DeltaTimeEncoder ---------┘
                                       |
-Z_(t-1), H_(t-1) --> MemoryUpdater --> Z_t
+Z_(t-1), H_(t-1) --> WorldStateUpdate --> Z_t
                                       |
 KV_(t-1), E_t, Z_t --> Backbone --> H_t, KV_t
                                       |             |
@@ -288,25 +310,33 @@ $$
 
 ### 7.1 严格更新顺序
 
-MemoryUpdater 先于当前 unit Backbone：
+WorldStateUpdate 先于当前 unit Backbone：
 
 $$
-Z_t=G_\phi(Z_{t-1},H_{t-1})
+Z_t = U_\theta\left(Z_{t-1}, H_{t-1}\right)
 $$
 
-当前实现不使用 r_(t-1)、q_(t-1) 或动作控制摘要作为 updater 输入。
+`Z_t` 是唯一实际递归的 latent 状态。文档中可以用“预测”和“吸收观察”解释这个变化过程，
+但实现不拆分 `Z_t` 为预测状态和校正状态，也不维护两套 latent。WorldStateUpdate 不接收
+`delta_t`、当前音频、当前视觉、Action 或 Speech 输出；当前 unit 的观察和时间间隔先进入
+Backbone，形成的 `H_t` 在下一轮影响 `Z_(t+1)`。
 
 ### 7.2 候选与门控
 
 一种等价内部参数化为：
 
-~~~
-query     = latent_to_model(Z_(t-1)) + learned_slot_identity
-context   = Attention(query, H_(t-1), H_(t-1))
-candidate = Candidate([Z_(t-1), context]) + learned_slot_identity_latent
-gate      = sigmoid(Gate([Z_(t-1), context]))
-Z_t       = LayerNorm((1-gate)*Z_(t-1) + gate*candidate)
-~~~
+$$
+\begin{aligned}
+Q_{t-1} &= W_q(Z_{t-1}) + I_{slot},\\
+C_{t-1} &= \operatorname{Attention}(Q_{t-1}, H_{t-1}, H_{t-1}),\\
+\Delta Z_{t-1} &= \operatorname{Candidate}(Z_{t-1}, C_{t-1}),\\
+G_{t-1} &= \sigma\left(\operatorname{Gate}(Z_{t-1}, C_{t-1}) - 2\right),\\
+Z_t &= \operatorname{LayerNorm}\left(Z_{t-1} + 0.1\,G_{t-1}\odot\Delta Z_{t-1}\right).
+\end{aligned}
+$$
+
+`G_(t-1)` 按 slot 和 latent dimension 生成，而不是单个全局标量。门控残差只是状态更新的
+稳定参数化，不表示 `Z` 遵循一个物理微分方程。
 
 learned slot identity 只打破零初始化 slots 的对称性，不规定 slot 语义。
 
@@ -322,7 +352,7 @@ learned slot identity 只打破零初始化 slots 的对称性，不规定 slot 
 future Speech/Action loss
   -> future H
   -> future Z
-  -> earlier MemoryUpdater
+  -> earlier WorldStateUpdate
   -> earlier H and Z
 ~~~
 
@@ -425,7 +455,7 @@ $$
 ### 11.2 记忆
 
 $$
-Z_t=MemoryUpdater(Z_{t-1},H_{t-1})
+Z_t=WorldStateUpdate(Z_{t-1},H_{t-1})
 $$
 
 ### 11.3 主干
@@ -483,7 +513,7 @@ checkpoint 保存 Z、H、KV、audio cache、speech local、action local 和 uni
 Audio Capture       音频环形缓冲
 Screen Capture      每 unit 完整屏幕帧
 InputEncoder        音频/视觉/时间编码
-Backbone Worker     MemoryUpdater、Backbone、KV/Z 状态
+Backbone Worker     WorldStateUpdate、Backbone、KV/Z 状态
 Speech Worker       codec frame 和播放块
 Action Worker       Harness grammar/safety/execution
 Telemetry           延迟、队列、状态和轨迹
@@ -580,7 +610,7 @@ Speech 和 Action 共享 Backbone 梯度，但使用独立 loss 和独立输出 
 没有独立 memory loss、future embedding loss、probe loss、write-budget 或 diversity loss。未来 Speech/Action loss 通过：
 
 ~~~
-future loss -> future H -> future Z -> earlier MemoryUpdater
+future loss -> future H -> future Z -> earlier WorldStateUpdate
 ~~~
 
 监督 Z_t 的长期信息选择。
@@ -598,7 +628,7 @@ $$
 | Speech Head | Speech mode/codec loss | 语音 mode、codec 准确率和局部连续性 |
 | Action Head | Action token loss | grammar、参数 token 和跨 unit continuation |
 | Backbone | 两个输出 loss | 共享多模态理解和输出条件表示 |
-| MemoryUpdater/Z | 未来两个输出 loss | 长期目标、约束、计划和环境状态保持 |
+| WorldStateUpdate/Z | 未来两个输出 loss | 长期目标、约束、计划和抽象任务状态保持 |
 | KV state | 无参数 loss | 近期精确上下文 |
 | local states | 对应 head loss | 语音跨帧和 action 跨 unit 连续性 |
 
@@ -626,7 +656,7 @@ $$
 2. 所有训练 episode 按时间顺序处理，不能每个窗口重置状态。
 3. 生产 memory horizon 和 TBPTT 为 750 units。
 4. 所有 targets 配套 mask；缺失标签屏蔽对应 loss，不伪造 NOOP 或 SILENCE。
-5. 未来输出 loss 必须能够在 TBPTT 范围内回传到早期 MemoryUpdater。
+5. 未来输出 loss 必须能够在 TBPTT 范围内回传到早期 WorldStateUpdate。
 6. 训练、验证、推理和恢复共享同一 forward_step 语义。
 7. codec、action schema、trajectory schema、unit 时钟和 checkpoint identity 必须一致。
 
@@ -637,7 +667,7 @@ state = initial_state()
 
 for each 80 ms unit U_t:
     E_t = InputEncoder(U_t)
-    Z_t = MemoryUpdater(state.Z, state.H)
+    Z_t = WorldStateUpdate(state.Z, state.H)
     H_t, KV_t = Backbone(E_t, state.KV, Z_t)
     speech_t = SpeechHead(H_t, state.speech_local)
     action_t = ActionHead(H_t, state.action_local)
@@ -662,7 +692,7 @@ MiniCPM 或同类多模态主干可以提供视觉编码、音频编码、多模
 
 1. 固定 80 ms unit；
 2. 完整 H_t 暂存；
-3. Z_t = MemoryUpdater(Z_(t-1), H_(t-1))；
+3. Z_t = WorldStateUpdate(Z_(t-1), H_(t-1))；
 4. 独立 Speech Head；
 5. Unified Action Head；
 6. 单路混合麦克风输入；
@@ -792,7 +822,7 @@ UI-TARS/Harness 必须提供：
 ~~~
 mixed microphone + screen + time
     -> InputEncoder(U_t) = E_t
-    -> Z_t = MemoryUpdater(Z_(t-1), H_(t-1))
+    -> Z_t = WorldStateUpdate(Z_(t-1), H_(t-1))
     -> H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
     -> SpeechHead(H_t) + UnifiedActionHead(H_t)
     -> frozen Mimi decode / Harness execution

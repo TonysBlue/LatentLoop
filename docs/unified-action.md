@@ -14,7 +14,7 @@ Unified Action Head 是模型唯一的电脑操控输出头。统一的是 Actio
 
 ```text
 E_t       = InputEncoder(U_t)
-Z_t       = MemoryUpdater(Z_(t-1), H_(t-1))
+Z_t       = WorldStateUpdate(Z_(t-1), H_(t-1))
 H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
 frame_t   = ActionHead(H_t, action_local_(t-1))
 controls  = decode(frame_t)
@@ -241,7 +241,7 @@ L_total = speech_loss_weight * L_speech
         + action_loss_weight * L_action
 ```
 
-Action loss 通过 Action Head、Backbone、InputEncoder 和 MemoryUpdater 训练全模型；没有
+Action loss 通过 Action Head、Backbone、InputEncoder 和 WorldStateUpdate 训练全模型；没有
 额外 action-control、confidence、success、memory 或 rollback loss。
 
 ## 9. 推理与 Harness 安全边界
@@ -253,7 +253,7 @@ held-input 状态、应用/区域白名单、速率和权限。危险操作仍�
 
 ## 10. Checkpoint 与恢复
 
-Checkpoint format v7 保存 Action Head 参数、完整 action local state、
+Checkpoint format v8 保存 Action Head 参数、完整 action local state、
 `action_schema_id=structured-action-v1`、grid/type/hotkey/key-table 常量以及 unit/session
 identity。恢复后下一 frame 的 logits、采样和 UTF-8 assembler 状态必须与不中断运行一致。
 
@@ -277,7 +277,7 @@ v6 及更旧 flat-token checkpoint 与数据直接拒绝。没有 vocabulary 映
 - action frame joint log-prob 与监督 NLL 使用相同分解；
 - action 监督全 false 时 loss 有限且无虚假梯度；
 - checkpoint 中断恢复、TBPTT detach 和 session reset；
-- Action loss 到达 Action Head、Backbone 和 MemoryUpdater。
+- Action loss 到达 Action Head、Backbone 和 WorldStateUpdate。
 
 ### 11.3 边界与回归
 

@@ -15,7 +15,7 @@ SILENCE 由 Model Service 输出全零 80 ms PCM，Harness 不理解 Mimi。
 
 ~~~
 E_t       = InputEncoder(U_t)
-Z_t       = MemoryUpdater(Z_(t-1), H_(t-1))
+Z_t       = WorldStateUpdate(Z_(t-1), H_(t-1))
 H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
 speech_t  = SpeechHead(H_t, speech_local_(t-1))
 ~~~
@@ -102,7 +102,7 @@ L_speech = L_speech_mode + L_speech_codec
 future speech loss
   -> future H
   -> future Z
-  -> MemoryUpdater
+  -> WorldStateUpdate
 ~~~
 
 监督长期记忆是否保留有用信息。
@@ -118,4 +118,4 @@ future speech loss
 - codec worker 和 checkpoint 使用同一 identity；
 - 连续解码无 NaN、削波、帧漂移和不可接受边界突变；
 - Speech mode、每个 codebook accuracy 和静音误触发率可评测；
-- Speech Head、Backbone 和 MemoryUpdater 的梯度路径正常。
+- Speech Head、Backbone 和 WorldStateUpdate 的梯度路径正常。

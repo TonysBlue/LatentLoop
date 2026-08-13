@@ -13,7 +13,7 @@
 
 ```text
 InputEncoder
--> Z_t = MemoryUpdater(Z_(t-1), H_(t-1))
+-> Z_t = WorldStateUpdate(Z_(t-1), H_(t-1))
 -> H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
 -> Speech Head + Unified Action Head
 -> masked loss + TBPTT
@@ -150,7 +150,7 @@ class StreamUnit:
 
 ```text
 E_t       = InputEncoder(U_t)
-Z_t       = MemoryUpdater(Z_(t-1), H_(t-1))
+Z_t       = WorldStateUpdate(Z_(t-1), H_(t-1))
 H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
 Speech_t  = SpeechHead(H_t, speech_local_(t-1))
 Action_t  = ActionHead(H_t, action_local_(t-1))
@@ -219,7 +219,7 @@ weight_sha256
 MIC_MIXED + SCREEN + TIME
         -> InputEncoder(E_t)
 Z_(t-1) + H_(t-1)
-        -> MemoryUpdater -> Z_t
+        -> WorldStateUpdate -> Z_t
 E_t + KV_(t-1) + Z_t
         -> Streaming Backbone -> H_t, KV_t
 H_t -> Speech Head + Unified Action Head
@@ -231,13 +231,30 @@ H_t -> Speech Head + Unified Action Head
 非视觉 token 保留最近 750 个 unit，视觉 token 保留最近 100 个 unit；两类 token 独立淘汰，
 保留后仍按原始时间顺序参与 attention。
 
-### 7.3 MemoryUpdater
+### 7.3 WorldStateUpdate
 
-```text
-Z_t = MemoryUpdater(Z_(t-1), H_(t-1))
-```
+$$
+Z_t = U_\theta\left(Z_{t-1}, H_{t-1}\right)
+$$
 
-内部可以使用 latent projection、对 H 的 attention、learned slot identity、candidate 和 gate。MemoryUpdater 没有 memory target、probe、write 或 diversity loss。
+内部使用 latent projection、对 H 的 slot cross-attention、learned slot identity、candidate 和
+per-slot/per-dimension gate。WorldStateUpdate 不接收 `delta_t`、当前 audio/vision 或动作与语音输出；
+它也没有 memory target、probe、write 或 diversity loss。`delta_t` 只经过 DeltaTimeEncoder 后作为
+当前 Backbone 的输入特征。
+
+`Z_t` 是抽象 latent workspace，可以在一次离散更新中重组、压缩或跳转，不要求满足严格的物理
+时间动力学。系统只维护一个 `latent` 字段，不区分预测状态和观测校正状态。
+
+### 7.4 DeltaTimeEncoder
+
+`timestamp_ms` 不作为模型语义输入。只有当前观察间隔 `delta_ms` 经过 DeltaTimeEncoder 后
+进入 Backbone：
+
+$$
+T_t^{\Delta} = \operatorname{DeltaTimeEncoder}(\Delta t_t)
+$$
+
+`WorldStateUpdate(Z_(t-1), H_(t-1))` 的接口不包含 `delta_t`。
 
 ### 7.4 Speech Head
 
@@ -337,7 +354,7 @@ diversity、control 或 confidence loss。
 | Speech Head | mode/codec loss | speech mode、codec 和局部连续性 |
 | Action Head | structured frame NLL | kind、参数、TYPE continuation |
 | Backbone | Speech + Action loss | 共享多模态表示 |
-| MemoryUpdater/Z | 未来 Speech/Action loss | 长期目标、约束和任务状态 |
+| WorldStateUpdate/Z | 未来 Speech/Action loss | 长期目标、约束和抽象任务状态 |
 | KV | 无参数 loss | 近期精确上下文 |
 | speech/action local | 对应 head loss | 跨帧/跨 unit 连续性 |
 
@@ -347,7 +364,7 @@ diversity、control 或 confidence loss。
 future Speech/Action loss
  -> future H
  -> future Z
- -> earlier MemoryUpdater
+ -> earlier WorldStateUpdate
 ```
 
 TBPTT 不能短于要验证的 memory horizon；生产使用 750 units。
@@ -356,7 +373,7 @@ TBPTT 不能短于要验证的 memory horizon；生产使用 750 units。
 
 ### 11.1 保存内容
 
-checkpoint format 为 4，包含：
+checkpoint format 为 8，包含：
 
 ```text
 model weights
@@ -369,6 +386,8 @@ global update and consumed units
 resolved config + config hash
 data manifest hash
 codec identity
+WorldStateUpdate version
+DeltaTimeEncoder version
 parent checkpoint hash
 git commit
 ```
@@ -456,7 +475,7 @@ TYPE 跨 unit continuation、session/unit 顺序和 Harness safety gate 通过�
 chronological WebDataset episodes
 -> StreamUnit(80 ms mixed mic + screen)
 -> InputEncoder
--> Z_t = MemoryUpdater(Z_(t-1), H_(t-1))
+-> Z_t = WorldStateUpdate(Z_(t-1), H_(t-1))
 -> H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
 -> Speech Head + Unified Action Head
 -> masked Speech/Action loss + TBPTT

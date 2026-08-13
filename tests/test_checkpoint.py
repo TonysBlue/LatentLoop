@@ -49,7 +49,9 @@ def test_checkpoint_restores_full_recurrent_step(
         config=smoke_config.as_dict(),
     )
     payload = torch.load(path, map_location="cpu", weights_only=False)
-    assert payload["format_version"] == 7
+    assert payload["format_version"] == 8
+    assert payload["metadata"]["world_state_update_version"] == "gated-residual-v1"
+    assert payload["metadata"]["delta_time_encoder_version"] == "fourier-delta-v1"
     expected = model(episode.units[1], first.state.detach()).speech_codec_logits.detach()
 
     restored_model = StreamingLatentLoop(smoke_config.model)
@@ -133,11 +135,11 @@ def test_checkpoint_rejects_pre_dense_visual_format(
         config=smoke_config.as_dict(),
     )
     payload = torch.load(path, map_location="cpu", weights_only=False)
-    payload["format_version"] = 6
+    payload["format_version"] = 7
     old_path = tmp_path / "v6.pt"
     torch.save(payload, old_path)
 
-    with pytest.raises(ValueError, match="dense visual state requires v7"):
+    with pytest.raises(ValueError, match="abstract world state requires v8"):
         manager.load(
             old_path,
             model=model,

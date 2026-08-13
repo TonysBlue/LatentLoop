@@ -121,7 +121,8 @@ L_grpo = L_policy + beta * mean(KL_sample)
 策略比率使用 rollout 时保存的 old log-prob；reference policy 在整个 RL stage 固定。
 Speech mode、codec、action frame 三类概率的 loss 分别 mask-normalize 后等权组合，避免
 TYPE byte 数量较多时自动支配梯度。梯度穿过两个 head、Backbone、InputEncoder 和
-MemoryUpdater，不存在 value loss 或单独 memory loss。
+WorldStateUpdate，不存在 value loss 或单独 memory loss。`delta_t` 只作为当前 Backbone 的
+观察时间间隔特征，不参与 WorldStateUpdate 的输入。
 
 ## 6. 在线性与安全边界
 

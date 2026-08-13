@@ -7,7 +7,7 @@ from torch.utils.checkpoint import checkpoint
 
 from model.action import ActionHead
 from model.attention import StreamingTransformerLayer
-from model.encoders import StreamingAudioEncoder, TimeEncoder, VisionEncoder
+from model.encoders import DeltaTimeEncoder, StreamingAudioEncoder, VisionEncoder
 from model.speech import FactorizedSpeechHead
 from model.types import (
     ActionFrame,
@@ -22,32 +22,39 @@ from model.types import (
 )
 
 
-class LatentUpdater(nn.Module):
+class WorldStateUpdate(nn.Module):
     def __init__(self, model_dim: int, latent_dim: int, heads: int, slots: int) -> None:
         super().__init__()
         self.latent_to_model = nn.Linear(latent_dim, model_dim)
         self.slot_identity = nn.Parameter(torch.zeros(slots, model_dim))
         self.slot_identity_latent = nn.Parameter(torch.zeros(slots, latent_dim))
         self.read = nn.MultiheadAttention(model_dim, heads, batch_first=True)
+        self.model_to_latent = nn.Linear(model_dim, latent_dim)
         self.candidate = nn.Sequential(
-            nn.Linear(latent_dim + model_dim, latent_dim * 2),
+            nn.Linear(latent_dim * 2, latent_dim * 2),
             nn.GELU(),
             nn.Linear(latent_dim * 2, latent_dim),
         )
-        self.gate = nn.Linear(latent_dim + model_dim, 1)
+        self.gate = nn.Linear(latent_dim * 2, latent_dim)
+        self.gate_bias = nn.Parameter(torch.tensor(-2.0))
+        self.residual_scale = 0.1
         self.norm = nn.LayerNorm(latent_dim)
         nn.init.normal_(self.slot_identity, std=0.02)
         nn.init.normal_(self.slot_identity_latent, std=0.02)
 
-    def forward(self, latent: Tensor, previous_hidden: Tensor) -> Tensor:
+    def _context(self, latent: Tensor, previous_hidden: Tensor) -> Tensor:
         query = self.latent_to_model(latent) + self.slot_identity[None]
         context, _ = self.read(query, previous_hidden, previous_hidden, need_weights=False)
+        return self.model_to_latent(context)
+
+    def forward(self, latent: Tensor, previous_hidden: Tensor) -> Tensor:
+        context = self._context(latent, previous_hidden)
         combined = torch.cat((latent, context), dim=-1)
         # Slot identity must affect the first write even when Z_0 and H_0 are
         # both zero; otherwise every slot remains exactly symmetric.
         candidate = self.candidate(combined) + self.slot_identity_latent[None]
-        gate = torch.sigmoid(self.gate(combined))
-        return self.norm((1 - gate) * latent + gate * candidate)
+        gate = torch.sigmoid(self.gate(combined) + self.gate_bias)
+        return self.norm(latent + self.residual_scale * gate * candidate)
 
 
 class StreamingLatentLoop(nn.Module):
@@ -61,7 +68,11 @@ class StreamingLatentLoop(nn.Module):
             dim, config.audio_tokens, config.audio_kernel, config.audio_stride
         )
         self.vision_encoder = VisionEncoder(dim)
-        self.time_encoder = TimeEncoder(dim)
+        self.delta_time_encoder = DeltaTimeEncoder(
+            dim,
+            bands=config.delta_time_fourier_bands,
+            base_period_ms=config.delta_time_base_period_ms,
+        )
         self.type_embedding = nn.Embedding(4, dim)
         self.state_query = nn.Parameter(torch.zeros(dim))
         self.latent_reader = nn.Linear(config.latent_dim, dim)
@@ -76,7 +87,7 @@ class StreamingLatentLoop(nn.Module):
             for index in range(config.num_layers)
         )
         self.final_norm = nn.LayerNorm(dim)
-        self.latent_updater = LatentUpdater(
+        self.world_state_update = WorldStateUpdate(
             dim, config.latent_dim, config.num_heads, config.latent_slots
         )
         self.speech_head = FactorizedSpeechHead(config)
@@ -131,8 +142,10 @@ class StreamingLatentLoop(nn.Module):
             unit_index=torch.zeros(batch_size, device=device, dtype=torch.long),
         )
 
-    def _pack_unit(self, unit: StreamUnit, audio: Tensor, vision: Tensor) -> Tensor:
-        time = self.time_encoder(unit.timestamp_ms, unit.delta_ms)
+    def _pack_unit(
+        self, unit: StreamUnit, audio: Tensor, vision: Tensor, delta_time: Tensor
+    ) -> Tensor:
+        time = delta_time
         query = self.state_query[None, None].expand(unit.batch_size, -1, -1)
         time = time + self.type_embedding.weight[0]
         audio = audio + self.type_embedding.weight[1]
@@ -153,8 +166,9 @@ class StreamingLatentLoop(nn.Module):
     ) -> StepOutput:
         audio, audio_cache = self.audio_encoder(unit.mic_audio, state.audio_cache)
         vision = self.vision_encoder(unit.screen)
-        encoded = self._pack_unit(unit, audio, vision)
-        updated_latent = self.latent_updater(state.latent, state.hidden)
+        updated_latent = self.world_state_update(state.latent, state.hidden)
+        delta_time = self.delta_time_encoder(unit.delta_ms)
+        encoded = self._pack_unit(unit, audio, vision, delta_time)
         latent_for_read = self.latent_reader(updated_latent)
         new_caches: list[LayerKV] = []
         temporal_tokens = self.config.temporal_kv_units * (self.config.audio_tokens + 2)

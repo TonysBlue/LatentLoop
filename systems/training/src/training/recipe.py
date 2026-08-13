@@ -101,7 +101,7 @@ def _checkpoint_matches(path: Path, config: ProjectConfig) -> bool:
 
         payload = torch.load(path, map_location="cpu", weights_only=False)
         return (
-            payload.get("format_version") == 7
+            payload.get("format_version") == 8
             and payload.get("config_hash") == config_hash(config.as_dict())
             and payload.get("metadata", {}).get("data_identity") == _data_identity(config)
             and payload.get("metadata", {}).get("codec_id") == config.data.codec_id
@@ -147,8 +147,8 @@ def _require_parent_stage(path: Path, *, stage: str, objective: str) -> None:
         payload = torch.load(path, map_location="cpu", weights_only=False)
     except (OSError, RuntimeError, ValueError, TypeError) as error:
         raise ValueError(f"cannot inspect parent checkpoint {path}: {error}") from error
-    if payload.get("format_version") != 7:
-        raise ValueError("formal stage parent checkpoint must use format version 7")
+    if payload.get("format_version") != 8:
+        raise ValueError("formal stage parent checkpoint must use format version 8")
     metadata = payload.get("metadata", {})
     if metadata.get("stage") != stage or metadata.get("objective") != objective:
         raise ValueError(

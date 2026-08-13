@@ -43,8 +43,8 @@ class ModelService:
         self.model = StreamingLatentLoop(config.model).to(self.device)
         if checkpoint:
             payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
-            if payload.get("format_version") != 7:
-                raise ValueError("model service requires a format v7 checkpoint")
+            if payload.get("format_version") != 8:
+                raise ValueError("model service requires a format v8 checkpoint")
             if payload.get("metadata", {}).get("action_schema_id") != config.model.action_schema_id:
                 raise ValueError("checkpoint action schema does not match model service")
             weights = payload.get("model")

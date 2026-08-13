@@ -7,6 +7,8 @@ dependencies.
 
 from model.action import ActionHead, action_frame_log_prob, action_log_prob_components
 from model.core import FactorizedSpeechHead, StreamingLatentLoop
+from model.encoders import DeltaTimeEncoder
+from model.latentloop import WorldStateUpdate
 from model.losses import compute_losses
 from model.types import (
     ActionFrame,
@@ -26,7 +28,9 @@ from model.types import (
 __all__ = [
     "ActionFrame", "ActionHead", "ActionHeadOutput", "ActionLocalState", "Episode",
     "FactorizedSpeechHead",
+    "DeltaTimeEncoder",
     "GenerationOutput", "LayerKV", "RecurrentState", "SpeechLocalState", "SpeechMode",
     "SpeechSamplingConfig", "StepOutput", "StreamUnit", "StreamingLatentLoop",
+    "WorldStateUpdate",
     "action_frame_log_prob", "action_log_prob_components", "compute_losses",
 ]

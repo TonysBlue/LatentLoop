@@ -307,7 +307,7 @@ def train(
                     recurrent = None
                 # A memory horizon is one autograd segment: detaching at a
                 # shorter sampling window would sever future action/speech
-                # supervision from MemoryUpdater.
+                # supervision from WorldStateUpdate.
                 chunk_size = config.training.memory_horizon_units
                 for chunk_start in range(unit_start, len(episode.units), chunk_size):
                     if train_state["update"] >= target_updates:
@@ -578,8 +578,8 @@ def train(
 
 def initialize_compatible_weights(model: StreamingLatentLoop, path: str | Path) -> list[str]:
     payload = torch.load(Path(path), map_location="cpu", weights_only=False)
-    if payload.get("format_version") != 7:
-        raise ValueError("initial checkpoint must use format version 7")
+    if payload.get("format_version") != 8:
+        raise ValueError("initial checkpoint must use format version 8")
     metadata = payload.get("metadata", {})
     if metadata.get("action_schema_id") != ACTION_SCHEMA_ID:
         raise ValueError("initial checkpoint action schema is incompatible")
@@ -614,7 +614,7 @@ def configure_trainable_parameters(model: StreamingLatentLoop, config: ProjectCo
     head_prefixes = ("speech_head.", "action_head.")
     selective_prefixes = (
         "audio_encoder.",
-        "latent_updater.",
+        "world_state_update.",
         "final_norm.",
     )
     first_top_layer = max(0, config.model.num_layers * 3 // 4)

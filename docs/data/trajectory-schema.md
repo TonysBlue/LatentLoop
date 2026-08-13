@@ -70,7 +70,7 @@ GRPO ratio 以 frame joint probability 为 action 单位；kind-conditioned 参�
 
 ## 3. Checkpoint identity
 
-checkpoint format v7 锁定 schema version、action schema ID、32x32 coordinate grid、每 unit
+checkpoint format v8 锁定 schema version、action schema ID、32x32 coordinate grid、每 unit
 16 TYPE bytes、最多 8 HOTKEY keys 和 key table identity。旧 flat Action Head checkpoint 直接
 拒绝 resume/warm-start。
 

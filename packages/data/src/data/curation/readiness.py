@@ -173,8 +173,8 @@ def check_readiness(
         if checkpoint.is_file():
             try:
                 payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
-                if payload.get("format_version") != 7:
-                    invalid.append("initial checkpoint must use format version 7")
+                if payload.get("format_version") != 8:
+                    invalid.append("initial checkpoint must use format version 8")
                 metadata = payload.get("metadata", {})
                 if metadata.get("codec_id") != config.data.codec_id:
                     invalid.append("initial checkpoint codec_id differs from Pilot config")

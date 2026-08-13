@@ -10,6 +10,17 @@ def test_load_config_with_override() -> None:
     assert config.model.tokens_per_unit == config.model.audio_tokens + 18
     assert config.data.unit_ms == 80
     assert config.data.codec_frame_rate == 12.5
+    assert config.model.delta_time_fourier_bands == 8
+    assert config.model.delta_time_base_period_ms == 80
+
+
+def test_world_state_and_delta_time_configuration_is_bounded() -> None:
+    config = load_config("configs/smoke.yaml")
+    assert config.model.world_state_update_type == "gated_residual"
+    with pytest.raises(ValueError, match="Fourier bands"):
+        load_config("configs/smoke.yaml", ["model.delta_time_fourier_bands=0"])
+    with pytest.raises(ValueError, match="base period"):
+        load_config("configs/smoke.yaml", ["model.delta_time_base_period_ms=0"])
 
 
 def test_local_dev_and_production_profiles_are_explicit() -> None:

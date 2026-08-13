@@ -36,6 +36,8 @@ class CheckpointMetadata:
     stage: str = "pretrain"
     objective: str = "supervised"
     action_schema_id: str = "structured-action-v1"
+    world_state_update_version: str = "gated-residual-v1"
+    delta_time_encoder_version: str = "fourier-delta-v1"
     reference_checkpoint_sha256: str | None = None
     environment_id: str | None = None
     task_manifest_sha256: str | None = None
@@ -138,7 +140,7 @@ class CheckpointManager:
     ) -> tuple[Path, str]:
         target = self.directory / f"{name}.pt"
         payload = {
-            "format_version": 7,
+            "format_version": 8,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
@@ -236,8 +238,8 @@ class CheckpointManager:
         expected_metadata: CheckpointMetadata,
     ) -> tuple[dict[str, Any], DataCursor, RecurrentState | None, CheckpointMetadata]:
         payload = torch.load(Path(path), map_location=device, weights_only=False)
-        if payload.get("format_version") != 7:
-            raise ValueError("unsupported checkpoint format; dense visual state requires v7")
+        if payload.get("format_version") != 8:
+            raise ValueError("unsupported checkpoint format; abstract world state requires v8")
         if payload["config_hash"] != config_hash(config):
             raise ValueError("checkpoint configuration does not match the current run")
         restored_metadata = CheckpointMetadata(**payload["metadata"])
@@ -250,6 +252,8 @@ class CheckpointManager:
             "stage",
             "objective",
             "action_schema_id",
+            "world_state_update_version",
+            "delta_time_encoder_version",
             "reference_checkpoint_sha256",
             "environment_id",
             "task_manifest_sha256",

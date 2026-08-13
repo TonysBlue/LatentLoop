@@ -23,6 +23,9 @@ class ModelConfig:
     temporal_kv_units: int = 750
     vision_kv_units: int = 100
     latent_slots: int = 8
+    world_state_update_type: str = "gated_residual"
+    delta_time_fourier_bands: int = 8
+    delta_time_base_period_ms: int = 80
     # Production streaming profile retains the most recent 60 seconds.
     kv_units: int = 750
     kv_window_ms: int = 60_000
@@ -175,6 +178,12 @@ class ProjectConfig:
             )
         if self.model.vision_tokens != 16 or self.model.vision_kv_units < 1:
             raise ValueError("vision_tokens must be 16 and vision_kv_units must be positive")
+        if self.model.world_state_update_type != "gated_residual":
+            raise ValueError("world_state_update_type must be gated_residual")
+        if self.model.delta_time_fourier_bands < 1:
+            raise ValueError("delta time Fourier bands must be positive")
+        if self.model.delta_time_base_period_ms < 1:
+            raise ValueError("delta time base period must be positive")
         if self.model.action_schema_id != "structured-action-v1":
             raise ValueError("model.action_schema_id must be structured-action-v1")
         if self.model.action_coordinate_grid_size != 32:
