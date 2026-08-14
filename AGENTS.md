@@ -265,16 +265,12 @@ changes or rewrite generated artifacts.
 设计脉络和迁移说明，不能用一份简化摘要替代完整文档。涉及架构变更时，
 先刷新文档和测试设计，再开始代码实现。
 
-文档职责必须保持清晰：`docs/latent-loop-architecture.md` 是“文本 token 输出”的
-纯文本和数学设计方案，只描述 LatentLoop 的模型思想、状态转移、信息分工、
-训练监督和可验证假设，不描述本项目的 Speech Head、Action Head、Mimi、屏幕
-或实时运行时契约。它应在原文基础上修正，不承担项目实现手册职责。
-`docs/realtime-multimodal-latent-loop.md` 是本项目的顶层架构文档，必须与当前
+文档职责必须保持清晰：`docs/realtime-multimodal-latent-loop.md` 是本项目的
+顶层架构文档，必须与当前
 实现、数据协议、训练目标、运行时状态和最终目标方案一致；Speech Head 的专项
 协议见 `docs/direct-speech.md`，统一电脑操控输出空间的专项协议见
-`docs/unified-action.md`。顶层架构文档不得停留在脱离代码的研究草案，也不得把
-纯文本方案文档的讨论内容直接当作实现契约。两份文档都保留完整结构和中文表达，
-但应分别维护各自职责，删除历史内容时不得混淆文档层级。
+`docs/unified-action.md`。顶层架构文档不得停留在脱离代码的研究草案，且应保留
+完整结构和中文表达。
 
 三阶段训练的专项契约由 `docs/three-stage-training.md` 描述，在线 GRPO、真实
 隔离环境和 reward 协议由 `docs/online-grpo-training.md` 描述。它们是最终系统

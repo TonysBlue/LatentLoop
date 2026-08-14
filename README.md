@@ -7,8 +7,7 @@ TBPTT、精确断点恢复、WebDataset、CPU-only Ray 任务和 W&B Local。
 完整架构见 `docs/realtime-multimodal-latent-loop.md`，本地训练设计见
 `docs/local-training-platform.md`。直接流式语音的实现与运行命令见
 `docs/direct-speech.md`；统一电脑操控的 Action Head 协议见
-`docs/unified-action.md`。纯文本 token 输出的 LatentLoop 研究方案见
-`docs/latent-loop-architecture.md`。
+`docs/unified-action.md`。
 
 ## 环境初始化
 
