@@ -271,6 +271,12 @@ UTF-8 pending bytes 跨 unit。Harness 负责 schema、安全和权限校验。
 
 Smoke 只缩小 model_dim、layers、screen shape、KV horizon 和数据量，用于张量、梯度、数据和恢复测试。它仍使用 80 ms unit、相同状态转移和相同 loss 代码。
 
+三阶段 Smoke 使用 `configs/recipes/smoke.yaml` 和 `configs/stages/smoke-*.yaml`，通过公共
+recipe runner 顺序执行 Pretrain、SFT 与 Online Recurrent PPO。监督阶段使用显式 synthetic
+episode；RL 阶段只允许测试进程提供的 test-only Harness、codec 和 Reward Judge socket，
+并继续传输规范的 `ObservationSignal`/`ActuationSignal`。该配置用于验证训练分派、在线窗口、
+checkpoint 谱系和 evaluation/report 闭环，不得作为 Canary、Pilot 或 Production 的环境回退。
+
 ### 8.2 Local
 
 Local profile 用于单 GPU 完整结构验证，包含音频/视觉 encoder、latent updater、750-unit 生产形状可配置的 KV、两个 output heads、checkpoint 和 W&B。

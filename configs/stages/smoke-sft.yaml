@@ -1,0 +1,13 @@
+defaults:
+  - ../smoke
+  - _self_
+data:
+  audio_sample_rate: 24000
+  unit_audio_samples: 1920
+  train_episodes: 1
+training:
+  stage: sft
+  max_updates: 1
+  checkpoint_every: 1
+runtime:
+  run_name: smoke-sft

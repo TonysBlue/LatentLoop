@@ -61,8 +61,20 @@ class ActionFrame:
             hotkey_length=torch.zeros(batch, dtype=torch.long, device=device),
         )
 
-    def to(self, device: torch.device | str) -> ActionFrame:
-        return ActionFrame(**{name: value.to(device) for name, value in self.items()})
+    def to(
+        self,
+        device: torch.device | str,
+        dtype: torch.dtype | None = None,
+    ) -> ActionFrame:
+        return ActionFrame(
+            **{
+                name: value.to(
+                    device=device,
+                    dtype=dtype if dtype is not None and value.is_floating_point() else value.dtype,
+                )
+                for name, value in self.items()
+            }
+        )
 
     def detach(self) -> ActionFrame:
         return ActionFrame(**{name: value.detach() for name, value in self.items()})
@@ -221,17 +233,21 @@ class StreamUnit:
     def batch_size(self) -> int:
         return self.mic_audio.shape[0]
 
-    def to(self, device: torch.device | str) -> StreamUnit:
+    def to(
+        self,
+        device: torch.device | str,
+        dtype: torch.dtype | None = None,
+    ) -> StreamUnit:
         return StreamUnit(
             timestamp_ms=self.timestamp_ms.to(device),
             delta_ms=self.delta_ms.to(device),
-            mic_audio=self.mic_audio.to(device),
-            screen=self.screen.to(device),
+            mic_audio=self.mic_audio.to(device=device, dtype=dtype),
+            screen=self.screen.to(device=device, dtype=dtype),
             speech_mode=self.speech_mode.to(device),
             speech_mode_mask=self.speech_mode_mask.to(device),
             speech_codes=self.speech_codes.to(device),
             speech_codec_mask=self.speech_codec_mask.to(device),
-            action=self.action.to(device),
+            action=self.action.to(device, dtype=dtype),
             action_supervision_mask=self.action_supervision_mask.to(device),
         )
 

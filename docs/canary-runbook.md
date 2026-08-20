@@ -63,6 +63,9 @@ worker。
 需要定位问题或观察产物时使用：
 
 ```bash
+# 0. 先通过测试专用物理协议实现验证公共三阶段 recipe、谱系和评估闭环
+uv run pytest -q tests/integration/test_three_stage_smoke_recipe.py
+
 # 1. 下载并校验真实语料、CosyVoice2 和 SenseVoice
 scripts/prepare-data.sh canary bootstrap
 

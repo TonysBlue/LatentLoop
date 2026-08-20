@@ -1,0 +1,27 @@
+defaults:
+  - ../smoke
+  - _self_
+data:
+  audio_sample_rate: 24000
+  unit_audio_samples: 1920
+  train_episodes: 1
+training:
+  stage: rl
+  max_updates: 1
+  checkpoint_every: 1
+  rl:
+    ppo_window_units: 8
+    candidate_max_reference_kl: 1000000000
+    candidate_max_eval_loss_ratio: 1000000000
+    environment_socket: ~/latentloop-data/runtime/smoke-test-only/harness.sock
+    codec_socket: ~/latentloop-data/runtime/smoke-test-only/codec.sock
+    reward_socket: ~/latentloop-data/runtime/smoke-test-only/reward.sock
+    environment_id: test-physical
+    environment_version: "1"
+    environment_protocol_version: realtime-v2
+    judge_revision: test-only
+    rubric_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    timeline_root: ~/latentloop-data/runtime/smoke-test-only/timeline
+    session_manifest: ~/latentloop-data/runtime/smoke-test-only/sessions.jsonl
+runtime:
+  run_name: smoke-rl

@@ -141,6 +141,14 @@ def test_formal_ppo_readiness_requires_sft_guard_assets(tmp_path: Path) -> None:
         check_readiness(tmp_path, config=config)
 
 
+def test_readiness_reports_a_missing_data_root_cleanly(tmp_path: Path) -> None:
+    config = load_config("configs/canary.yaml")
+    missing = tmp_path / "absent-datasets"
+
+    with pytest.raises(ValueError, match=f"data root: {missing}"):
+        check_readiness(missing, config=config)
+
+
 def test_production_text_plan_meets_scale_and_duration_mix(tmp_path: Path) -> None:
     root = tmp_path / "datasets"
     report = build_pilot_text(root, dataset="pilot")

@@ -1203,6 +1203,9 @@ def train_online_ppo(
         config.training.max_updates,
         stop_after_updates if stop_after_updates is not None else config.training.max_updates,
     )
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    training_started = time.perf_counter()
     from data import ObservationTimeline, PolicySampleTrace
     from harness.reward import PerceptualRewardClient, SingleActiveGoalTracker
 
@@ -1553,7 +1556,7 @@ def train_online_ppo(
                 last_metrics = {
                     **result.metrics,
                     "rl/finalization_lag_units": float(
-                        window_end - finalized_through
+                        max(observation.unit_index - 1 - finalized_through, 0)
                     ),
                     "data/consumed_units": float(train_state["consumed_units"]),
                     "rl/sealed_windows": float(train_state["candidate_attempts"]),
@@ -1595,6 +1598,19 @@ def train_online_ppo(
             env.close()
     assert checkpoint_path is not None and checkpoint_digest is not None
     tracker.finish()
+    elapsed = time.perf_counter() - training_started
+    last_metrics.update(
+        {
+            "runtime/elapsed_seconds": elapsed,
+            "runtime/units_per_second": train_state["consumed_units"] / max(elapsed, 1e-9),
+            "runtime/peak_memory_allocated_bytes": (
+                float(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else 0.0
+            ),
+            "runtime/peak_memory_reserved_bytes": (
+                float(torch.cuda.max_memory_reserved(device)) if device.type == "cuda" else 0.0
+            ),
+        }
+    )
     last_metrics["checkpoint/sha256"] = checkpoint_digest
     return {
         "train_state": train_state,

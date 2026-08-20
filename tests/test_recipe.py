@@ -29,6 +29,18 @@ def test_stage_configs_inherit_complete_profiles() -> None:
     assert production.model.model_dim == 896
 
 
+def test_smoke_recipe_uses_the_shared_three_stage_contract() -> None:
+    recipe = load_recipe("configs/recipes/smoke.yaml")
+    configs = [load_config(Path("configs/recipes") / stage.config) for stage in recipe.stages]
+
+    assert recipe.dataset == "synthetic"
+    assert [stage.name for stage in recipe.stages] == ["pretrain", "sft", "rl"]
+    assert [config.training.stage for config in configs] == ["pretrain", "sft", "rl"]
+    assert all(config.training.backbone_train_mode == "all" for config in configs)
+    assert configs[-1].training.rl.algorithm == "online_recurrent_ppo"
+    assert configs[-1].training.rl.environment_id == "test-physical"
+
+
 @pytest.mark.parametrize("scale", ["canary", "pilot", "production"])
 def test_formal_recipes_have_the_same_three_stages(scale: str) -> None:
     recipe = load_recipe(f"configs/recipes/{scale}.yaml")

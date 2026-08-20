@@ -155,3 +155,17 @@ Canary 是完整训练链的小规模证明，不是删减版算法。它同样�
   serving policy 不变；
 - resume 校验完整谱系和当前模型状态，并拒绝不完整 checkpoint；
 - Canary、Pilot、Production 通过同一 recipe 和 train 分派路径。
+
+除上述单项契约外，`configs/recipes/smoke.yaml` 必须通过公共
+`scripts/run-training.sh -> training run-recipe -> recipe.py::run_recipe ->
+training.py::train` 路径真实执行一次 `Pretrain -> SFT -> Online RL`。该 recipe 仅使用
+显式 `dataset=synthetic` 数据，并在测试进程中连接实现相同 socket/物理信号协议的
+test-only Harness、codec 与 Reward Judge；它必须产出三个阶段的 checkpoint、逐阶段
+validation、最终 test 和 recipe report，并校验 SFT 父节点为 Pretrain、Online RL 的父节点
+及冻结 reference 均为最终 SFT。该测试闭环不是正式 Canary 的环境或数据替代品，正式
+recipe 仍必须连接真实数据资产与隔离 QEMU/KVM 环境，任何缺失都 fail closed。
+
+三个阶段的训练结果必须使用一致的运行观测字段：optimizer update、consumed units、elapsed
+seconds、units/second、peak allocated/reserved device memory 和 tracking 实际模式。Pretrain/SFT
+另外报告 speech/action supervision density；Online RL 报告 reward、finalization lag、sealed/dropped
+window、candidate acceptance 与 reference/preservation gate。所有 lag 指标必须为非负值。

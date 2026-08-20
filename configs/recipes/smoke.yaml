@@ -1,0 +1,12 @@
+name: smoke
+dataset: synthetic
+stages:
+  - name: pretrain
+    config: ../stages/smoke-pretrain.yaml
+  - name: sft
+    config: ../stages/smoke-sft.yaml
+  - name: rl
+    config: ../stages/smoke-rl.yaml
+evaluation:
+  validation_after_each_stage: true
+  test_after_final_stage: true

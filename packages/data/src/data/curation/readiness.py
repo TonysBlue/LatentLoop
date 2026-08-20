@@ -44,6 +44,8 @@ def check_readiness(
     if dataset not in {"canary", "pilot", "production", "direct-speech-overfit"}:
         raise ValueError(f"readiness is not required for dataset={dataset!r}")
     root = Path(root).expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError(f"training readiness failed: data root: {root}")
     dataset_root = (
         root / "gates" / "direct-speech-overfit"
         if dataset == "direct-speech-overfit"

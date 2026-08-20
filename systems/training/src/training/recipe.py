@@ -18,6 +18,7 @@ from training.evaluation import build_evaluation_report, evaluate_checkpoint
 from training.training import train
 
 _FORMAL_STAGES = ("pretrain", "sft", "rl")
+_THREE_STAGE_DATASETS = {"synthetic", "canary", "pilot", "production"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,16 +204,16 @@ def run_recipe(
 ) -> dict[str, Any]:
     recipe_path = Path(path).expanduser().resolve()
     recipe = load_recipe(recipe_path)
-    if recipe.dataset in {"canary", "pilot", "production"}:
+    if recipe.dataset in _THREE_STAGE_DATASETS:
         if tuple(stage.name for stage in recipe.stages) != _FORMAL_STAGES:
-            raise ValueError("formal recipes must contain pretrain -> sft -> rl")
+            raise ValueError("three-stage recipes must contain pretrain -> sft -> rl")
     selected_run_id = (
         run_id or recipe.run_id or os.environ.get("LATENTLOOP_RUN_ID") or _new_run_id()
     )
     if not selected_run_id.replace("-", "").replace("_", "").isalnum():
         raise ValueError("run_id may contain only letters, numbers, hyphens and underscores")
-    if recipe.dataset not in {"canary", "pilot", "production", "direct-speech-overfit"}:
-        raise ValueError(f"recipe dataset is not a real training dataset: {recipe.dataset}")
+    if recipe.dataset not in _THREE_STAGE_DATASETS | {"direct-speech-overfit"}:
+        raise ValueError(f"recipe dataset is not supported: {recipe.dataset}")
     parent = Path(recipe.initial_checkpoint).expanduser() if recipe.initial_checkpoint else None
     reports: list[dict[str, Any]] = []
     for index, stage in enumerate(recipe.stages):
@@ -224,9 +225,7 @@ def run_recipe(
                 f"recipe {recipe.dataset!r}"
             )
         expected_stage = (
-            stage.name
-            if recipe.dataset in {"canary", "pilot", "production"}
-            else config.training.stage
+            stage.name if recipe.dataset in _THREE_STAGE_DATASETS else config.training.stage
         )
         if config.training.stage != expected_stage:
             raise ValueError(
@@ -278,7 +277,7 @@ def run_recipe(
             parent = final_checkpoint
             continue
         init_from = None if resume else (str(parent) if parent else None)
-        if recipe.dataset in {"canary", "pilot", "production"} and init_from:
+        if recipe.dataset in _THREE_STAGE_DATASETS and init_from:
             required_parent = "pretrain" if stage.name == "sft" else "sft"
             _require_parent_stage(Path(init_from), stage=required_parent)
         result = train(config, resume=resume, init_from=init_from)

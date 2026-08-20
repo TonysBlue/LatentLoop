@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 
 import torch
-from data import EpisodeShardReader
+from data import EpisodeShardReader, SyntheticEpisodeDataset
 from model import StreamingLatentLoop
 from model.types import SpeechMode
 from runtime.config import ProjectConfig
@@ -90,22 +90,23 @@ def evaluate_checkpoint(
     del control_f1_threshold
     selected_device = torch.device(device or ("cuda:0" if torch.cuda.is_available() else "cpu"))
     model = load_evaluation_model(config, checkpoint, selected_device, require_data_identity=False)
-    if not config.data.shards:
-        raise ValueError("evaluation requires WebDataset shards")
+    if config.data.source == "synthetic":
+        episodes_source = SyntheticEpisodeDataset(config.data, config.model)
+    else:
+        if not config.data.shards:
+            raise ValueError("evaluation requires WebDataset shards")
+        episodes_source = EpisodeShardReader(config.data.shards, config.data, config.model)
     mode_correct = mode_total = action_correct = action_total = 0
     codec_correct = torch.zeros(config.model.speech_codebooks, dtype=torch.long)
     codec_total = 0
     silence_tp = silence_pred = silence_target = 0
     episodes = 0
     with torch.inference_mode():
-        for episode in EpisodeShardReader(config.data.shards, config.data, config.model):
+        for episode in episodes_source:
             episodes += 1
             state = model.initial_state(1, selected_device)
             for raw_unit in episode.units:
-                unit = raw_unit.to(selected_device)
-                if selected_device.type == "cuda":
-                    unit.mic_audio = unit.mic_audio.half()
-                    unit.screen = unit.screen.half()
+                unit = raw_unit.to(selected_device, dtype=next(model.parameters()).dtype)
                 output = model(
                     unit,
                     state,
