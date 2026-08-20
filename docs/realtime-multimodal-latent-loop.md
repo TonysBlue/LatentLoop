@@ -248,7 +248,7 @@ vocabulary           2048
 轨迹记录。当前观察间隔通过 DeltaTimeEncoder 进入 Backbone：
 
 $$
-T_t^{\Delta} = \operatorname{DeltaTimeEncoder}(\Delta t_t)
+T_t^{\Delta} = \mathrm{DeltaTimeEncoder}(\Delta t_t)
 $$
 
 DeltaTimeEncoder 使用 log-scaled interval 和多尺度 Fourier 特征：
@@ -329,10 +329,10 @@ Backbone，形成的 `H_t` 在下一轮影响 `Z_(t+1)`。
 $$
 \begin{aligned}
 Q_{t-1} &= W_q(Z_{t-1}) + I_{slot},\\
-C_{t-1} &= \operatorname{Attention}(Q_{t-1}, H_{t-1}, H_{t-1}),\\
-\Delta Z_{t-1} &= \operatorname{Candidate}(Z_{t-1}, C_{t-1}),\\
-G_{t-1} &= \sigma\left(\operatorname{Gate}(Z_{t-1}, C_{t-1}) - 2\right),\\
-Z_t &= \operatorname{LayerNorm}\left(Z_{t-1} + 0.1\,G_{t-1}\odot\Delta Z_{t-1}\right).
+C_{t-1} &= \mathrm{Attention}(Q_{t-1}, H_{t-1}, H_{t-1}),\\
+\Delta Z_{t-1} &= \mathrm{Candidate}(Z_{t-1}, C_{t-1}),\\
+G_{t-1} &= \sigma\left(\mathrm{Gate}(Z_{t-1}, C_{t-1}) - 2\right),\\
+Z_t &= \mathrm{LayerNorm}\left(Z_{t-1} + 0.1 G_{t-1}\odot\Delta Z_{t-1}\right).
 \end{aligned}
 $$
 

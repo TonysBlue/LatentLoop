@@ -250,7 +250,7 @@ per-slot/per-dimension gate。WorldStateUpdate 不接收 `delta_t`、当前 audi
 进入 Backbone：
 
 $$
-T_t^{\Delta} = \operatorname{DeltaTimeEncoder}(\Delta t_t)
+T_t^{\Delta} = \mathrm{DeltaTimeEncoder}(\Delta t_t)
 $$
 
 `WorldStateUpdate(Z_(t-1), H_(t-1))` 的接口不包含 `delta_t`。

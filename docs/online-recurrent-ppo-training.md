@@ -137,7 +137,7 @@ $$
 
 $$
 L_{\mathrm{actor}}=-\mathbb{E}\left[\min(\rho_tA_t,
-\operatorname{clip}(\rho_t,1-\epsilon,1+\epsilon)A_t)\right]
+\mathrm{clip}(\rho_t,1-\epsilon,1+\epsilon)A_t)\right]
 $$
 
 $$
