@@ -20,6 +20,7 @@ from model.types import (
     StepOutput,
     StreamUnit,
 )
+from model.value import ValueHead
 
 
 class WorldStateUpdate(nn.Module):
@@ -92,6 +93,7 @@ class StreamingLatentLoop(nn.Module):
         )
         self.speech_head = FactorizedSpeechHead(config)
         self.action_head = ActionHead(config)
+        self.value_head = ValueHead(config.model_dim, config.latent_dim)
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
@@ -225,6 +227,10 @@ class StreamingLatentLoop(nn.Module):
         speech_mode_logits = self.speech_head.mode_logits(hidden)
         if speech_teacher_mode is not None:
             mode = speech_teacher_mode
+        elif sampling is not None and not sampling.greedy and sampling.temperature > 0:
+            mode = torch.multinomial(
+                torch.softmax(speech_mode_logits / sampling.temperature, dim=-1), 1
+            ).squeeze(-1)
         else:
             mode = speech_mode_logits.argmax(dim=-1)
         if speech_teacher_codes is not None:
@@ -262,6 +268,8 @@ class StreamingLatentLoop(nn.Module):
             speech_codec_logits=speech_codec_logits,
             action=action,
             hidden=hidden,
+            value=self.value_head(hidden, updated_latent),
+            selected_speech_mode=mode,
         )
 
     def forward(
@@ -290,7 +298,7 @@ class StreamingLatentLoop(nn.Module):
         output = self.forward_step(unit, state, sampling=sampling)
         return GenerationOutput(
             output=output,
-            speech_mode=output.speech_mode_logits.argmax(dim=-1),
+            speech_mode=output.selected_speech_mode,
             speech_codes=output.state.speech_local.previous_codes[:, None],
             action_frame=output.action.frame,
         )

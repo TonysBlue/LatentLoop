@@ -214,7 +214,7 @@ def run_recipe(
                 f"recipe {recipe.dataset!r}"
             )
         expected_stage, expected_objective = (
-            (stage.name, "grpo" if stage.name == "rl" else "supervised")
+            (stage.name, "ppo" if stage.name == "rl" else "supervised")
             if recipe.dataset in {"canary", "pilot", "production"}
             else (config.training.stage, config.training.objective)
         )

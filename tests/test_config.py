@@ -34,16 +34,49 @@ def test_local_dev_and_production_profiles_are_explicit() -> None:
 
 def test_training_stage_and_objective_must_match() -> None:
     with pytest.raises(ValueError, match="supervised objective"):
-        load_config("configs/smoke.yaml", ["training.stage=pretrain", "training.objective=grpo"])
-    with pytest.raises(ValueError, match="GRPO objective"):
+        load_config("configs/smoke.yaml", ["training.stage=pretrain", "training.objective=ppo"])
+    with pytest.raises(ValueError, match="PPO objective"):
         load_config("configs/smoke.yaml", ["training.stage=rl", "training.objective=supervised"])
+    with pytest.raises(ValueError, match="supervised or ppo"):
+        load_config("configs/smoke.yaml", ["training.stage=rl", "training.objective=obsolete"])
 
 
 def test_formal_rl_requires_real_environment_configuration() -> None:
-    with pytest.raises(ValueError, match="environment_socket"):
+    with pytest.raises(ValueError, match="environment, codec and reward sockets"):
         load_config(
             "configs/canary.yaml",
-            ["training.stage=rl", "training.objective=grpo", "training.rl.environment_socket=null"],
+            ["training.stage=rl", "training.objective=ppo", "training.rl.environment_socket=null"],
+        )
+    with pytest.raises(ValueError, match="SFT guard datasets"):
+        load_config(
+            "configs/canary.yaml",
+            ["training.stage=rl", "training.objective=ppo", "training.rl.sft_replay_shards=null"],
+        )
+
+
+@pytest.mark.parametrize("profile", ["canary", "pilot", "production"])
+def test_formal_rl_environment_identity_matches_harness_service(profile: str) -> None:
+    training = load_config(f"configs/{profile}.yaml")
+    assert training.training.rl.environment_id == "isolated-qemu-v1"
+
+
+def test_ppo_candidate_acceptance_gates_are_validated() -> None:
+    with pytest.raises(ValueError, match="candidate acceptance gates"):
+        load_config(
+            "configs/smoke.yaml",
+            ["training.rl.candidate_max_eval_loss_ratio=0.9"],
+        )
+    with pytest.raises(ValueError, match="PPO window"):
+        load_config("configs/smoke.yaml", ["training.rl.ppo_epochs=1"])
+    with pytest.raises(ValueError, match="full-support"):
+        load_config(
+            "configs/smoke.yaml",
+            ["training.stage=rl", "training.objective=ppo", "training.rl.sampling_top_k=4"],
+        )
+    with pytest.raises(ValueError, match="locked Judge revision"):
+        load_config(
+            "configs/smoke.yaml",
+            ["training.stage=rl", "training.objective=ppo"],
         )
 
 
@@ -55,6 +88,11 @@ def test_config_rejects_incompatible_attention_width() -> None:
 def test_direct_speech_requires_one_codec_frame_per_tick() -> None:
     with pytest.raises(ValueError, match="exactly one speech frame"):
         load_config("configs/smoke.yaml", ["model.speech_frames_per_unit=2"])
+
+
+def test_audio_convolution_frames_must_divide_into_tokens() -> None:
+    with pytest.raises(ValueError, match="audio convolution frames"):
+        load_config("configs/smoke.yaml", ["model.audio_tokens=3"])
 
 
 def test_config_rejects_removed_speech_control_weights() -> None:

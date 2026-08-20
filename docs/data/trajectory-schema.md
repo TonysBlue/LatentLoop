@@ -1,6 +1,6 @@
 # 当前轨迹契约
 
-监督 episode、SFT 样本和 Online GRPO rollout 统一使用当前轨迹契约。项目只维护这一份
+监督 episode、SFT 样本和 Online Recurrent PPO window 统一使用当前轨迹契约。项目只维护这一份
 数据契约，不维护 schema 编号或历史迁移路径。
 
 每个 `meta.json` 和 manifest entry 必须包含 `dataset_scale`、
@@ -24,8 +24,8 @@ action_hotkey_keys[8], action_hotkey_length
 `action_supervision_mask=false`。参数 mask 由 kind 和 length 确定，不在数据中保存重复
 mask。TYPE continuation 属于按时间线重放得到的 Action local state，不增加公开 frame 字段。
 
-decoded `ControlSignal`、`EnvironmentReceipt`、`RewardBreakdown` 仅作为审计和 rollout
-lineage 的 control-plane metadata，reader 不得把它们拼入模型输入。processed sample 必须
+decoded `ControlSignal`、`EnvironmentReceipt` 仅作为审计 metadata；`RewardEvent` 只属于
+在线训练 lineage。reader 不得把它们拼入模型输入。processed sample 必须
 记录 `speech_codes_encoded=true`、unit 数、持续时间和 content SHA-256。
 
 数据准备从 source manifest 直接构建当前 staging/processed shards，经 Mimi worker 和
@@ -60,12 +60,13 @@ class StreamUnit:
 输入适配器提供全黑帧并记录控制面统计；模型输入不包含 revision 或 valid 标记。reader 必须
 校验 kind 条件参数、TYPE/HOTKEY length、数值边界和 episode 时间顺序。
 
-## 2. Online rollout
+## 2. Lifetime rollout window
 
-每个 rollout unit 记录 sampled ActionFrame、frame joint old/reference log-prob、解码后的
+每个 rollout unit 记录 sampled ActionFrame、speech/action old/reference log-prob、value、解码后的
 有序 controls、receipt 和 reward lineage。receipt/reward 不进入 ObservationSignal。
-GRPO ratio 以 frame joint probability 为 action 单位；kind-conditioned 参数是同一动作的
-概率分解，不是额外环境 step。
+PPO ratio 分别按 speech unit 和 action frame 计算；kind-conditioned 参数是同一动作的概率
+分解，不是额外环境 step。窗口还保存 policy version、lineage、observation hash chain 和
+reward finalization watermark。
 
 ## 3. Checkpoint identity
 

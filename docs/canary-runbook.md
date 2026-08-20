@@ -11,8 +11,10 @@
 - `uv`、Git、curl，以及至少 20 GB 可用磁盘
 - 可访问 GitHub 和 Hugging Face
 - 可选：W&B Local 已在 `http://127.0.0.1:8080` 运行并完成 CLI 登录
-- Canary Online GRPO 必须连接真实隔离电脑环境 socket
-  `~/latentloop-data/runtime/canary/environment.sock`，并准备带 `task_id` 的 RL manifest；
+- Canary Online Recurrent PPO 必须连接真实隔离电脑环境 control socket
+  `~/latentloop-data/runtime/canary/harness-control.sock` 和 Reward Judge socket
+  `~/latentloop-data/runtime/canary/reward-judge.sock`，并准备包含唯一 lifetime
+  `session_id/initial_snapshot_id/seed` 的 session manifest；
   连接失败不会回退到 fixture 或离线 rollout。
 
 默认产物位于：
@@ -28,8 +30,8 @@
 
 ## 一键执行
 
-首次运行可将三个 stage 的 update 数覆盖为 1，验证完整 Pretrain → SFT → Online GRPO 闭环。
-离线 tracking 不要求 W&B 登录，但 Online GRPO 仍必须连接真实隔离环境：
+首次运行可将三个 stage 的 update 数覆盖为 1，验证完整 Pretrain → SFT → Online Recurrent PPO 闭环。
+离线 tracking 不要求 W&B 登录，但 Online Recurrent PPO 仍必须连接真实隔离环境：
 
 ```bash
 cd ~/LatentLoop
@@ -84,13 +86,13 @@ scripts/run-training.sh --recipe configs/recipes/canary.yaml --run-id canary-001
 
 ## 正式 Canary 训练
 
-短闭环成功后运行配置中的完整预算：Pretrain 1,000、SFT 600、Online GRPO 400 updates：
+短闭环成功后运行配置中的完整预算：Pretrain 1,000、SFT 600、Online Recurrent PPO 400 updates：
 
 ```bash
 scripts/run-training.sh --recipe configs/recipes/canary.yaml --run-id canary-001
 ```
 
-Pretrain 从随机初始化开始；SFT 自动使用 Pretrain checkpoint；Online GRPO 自动使用最终
+Pretrain 从随机初始化开始；SFT 自动使用 Pretrain checkpoint；Online Recurrent PPO 自动使用最终
 SFT checkpoint 作为 policy 和冻结 reference。
 
 三个正式 stage 与 Pilot/Production 使用同一条连续 episode 路径：按时间顺序处理每个 episode，持续传递 KV、
@@ -121,7 +123,8 @@ target 或正则项。cosine 学习率最低保持为初始值的 10%。
 checkpoint 和评测链路可运行；此时 codec accuracy、macro-F1 等质量指标不用于判断收敛。
 
 Pilot 和 Production 使用完全相同的当前数据准备路径；Production 必须先提供锁定的真实
-source manifest、任务/evaluator spec 和 Mimi worker。缺少任一外部资产时命令以非零状态退出。
+source manifest、锁定 Reward Judge identity/rubric、session manifest 和 Mimi worker。缺少任一
+外部资产时命令以非零状态退出。
 
 ## 自定义目录
 

@@ -1,4 +1,4 @@
-# Canary uses the complete Pretrain -> SFT -> Online GRPO recipe on a small real
+# Canary uses the complete Pretrain -> SFT -> Online Recurrent PPO recipe on a small real
 # dataset. All three formal stages train the full model.
 model:
   model_dim: 512
@@ -72,21 +72,32 @@ training:
   memory_horizon_units: 750
   min_learning_rate_ratio: 0.1
   rl:
-    group_size: 4
+    algorithm: recurrent_ppo
+    ppo_window_units: 750
+    ppo_epochs: 4
+    candidate_max_reference_kl: 1.0
+    candidate_max_eval_loss_ratio: 1.25
+    candidate_max_rejections: 3
     clip_epsilon: 0.2
     reference_kl_beta: 0.02
-    rollout_horizon_units: 750
-    groups_per_update: 1
-    environment_workers: 1
     environment_socket: ~/latentloop-data/runtime/canary/harness-control.sock
     codec_socket: ~/latentloop-data/runtime/sockets/mimi.sock
-    environment_id: isolated-desktop-v1
+    reward_socket: ~/latentloop-data/runtime/canary/reward-judge.sock
+    environment_id: isolated-qemu-v1
     environment_version: "1"
     environment_protocol_version: realtime-v2
-    task_manifest: ~/latentloop-data/datasets/canary/rl/tasks.jsonl
     reward_spec_id: realtime-v2
+    judge_model_id: external-frozen-multimodal
+    judge_revision: locked-canary
+    rubric_sha256: bea8320ffe6081bcaaab99ca619140f1eab9df47efba5fec42b67115f38ccff0
+    timeline_root: ~/latentloop-data/runtime/canary/timeline
+    session_manifest: ~/latentloop-data/datasets/canary/rl/sessions.jsonl
+    sft_replay_shards: ~/latentloop-data/datasets/canary/shards/processed/train/train-*.tar
+    sft_replay_manifest: ~/latentloop-data/datasets/canary/shards/processed/train/train-manifest.jsonl
+    sft_preservation_shards: ~/latentloop-data/datasets/canary/shards/processed/validation/validation-*.tar
+    sft_preservation_manifest: ~/latentloop-data/datasets/canary/shards/processed/validation/validation-manifest.jsonl
     sampling_temperature: 0.8
-    sampling_top_k: 250
+    sampling_top_k: 0
 tracking:
   enabled: true
   project: latentloop

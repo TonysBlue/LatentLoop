@@ -24,11 +24,10 @@ from contracts.identity import ProtocolIdentity
 from contracts.observation import MicSignal, ObservationSignal, ScreenSignal
 from contracts.protocol import (
     payload_to_receipt,
-    payload_to_reward,
     receipt_to_payload,
-    reward_to_payload,
 )
-from contracts.receipt import EnvironmentReceipt, RewardBreakdown
+from contracts.receipt import EnvironmentReceipt
+from contracts.reward import GoalOutcome, RewardEvent, RewardStatus, RewardVector
 
 __all__ = [
     "ActuationSignal",
@@ -44,17 +43,18 @@ __all__ = [
     "ControlKind",
     "ControlSignal",
     "EnvironmentReceipt",
+    "GoalOutcome",
     "MicSignal",
     "ObservationSignal",
     "ProtocolIdentity",
     "PointerButton",
     "PointerButtonPhase",
-    "RewardBreakdown",
+    "RewardEvent",
+    "RewardStatus",
+    "RewardVector",
     "ScreenSignal",
     "SpeechSignal",
     "decode_action_frame",
     "payload_to_receipt",
-    "payload_to_reward",
     "receipt_to_payload",
-    "reward_to_payload",
 ]

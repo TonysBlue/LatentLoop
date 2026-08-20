@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import shutil
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,30 @@ def check_readiness(
     missing: list[str] = []
     invalid: list[str] = []
     production_dataset = dataset in {"canary", "pilot", "production"}
+
+    if production_dataset and config.training.stage == "rl":
+        guard_assets = (
+            ("SFT replay manifest", config.training.rl.sft_replay_manifest, False),
+            ("SFT replay shards", config.training.rl.sft_replay_shards, True),
+            (
+                "SFT preservation manifest",
+                config.training.rl.sft_preservation_manifest,
+                False,
+            ),
+            (
+                "SFT preservation shards",
+                config.training.rl.sft_preservation_shards,
+                True,
+            ),
+        )
+        for label, value, is_pattern in guard_assets:
+            resolved = _resolve_config_path(config, value)
+            if resolved is None:
+                missing.append(f"{label}: unconfigured")
+            elif is_pattern and not glob.glob(str(resolved)):
+                missing.append(f"{label}: {resolved}")
+            elif not is_pattern:
+                _required(resolved, label, missing)
 
     def path(*parts: str) -> Path:
         return dataset_root.joinpath(*parts)

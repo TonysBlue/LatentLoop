@@ -14,6 +14,7 @@ from training.checkpoint import (
     DataCursor,
     file_sha256,
 )
+from training.training import initialize_exact_weights
 
 
 def test_checkpoint_restores_full_recurrent_step(
@@ -83,6 +84,34 @@ def test_checkpoint_restores_full_recurrent_step(
     assert (tmp_path / "manifest.json").exists()
 
 
+def test_checkpoint_restores_reference_recurrent_state(
+    tmp_path: Path, smoke_config: ProjectConfig
+) -> None:
+    model = StreamingLatentLoop(smoke_config.model)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    state = model.initial_state(1, "cpu")
+    state.unit_index.fill_(9)
+    manager = CheckpointManager(tmp_path)
+    path, _ = manager.save(
+        "reference-state",
+        model=model,
+        optimizer=optimizer,
+        scheduler=None,
+        scaler=None,
+        recurrent_state=state,
+        reference_recurrent_state=state,
+        train_state={"update": 0},
+        data_cursor=DataCursor(),
+        metadata=CheckpointMetadata("data", "codec", "hash", "test"),
+        config=smoke_config.as_dict(),
+    )
+    from training.checkpoint import load_reference_recurrent_state
+
+    restored = load_reference_recurrent_state(path, torch.device("cpu"))
+    assert restored is not None
+    assert int(restored.unit_index.item()) == 9
+
+
 def test_checkpoint_rejects_codec_mismatch(tmp_path: Path, smoke_config: ProjectConfig) -> None:
     model = StreamingLatentLoop(smoke_config.model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
@@ -150,6 +179,32 @@ def test_checkpoint_rejects_incomplete_current_payload(
             config=smoke_config.as_dict(),
             expected_metadata=CheckpointMetadata("data", "codec", "hash", "test"),
         )
+
+
+def test_ppo_exact_initialization_rejects_missing_value_head(
+    tmp_path: Path, smoke_config: ProjectConfig
+) -> None:
+    model = StreamingLatentLoop(smoke_config.model)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    path, _ = CheckpointManager(tmp_path).save(
+        "sft",
+        model=model,
+        optimizer=optimizer,
+        scheduler=None,
+        scaler=None,
+        recurrent_state=None,
+        train_state={},
+        data_cursor=DataCursor(),
+        metadata=CheckpointMetadata("data", "codec", "hash", "test", stage="sft"),
+        config=smoke_config.as_dict(),
+    )
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    del payload["model"]["value_head.network.3.bias"]
+    incomplete = tmp_path / "incomplete-sft.pt"
+    torch.save(payload, incomplete)
+
+    with pytest.raises(ValueError, match="complete current model"):
+        initialize_exact_weights(StreamingLatentLoop(smoke_config.model), incomplete)
 
 
 def test_checkpoint_manifest_rejects_obsolete_format_field(

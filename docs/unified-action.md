@@ -233,7 +233,7 @@ log p(frame|state) = log p(kind|state)
 固定尺度的 bounded regression NLL，但必须和 sampling/log-prob 使用同一参数化。
 各分支先按有效 frame 归一化，再组成唯一 `L_action`，避免 TYPE 长度自动放大其权重。
 
-Online GRPO 保存并重算同一个 frame joint log-prob。clipped ratio 与 reference KL 以
+Online Recurrent PPO 保存并重算同一个 frame joint log-prob。clipped ratio 与 reference KL 以
 frame 为动作概率单位，而不是把 kind、每个 byte 和坐标重复当作独立环境 step。
 
 ```text
@@ -285,7 +285,7 @@ identity。恢复后下一 frame 的 logits、采样和 UTF-8 assembler 状态�
 - receipt/reward/accepted/safety 不进入 ObservationSignal；
 - Harness 拒绝越界参数和非法 held-input 转移；
 - 不完整 checkpoint、flat action array 和旧配置字段 fail closed；
-- formal Pretrain、SFT、Online GRPO 共享同一 Action Head 与概率路径。
+- formal Pretrain、SFT、Online Recurrent PPO 共享同一 Action Head 与概率路径。
 
 ## 12. 结论
 

@@ -23,7 +23,8 @@ def test_stage_configs_inherit_complete_profiles() -> None:
     assert pilot.data.dataset == "pilot"
     assert pilot.training.backbone_train_mode == "all"
     assert pilot.training.stage == "sft"
-    assert production.training.objective == "grpo"
+    assert production.training.objective == "ppo"
+    assert len(production.training.rl.rubric_sha256) == 64
     assert production.data.dataset == "production"
     assert production.model.model_dim == 896
 
@@ -36,7 +37,7 @@ def test_formal_recipes_have_the_same_three_stages(scale: str) -> None:
     assert [(config.training.stage, config.training.objective) for config in configs] == [
         ("pretrain", "supervised"),
         ("sft", "supervised"),
-        ("rl", "grpo"),
+        ("rl", "ppo"),
     ]
     assert all(config.training.backbone_train_mode == "all" for config in configs)
 

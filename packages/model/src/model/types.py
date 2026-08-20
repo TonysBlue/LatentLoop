@@ -415,6 +415,8 @@ class StepOutput:
     speech_codec_logits: Tensor
     action: ActionHeadOutput
     hidden: Tensor
+    value: Tensor
+    selected_speech_mode: Tensor
 
     def sampled_logprob(
         self, speech_mode: Tensor, speech_codes: Tensor, action_frame: ActionFrame

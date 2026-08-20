@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from contracts import MicSignal, ObservationSignal, ProtocolIdentity, RewardBreakdown, ScreenSignal
+from contracts import MicSignal, ObservationSignal, ProtocolIdentity, ScreenSignal
 
 
 def test_observation_cannot_contain_privileged_reward_fields() -> None:
@@ -14,10 +14,3 @@ def test_observation_cannot_contain_privileged_reward_fields() -> None:
 def test_environment_identity_requires_action_schema() -> None:
     with pytest.raises(ValueError, match="protocol identity"):
         ProtocolIdentity(action_schema_id="")
-
-
-def test_reward_breakdown_has_fixed_components() -> None:
-    reward = RewardBreakdown(
-        task=1.0, speech_quality=0.5, latency_quality=0.5, action_efficiency=0.5, safety=-0.1
-    )
-    assert reward.total == pytest.approx(1.0 + 0.2 * 0.5 - 0.1)

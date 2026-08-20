@@ -2,8 +2,8 @@
 
 The control plane carries operation metadata and base64 protobuf payloads. The
 physical data plane remains the Model Service protobuf socket; the Harness
-control socket is used by Training System rollout workers to reset/apply and
-collect receipts without exposing raw model tokens to the environment.
+control socket starts one lifetime session and applies physical actuation
+without exposing raw model tokens or reward fields to the environment.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from contracts import (
     ActuationSignal,
     EnvironmentReceipt,
     ObservationSignal,
-    RewardBreakdown,
 )
 from contracts.framing import frame, read_frame
 from contracts.protocol import (
@@ -31,9 +30,7 @@ from contracts.protocol import (
     message_to_observation,
     observation_to_payload,
     payload_to_receipt,
-    payload_to_reward,
     receipt_to_payload,
-    reward_to_payload,
 )
 
 
@@ -50,8 +47,9 @@ def _read_exact(connection: socket.socket, size: int) -> bytes:
 @dataclass(slots=True)
 class _SessionState:
     backend: Any
-    task_id: str
+    initial_snapshot_id: str
     next_unit: int
+    observation: ObservationSignal
 
 
 class HarnessControlServer:
@@ -168,16 +166,17 @@ class HarnessControlServer:
         if not session_id:
             raise ValueError("session_id is required")
         with self._lock:
-            if operation == "reset":
-                task_id = str(request.get("task_id", ""))
-                if not task_id:
-                    raise ValueError("task_id is required")
+            if operation == "start_lifetime_session":
+                snapshot_id = str(request.get("initial_snapshot_id", ""))
+                if not snapshot_id:
+                    raise ValueError("initial_snapshot_id is required")
                 backend = self.backend_factory()
-                previous = self._backends.pop(session_id, None)
-                if previous is not None:
-                    previous.backend.close()
+                if session_id in self._backends:
+                    raise ValueError("lifetime session already exists")
                 try:
-                    observation = backend.reset(task_id, int(request["seed"]), session_id)
+                    observation = backend.start_lifetime_session(
+                        snapshot_id, int(request["seed"]), session_id
+                    )
                     self._validate_observation(observation, session_id, 0)
                 except Exception:
                     if hasattr(backend, "close"):
@@ -185,12 +184,26 @@ class HarnessControlServer:
                     raise
                 self._backends[session_id] = _SessionState(
                     backend=backend,
-                    task_id=task_id,
+                    initial_snapshot_id=snapshot_id,
                     next_unit=0,
+                    observation=observation,
                 )
                 return {
                     "ok": True,
                     "observation": base64.b64encode(observation_to_payload(observation)).decode(),
+                }
+            if operation == "resume_lifetime_session":
+                state = self._backends.get(session_id)
+                if state is None:
+                    raise KeyError("unknown Harness session")
+                expected_next_unit = int(request["expected_next_unit"])
+                if expected_next_unit != state.next_unit:
+                    raise ValueError("Harness lifetime resume cursor does not match")
+                return {
+                    "ok": True,
+                    "observation": base64.b64encode(
+                        observation_to_payload(state.observation)
+                    ).decode(),
                 }
             if operation == "apply":
                 state = self._backends.get(session_id)
@@ -205,21 +218,11 @@ class HarnessControlServer:
                 if receipt.session_id != session_id or receipt.unit_index != state.next_unit:
                     raise ValueError("backend receipt identity is invalid")
                 state.next_unit += 1
+                state.observation = observation
                 return {
                     "ok": True,
                     "observation": base64.b64encode(observation_to_payload(observation)).decode(),
                     "receipt": base64.b64encode(receipt_to_payload(receipt)).decode(),
-                }
-            if operation == "evaluate":
-                state = self._backends.get(session_id)
-                if state is None:
-                    raise KeyError("unknown Harness session")
-                if str(request.get("task_id", "")) != state.task_id:
-                    raise ValueError("evaluate task does not match session")
-                reward = state.backend.evaluate(state.task_id)
-                return {
-                    "ok": True,
-                    "reward": base64.b64encode(reward_to_payload(reward)).decode(),
                 }
             if operation == "close":
                 state = self._backends.pop(session_id, None)
@@ -271,17 +274,24 @@ class HarnessControlClient:
             raise RuntimeError("Harness identity is incomplete")
         return identity
 
-    def reset(self, task_id: str, seed: int, session_id: str) -> ObservationSignal:
-        if not task_id or not session_id:
-            raise ValueError("task_id and session_id are required")
+    def start_lifetime_session(
+        self, initial_snapshot_id: str, seed: int, session_id: str
+    ) -> ObservationSignal:
+        if not initial_snapshot_id or not session_id:
+            raise ValueError("initial_snapshot_id and session_id are required")
         response = self._request(
-            {"operation": "reset", "task_id": task_id, "seed": seed, "session_id": session_id}
+            {
+                "operation": "start_lifetime_session",
+                "initial_snapshot_id": initial_snapshot_id,
+                "seed": seed,
+                "session_id": session_id,
+            }
         )
         observation = message_to_observation(
             base64.b64decode(response["observation"], validate=True)
         )
         if observation.session_id != session_id or observation.unit_index != 0:
-            raise RuntimeError("Harness reset returned an invalid observation identity")
+            raise RuntimeError("Harness lifetime start returned an invalid observation identity")
         return observation
 
     def apply(self, output: ActuationSignal) -> tuple[ObservationSignal, EnvironmentReceipt]:
@@ -305,16 +315,27 @@ class HarnessControlClient:
             raise RuntimeError("Harness apply returned an invalid receipt identity")
         return observation, receipt
 
-    def evaluate(self, task_id: str, session_id: str) -> RewardBreakdown:
-        if not task_id or not session_id:
-            raise ValueError("task_id and session_id are required")
-        return payload_to_reward(
-            base64.b64decode(
-                self._request(
-                    {"operation": "evaluate", "task_id": task_id, "session_id": session_id}
-                )["reward"]
-            )
+    def resume_lifetime_session(
+        self, session_id: str, expected_next_unit: int
+    ) -> ObservationSignal:
+        if not session_id or expected_next_unit < 0:
+            raise ValueError("session_id and non-negative lifetime cursor are required")
+        response = self._request(
+            {
+                "operation": "resume_lifetime_session",
+                "session_id": session_id,
+                "expected_next_unit": expected_next_unit,
+            }
         )
+        observation = message_to_observation(
+            base64.b64decode(response["observation"], validate=True)
+        )
+        if (
+            observation.session_id != session_id
+            or observation.unit_index != expected_next_unit
+        ):
+            raise RuntimeError("Harness lifetime resume returned an invalid observation")
+        return observation
 
     def close(self, session_id: str) -> None:
         try:

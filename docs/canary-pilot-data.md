@@ -127,8 +127,9 @@ uv run data check-readiness --config configs/pilot.yaml --root "$ROOT" \
 该检查确认 audit、三个 split 的 manifest/shard、编码状态、Mimi 报告、初始 checkpoint 和磁盘
 空间；失败时不会进入训练。
 
-编码完成后，Pretrain 和 SFT 使用各自锁定的监督 manifest；Online GRPO 使用真实隔离环境
-的 task manifest。三者由同一个 Pilot recipe 按 `Pretrain -> SFT -> Online GRPO` 顺序编排：
+编码完成后，Pretrain 和 SFT 使用各自锁定的监督 manifest；Online Recurrent PPO 使用真实
+隔离环境的 session manifest。三者由同一个 Pilot recipe 按
+`Pretrain -> SFT -> Online Recurrent PPO` 顺序编排：
 
 ```bash
 scripts/run-training.sh --recipe configs/recipes/pilot.yaml

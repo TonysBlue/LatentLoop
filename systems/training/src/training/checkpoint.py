@@ -37,8 +37,18 @@ class CheckpointMetadata:
     action_schema_id: str = "structured-action-v1"
     reference_checkpoint_sha256: str | None = None
     environment_id: str | None = None
-    task_manifest_sha256: str | None = None
+    session_manifest_sha256: str | None = None
     reward_spec_id: str | None = None
+    judge_model_id: str | None = None
+    judge_revision: str | None = None
+    rubric_sha256: str | None = None
+    lineage_id: str | None = None
+    policy_version: str | None = None
+    observation_chain_sha256: str | None = None
+    policy_sample_chain_sha256: str | None = None
+    sft_checkpoint_path: str | None = None
+    sft_replay_manifest_sha256: str | None = None
+    sft_preservation_manifest_sha256: str | None = None
 
 
 def config_hash(config: dict[str, Any]) -> str:
@@ -130,6 +140,7 @@ class CheckpointManager:
         scheduler: Any | None,
         scaler: Any | None,
         recurrent_state: RecurrentState | None,
+        reference_recurrent_state: RecurrentState | None = None,
         train_state: dict[str, Any],
         data_cursor: DataCursor,
         metadata: CheckpointMetadata,
@@ -142,6 +153,7 @@ class CheckpointManager:
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
             "scaler": scaler.state_dict() if scaler is not None else None,
             "recurrent_state": _serialize_state(recurrent_state),
+            "reference_recurrent_state": _serialize_state(reference_recurrent_state),
             "train_state": train_state,
             "data_cursor": asdict(data_cursor),
             "metadata": asdict(metadata),
@@ -258,8 +270,18 @@ class CheckpointManager:
             "action_schema_id",
             "reference_checkpoint_sha256",
             "environment_id",
-            "task_manifest_sha256",
+            "session_manifest_sha256",
             "reward_spec_id",
+            "judge_model_id",
+            "judge_revision",
+            "rubric_sha256",
+            "lineage_id",
+            "policy_version",
+            "observation_chain_sha256",
+            "policy_sample_chain_sha256",
+            "sft_checkpoint_path",
+            "sft_replay_manifest_sha256",
+            "sft_preservation_manifest_sha256",
         ):
             if getattr(restored_metadata, field_name) != getattr(expected_metadata, field_name):
                 raise ValueError(f"checkpoint {field_name} does not match the current run")
@@ -277,3 +299,21 @@ class CheckpointManager:
         recurrent = _deserialize_state(payload["recurrent_state"], device)
         cursor = DataCursor(**payload["data_cursor"])
         return payload["train_state"], cursor, recurrent, restored_metadata
+
+
+def inspect_checkpoint(
+    path: str | Path,
+) -> tuple[dict[str, Any], CheckpointMetadata]:
+    payload = torch.load(Path(path), map_location="cpu", weights_only=False)
+    if not isinstance(payload.get("train_state"), dict) or not isinstance(
+        payload.get("metadata"), dict
+    ):
+        raise ValueError("checkpoint is incomplete; only the current contract is supported")
+    return payload["train_state"], CheckpointMetadata(**payload["metadata"])
+
+
+def load_reference_recurrent_state(
+    path: str | Path, device: torch.device
+) -> RecurrentState | None:
+    payload = torch.load(Path(path), map_location="cpu", weights_only=False)
+    return _deserialize_state(payload.get("reference_recurrent_state"), device)

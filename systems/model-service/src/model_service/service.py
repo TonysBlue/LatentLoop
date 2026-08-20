@@ -109,6 +109,8 @@ class ModelService:
             mic = mic.astype(np.float32) / 32768.0
         if mic.size != self.config.data.unit_audio_samples:
             raise ValueError("mic signal must contain exactly one 80 ms unit")
+        if not np.isfinite(mic).all() or np.max(np.abs(mic)) > 1.0:
+            raise ValueError("mic signal PCM must be normalized and finite")
         screen = self._screen_tensor(observation)
         zeros = torch.zeros(1, 1, self.config.model.speech_codebooks, dtype=torch.long)
         return StreamUnit(

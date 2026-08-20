@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import torch
 from data import SyntheticEpisodeDataset, write_episode_shards
 from runtime.config import ProjectConfig
 from training import train
@@ -40,6 +41,14 @@ def test_smoke_training_and_atomic_checkpoint(smoke_config: ProjectConfig) -> No
     assert result["tracking"]["run_url"] is None
     assert checkpoints
     assert not list(checkpoint_dir.glob("*.tmp.pt"))
+
+
+def test_training_enables_deterministic_cuda_algorithms(
+    smoke_config: ProjectConfig,
+) -> None:
+    train(smoke_config, stop_after_updates=1)
+    if torch.cuda.is_available():
+        assert torch.are_deterministic_algorithms_enabled()
 
 
 def test_short_training_logs_final_metrics(smoke_config: ProjectConfig, monkeypatch) -> None:

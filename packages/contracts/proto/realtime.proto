@@ -67,12 +67,3 @@ message EnvironmentReceipt {
   bool terminated = 6;
   string infrastructure_failure = 7;
 }
-
-message RewardBreakdown {
-  double task = 1;
-  double speech_quality = 2;
-  double latency_quality = 3;
-  double action_efficiency = 4;
-  double safety = 5;
-  string spec_id = 6;
-}

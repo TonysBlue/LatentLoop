@@ -4,6 +4,7 @@ import json
 import socket
 import struct
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -80,6 +81,16 @@ class CodecWorkerClient:
                 self._decode(codes, discard=True)
         else:
             self.history.clear()
+
+    def restore_decode_history(self, session_id: str, codes: Iterable[Tensor]) -> None:
+        """Reset a decoder and replay the bounded sampled-code history."""
+        values = list(codes)
+        limit = self.history.maxlen
+        if limit is not None:
+            values = values[-limit:]
+        self.reset(session_id, replay=False)
+        for item in values:
+            self.decode_step(item, session_id)
 
     def encode_step(self, waveform: Tensor, session_id: str) -> Tensor:
         expected = (1, 1, self.identity.frame_samples)

@@ -3,7 +3,7 @@ defaults:
   - _self_
 training:
   stage: rl
-  objective: grpo
+  objective: ppo
   max_updates: 400
   backbone_train_mode: all
 runtime:

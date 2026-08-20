@@ -31,10 +31,7 @@ from contracts.realtime_pb2 import (
 from contracts.realtime_pb2 import (
     ObservationSignal as ObservationMessage,
 )
-from contracts.realtime_pb2 import (
-    RewardBreakdown as RewardMessage,
-)
-from contracts.receipt import EnvironmentReceipt, RewardBreakdown
+from contracts.receipt import EnvironmentReceipt
 
 
 def _set_optional(message: Any, field: str, value: Any) -> None:
@@ -172,29 +169,6 @@ def payload_to_receipt(payload: bytes) -> EnvironmentReceipt:
         safety_violation=message.safety_violation or None,
         terminated=message.terminated,
         infrastructure_failure=message.infrastructure_failure or None,
-    )
-
-
-def reward_to_payload(value: RewardBreakdown) -> bytes:
-    return RewardMessage(
-        task=value.task,
-        speech_quality=value.speech_quality,
-        latency_quality=value.latency_quality,
-        action_efficiency=value.action_efficiency,
-        safety=value.safety,
-        spec_id=value.spec_id,
-    ).SerializeToString()
-
-
-def payload_to_reward(payload: bytes) -> RewardBreakdown:
-    message = RewardMessage.FromString(payload)
-    return RewardBreakdown(
-        task=message.task,
-        speech_quality=message.speech_quality,
-        latency_quality=message.latency_quality,
-        action_efficiency=message.action_efficiency,
-        safety=message.safety,
-        spec_id=message.spec_id or "realtime-v2",
     )
 
 

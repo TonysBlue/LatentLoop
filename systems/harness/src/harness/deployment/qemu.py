@@ -26,11 +26,10 @@ from contracts import (
     EnvironmentReceipt,
     MicSignal,
     ObservationSignal,
-    RewardBreakdown,
     ScreenSignal,
 )
 
-from harness.environment.adapters import ActuatorAdapter, EvaluatorAdapter, SensorAdapter
+from harness.environment.adapters import ActuatorAdapter, SensorAdapter
 from harness.environment.qemu import QemuBackend, QemuConfig
 
 
@@ -332,33 +331,6 @@ def _read_qmp(connection: socket.socket) -> dict[str, Any]:
     return value
 
 
-class TaskEvaluator(EvaluatorAdapter):
-    """External evaluator adapter; task success is never fabricated locally."""
-
-    def __init__(self, command: str, *, timeout_s: float = 30.0) -> None:
-        self.device = JsonLineDevice(command, name="task evaluator", timeout_s=timeout_s)
-
-    def health(self) -> None:
-        self.device.health()
-
-    def evaluate(self, task_id: str) -> RewardBreakdown:
-        value = self.device.request({"operation": "evaluate", "task_id": task_id})
-        required = ("task", "speech_quality", "latency_quality", "action_efficiency", "safety")
-        if any(key not in value for key in required):
-            raise RuntimeError("task evaluator response is missing reward fields")
-        return RewardBreakdown(
-            *(float(value[key]) for key in required),
-            spec_id=str(value.get("spec_id", "realtime-v2")),
-        )
-
-    def terminated(self, task_id: str) -> bool:
-        value = self.device.request({"operation": "terminated", "task_id": task_id})
-        return bool(value.get("terminated", False))
-
-    def close(self) -> None:
-        self.device.close()
-
-
 class _CompositeActuator(ActuatorAdapter):
     def __init__(self, playback: SpiceAudioActuator, input_injector: QmpInputInjector) -> None:
         self.playback = playback
@@ -392,14 +364,13 @@ class _CompositeActuator(ActuatorAdapter):
 
 
 class ProductionQemuBackend(QemuBackend):
-    """QEMU backend with real SPICE/audio/input/evaluator deployment adapters."""
+    """QEMU backend with real SPICE/audio/input deployment adapters."""
 
-    def __init__(self, config: QemuConfig, screen, actuator, evaluator) -> None:
-        super().__init__(config, screen, actuator, evaluator)
-        self._evaluator = evaluator
+    def __init__(self, config: QemuConfig, screen, actuator) -> None:
+        super().__init__(config, screen, actuator)
 
     def health(self) -> None:
-        for adapter in (self.observation_factory, self.executor, self._evaluator):
+        for adapter in (self.observation_factory, self.executor):
             check = getattr(adapter, "health", None)
             if check is None:
                 raise RuntimeError(
@@ -407,9 +378,11 @@ class ProductionQemuBackend(QemuBackend):
                 )
             check()
 
-    def reset(self, task_id: str, seed: int, session_id: str | None = None) -> ObservationSignal:
-        observation = super().reset(task_id, seed, session_id)
-        # QMP input is resolved only after reset created the per-session socket.
+    def start_lifetime_session(
+        self, initial_snapshot_id: str, seed: int, session_id: str | None = None
+    ) -> ObservationSignal:
+        observation = super().start_lifetime_session(initial_snapshot_id, seed, session_id)
+        # QMP input is resolved only after lifetime start created the per-session socket.
         self.health()
         return observation
 
@@ -427,7 +400,6 @@ def create_backend(config: Mapping[str, Any]) -> ProductionQemuBackend:
         _required(config, "spice_audio_capture_command"), width=width, height=height
     )
     playback = SpiceAudioActuator(_required(config, "spice_audio_playback_command"))
-    evaluator = TaskEvaluator(_required(config, "evaluator_command"))
     spice_socket = runtime_root / "spice.sock"
     qemu_extra_args = tuple(str(arg) for arg in config.get("qemu_extra_args", ()))
     if not any("spice" in argument for argument in qemu_extra_args):
@@ -448,9 +420,7 @@ def create_backend(config: Mapping[str, Any]) -> ProductionQemuBackend:
     # The injector resolves QMP lazily, after QemuBackend.reset has created the socket.
     injector = QmpInputInjector(lambda: backend.qmp_socket)
     actuator = _CompositeActuator(playback, injector)
-    backend = ProductionQemuBackend(
-        qemu_config, SpicePhysicalSensor(screen, audio), actuator, evaluator
-    )
+    backend = ProductionQemuBackend(qemu_config, SpicePhysicalSensor(screen, audio), actuator)
     backend.health()
     return backend
 
@@ -460,6 +430,5 @@ __all__ = [
     "QmpInputInjector",
     "SpiceAudioActuator",
     "SpiceScreenCapture",
-    "TaskEvaluator",
     "create_backend",
 ]

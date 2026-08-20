@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from contracts import ActuationSignal, EnvironmentReceipt, ObservationSignal, RewardBreakdown
-from harness.environment.adapters import ActuatorAdapter, EvaluatorAdapter, SensorAdapter
+from contracts import ActuationSignal, EnvironmentReceipt, ObservationSignal
+from harness.environment.adapters import ActuatorAdapter, SensorAdapter
 from harness.environment.backend import ComputerBackend
 
 
@@ -44,29 +44,27 @@ class QemuBackend(ComputerBackend):
         config: QemuConfig,
         observation_factory: SensorAdapter,
         executor: ActuatorAdapter,
-        evaluator: EvaluatorAdapter,
     ) -> None:
         if not config.base_image.is_file():
             raise FileNotFoundError(f"QEMU base image is absent: {config.base_image}")
         self.config = config
         self.observation_factory = observation_factory
         self.executor = executor
-        self.evaluator = evaluator
         self.process: subprocess.Popen[bytes] | None = None
         self.overlay: Path | None = None
         self.qmp_socket: Path | None = None
-        self.task_id: str | None = None
+        self.initial_snapshot_id: str | None = None
         self.session_id: str | None = None
         self._last_unit = -1
 
-    def reset(
-        self, task_id: str, seed: int, session_id: str | None = None
+    def start_lifetime_session(
+        self, initial_snapshot_id: str, seed: int, session_id: str | None = None
     ) -> ObservationSignal:
         reset = getattr(self.executor, "reset", None)
         if reset is not None:
             reset()
         self._terminate_process()
-        session_key = session_id or f"{task_id}-{seed}"
+        session_key = session_id or f"{initial_snapshot_id}-{seed}"
         digest = hashlib.sha256(session_key.encode()).hexdigest()[:20]
         overlay = self.config.runtime_root / f"session-{digest}.qcow2"
         qmp_socket = self.config.runtime_root / f"session-{digest}.qmp.sock"
@@ -118,7 +116,7 @@ class QemuBackend(ComputerBackend):
             )
         except OSError as error:
             raise RuntimeError(f"cannot start QEMU: {error}") from error
-        self.task_id = task_id
+        self.initial_snapshot_id = initial_snapshot_id
         self.session_id = session_key
         self.overlay = overlay
         self.qmp_socket = qmp_socket
@@ -131,7 +129,7 @@ class QemuBackend(ComputerBackend):
         return self.observation_factory.capture(self.session_id, 0)
 
     def apply(self, output: ActuationSignal) -> tuple[ObservationSignal, EnvironmentReceipt]:
-        if self.process is None or self.task_id is None:
+        if self.process is None or self.initial_snapshot_id is None:
             raise RuntimeError("QEMU session is not active")
         if self.process.poll() is not None:
             raise RuntimeError("QEMU process exited before control application")
@@ -145,25 +143,15 @@ class QemuBackend(ComputerBackend):
             self.session_id or output.session_id, output.unit_index + 1
         )
         self._last_unit = output.unit_index
-        terminated = bool(
-            self.evaluator.terminated(self.task_id)
-            if hasattr(self.evaluator, "terminated")
-            else False
-        )
         return observation, EnvironmentReceipt(
             session_id=output.session_id,
             unit_index=output.unit_index,
             accepted=receipt.accepted,
             execution_latency_ms=(time.perf_counter() - started) * 1000,
             safety_violation=receipt.safety_violation,
-            terminated=terminated,
+            terminated=False,
             infrastructure_failure=receipt.infrastructure_failure,
         )
-
-    def evaluate(self, task_id: str) -> RewardBreakdown:
-        if self.task_id != task_id or self.process is None:
-            raise RuntimeError("QEMU session is not active")
-        return self.evaluator.evaluate(task_id)
 
     def close(self) -> None:
         reset = getattr(self.executor, "reset", None)
@@ -174,14 +162,12 @@ class QemuBackend(ComputerBackend):
             self.observation_factory.close()
         if hasattr(self.executor, "close"):
             self.executor.close()
-        if hasattr(self.evaluator, "close"):
-            self.evaluator.close()
 
     def _terminate_process(self) -> None:
         process, self.process = self.process, None
         qmp_socket, self.qmp_socket = self.qmp_socket, None
         overlay, self.overlay = self.overlay, None
-        self.task_id = None
+        self.initial_snapshot_id = None
         self.session_id = None
         if process is not None:
             process.terminate()

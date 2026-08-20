@@ -47,6 +47,8 @@ data:
   train_episodes: 4
   seed: 17
 training:
+  stage: pretrain
+  objective: supervised
   max_updates: 4
   weight_decay: 0.01
   gradient_accumulation_steps: 1
@@ -64,6 +66,8 @@ training:
   speech_loss_weight: 1.0
   action_loss_weight: 1.0
   memory_horizon_units: 8
+  rl:
+    ppo_epochs: 2
 tracking:
   enabled: false
   project: latentloop

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contracts import ActuationSignal, EnvironmentReceipt, ObservationSignal, RewardBreakdown
+from contracts import ActuationSignal, EnvironmentReceipt, ObservationSignal
 
 from harness.action.executor import ControlExecutor
 from harness.session import Session
@@ -15,13 +15,12 @@ class HarnessService:
         self.executor = executor
         self.session: Session | None = None
 
-    def reset(self, task_id: str, seed: int, session_id: str) -> ObservationSignal:
-        try:
-            observation = self.environment.reset(task_id, seed, session_id)
-        except TypeError:
-            # Test-only in-process adapters may still expose the minimal
-            # two-argument backend protocol; formal QEMU uses the identity-aware form.
-            observation = self.environment.reset(task_id, seed)
+    def start_lifetime_session(
+        self, initial_snapshot_id: str, seed: int, session_id: str
+    ) -> ObservationSignal:
+        observation = self.environment.start_lifetime_session(
+            initial_snapshot_id, seed, session_id
+        )
         if observation.session_id != session_id:
             raise ValueError("environment observation has wrong session identity")
         self.session = Session(session_id)
@@ -43,9 +42,6 @@ class HarnessService:
         next_observation, receipt = self.environment.apply(output)
         self.session.accept_actuation(output)
         return next_observation, receipt, output
-
-    def evaluate(self, task_id: str) -> RewardBreakdown:
-        return self.environment.evaluate(task_id)
 
     def close(self) -> None:
         if self.session is not None and hasattr(self.model_client, "close_session"):

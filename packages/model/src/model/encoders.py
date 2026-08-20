@@ -4,7 +4,6 @@ import math
 
 import torch
 from torch import Tensor, nn
-from torch.nn import functional as F
 
 
 class StreamingAudioEncoder(nn.Module):
@@ -18,7 +17,12 @@ class StreamingAudioEncoder(nn.Module):
     def forward(self, audio: Tensor, cache: Tensor) -> tuple[Tensor, Tensor]:
         combined = torch.cat((cache, audio), dim=1)
         encoded = self.conv(combined.unsqueeze(1))
-        encoded = F.adaptive_avg_pool1d(encoded, self.output_tokens).transpose(1, 2)
+        batch, channels, frames = encoded.shape
+        if frames % self.output_tokens:
+            raise ValueError("audio convolution frames must divide into output tokens")
+        encoded = encoded.reshape(
+            batch, channels, self.output_tokens, frames // self.output_tokens
+        ).mean(dim=-1).transpose(1, 2)
         next_cache = combined[:, -self.cache_samples :] if self.cache_samples else combined[:, :0]
         return self.norm(encoded), next_cache
 
@@ -37,13 +41,18 @@ class VisionEncoder(nn.Module):
             nn.Conv2d(inner * 2, dim, 3, stride=2, padding=1),
             nn.GroupNorm(8, dim),
             nn.SiLU(),
-            nn.AdaptiveAvgPool2d((4, 4)),
         )
         self.position = nn.Parameter(torch.zeros(1, 16, dim))
         nn.init.normal_(self.position, std=0.02)
 
     def forward(self, screen: Tensor) -> Tensor:
         features = self.encoder(screen)
+        batch, channels, height, width = features.shape
+        if height % 4 or width % 4:
+            raise ValueError("vision feature grid must be divisible into 4x4 tokens")
+        features = features.reshape(
+            batch, channels, 4, height // 4, 4, width // 4
+        ).mean(dim=(3, 5))
         return features.flatten(2).transpose(1, 2) + self.position
 
 

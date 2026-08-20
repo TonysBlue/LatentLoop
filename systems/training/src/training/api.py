@@ -1,4 +1,4 @@
-"""Training System API for Pretrain, SFT, and Online GRPO."""
+"""Training System API for Pretrain, SFT, and Online Recurrent PPO."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from training.training import train as _train
 
 
 def run(config, **kwargs):
-    """Shared training entry point for Pretrain, SFT, and Online GRPO."""
+    """Shared training entry point for Pretrain, SFT, and Online Recurrent PPO."""
     return _train(config, **kwargs)
 
 

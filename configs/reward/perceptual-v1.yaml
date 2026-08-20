@@ -1,0 +1,33 @@
+spec_id: realtime-v2
+input:
+  type: canonical_observation_signal_protobuf
+  allowed_fields:
+    - timestamp_ms
+    - delta_ms
+    - mixed_microphone_pcm
+    - screen_pixels
+  forbidden_fields:
+    - sampled_action
+    - actuation_signal
+    - environment_receipt
+    - task_manifest
+    - dom
+    - accessibility_tree
+    - evaluator_state
+goal_tracking:
+  active_goals: 1
+  boundaries: perceptual
+  uncertain_is_trainable: false
+reward:
+  task_range: [0.0, 1.0]
+  speech_quality_range: [0.0, 1.0]
+  latency_quality_range: [0.0, 1.0]
+  action_efficiency_range: [0.0, 1.0]
+  safety_quality_range: [-1.0, 0.0]
+  interaction: 0.4 * speech_quality + 0.3 * latency_quality + 0.3 * action_efficiency
+  total: task + 0.2 * interaction + safety_quality
+events:
+  statuses: [provisional, finalized]
+  trainable_outcomes: [success, failure]
+  require_observation_chain_evidence: true
+  finalization_watermark_monotonic: true

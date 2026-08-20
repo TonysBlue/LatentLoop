@@ -24,19 +24,25 @@ def _load_backend(config_path: Path, adapter_module: str | None = None):
             f"adapter module {module_name!r} must expose create_backend(config) "
             "or create_adapters(config)"
         )
-    sensor, actuator, evaluator = module.create_adapters(config)
+    sensor, actuator = module.create_adapters(config)
     qemu = QemuConfig(
         base_image=Path(str(config["base_image"])).expanduser(),
         runtime_root=Path(str(config["runtime_root"])).expanduser(),
     )
-    for name, adapter in (("sensor", sensor), ("actuator", actuator), ("evaluator", evaluator)):
+    for name, adapter in (("sensor", sensor), ("actuator", actuator)):
         if adapter is None:
             raise RuntimeError(f"deployment adapter {name} is not configured")
-    return QemuBackend(qemu, sensor, actuator, evaluator)
+    return QemuBackend(qemu, sensor, actuator)
 
 
 def _validate_backend(backend: object, adapter_module: str) -> None:
-    required = ("environment_id", "environment_version", "reset", "apply", "evaluate", "close")
+    required = (
+        "environment_id",
+        "environment_version",
+        "start_lifetime_session",
+        "apply",
+        "close",
+    )
     missing = [name for name in required if not hasattr(backend, name)]
     if missing:
         raise RuntimeError(f"deployment module {adapter_module!r} backend is missing: {missing}")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import torch
 from contracts import ActionKind
 from torch import Tensor
 from torch.nn import functional as F
@@ -12,7 +13,8 @@ from model.types import SpeechMode, StepOutput, StreamUnit
 
 def _masked_mean(values: Tensor, mask: Tensor) -> Tensor:
     weights = mask.to(values.dtype)
-    return (values * weights).sum() / weights.sum().clamp_min(1)
+    selected = torch.where(mask, values, torch.zeros_like(values))
+    return selected.sum() / weights.sum().clamp_min(1)
 
 
 def structured_action_loss(output: StepOutput, target: StreamUnit) -> Tensor:

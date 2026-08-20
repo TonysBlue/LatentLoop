@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from contracts import ActuationSignal, EnvironmentReceipt, ObservationSignal, RewardBreakdown
+from contracts import ActuationSignal, EnvironmentReceipt, ObservationSignal
 
 
 class SensorAdapter(Protocol):
@@ -21,9 +21,3 @@ class ActuatorAdapter(Protocol):
     def apply(self, output: ActuationSignal) -> EnvironmentReceipt: ...
 
     def close(self) -> None: ...
-
-
-class EvaluatorAdapter(Protocol):
-    def evaluate(self, task_id: str) -> RewardBreakdown: ...
-
-    def terminated(self, task_id: str) -> bool: ...

@@ -24,6 +24,7 @@ from model.types import (
     StepOutput,
     StreamUnit,
 )
+from model.value import ValueHead
 
 __all__ = [
     "ActionFrame", "ActionHead", "ActionHeadOutput", "ActionLocalState", "Episode",
@@ -32,5 +33,6 @@ __all__ = [
     "GenerationOutput", "LayerKV", "RecurrentState", "SpeechLocalState", "SpeechMode",
     "SpeechSamplingConfig", "StepOutput", "StreamUnit", "StreamingLatentLoop",
     "WorldStateUpdate",
+    "ValueHead",
     "action_frame_log_prob", "action_log_prob_components", "compute_losses",
 ]

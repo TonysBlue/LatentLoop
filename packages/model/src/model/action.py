@@ -509,46 +509,46 @@ class ActionHead(nn.Module):
 
 
 def action_log_prob_components(
-    output: ActionHeadOutput, frame: ActionFrame
+    output: ActionHeadOutput,
+    frame: ActionFrame,
+    sampling_temperature: float | None = None,
 ) -> dict[str, Tensor]:
+    def categorical_logprob(logits: Tensor, target: Tensor) -> Tensor:
+        scaled = (
+            logits / sampling_temperature
+            if sampling_temperature is not None and sampling_temperature > 0
+            else logits
+        )
+        return F.log_softmax(scaled, dim=-1).gather(
+            -1, target[..., None]
+        ).squeeze(-1)
+
     eps = torch.finfo(output.coordinate_residual_alpha.dtype).eps
-    kind = F.log_softmax(output.kind_logits, dim=-1).gather(
-        -1, frame.kind[:, None]
-    ).squeeze(-1)
-    cell = F.log_softmax(output.coordinate_cell_logits, dim=-1).gather(
-        -1, frame.coordinate_cell[:, None]
-    ).squeeze(-1)
+    kind = categorical_logprob(output.kind_logits, frame.kind)
+    cell = categorical_logprob(output.coordinate_cell_logits, frame.coordinate_cell)
     residual = Beta(
         output.coordinate_residual_alpha, output.coordinate_residual_beta
     ).log_prob(frame.coordinate_residual.clamp(eps, 1.0 - eps)).sum(dim=-1)
-    button = F.log_softmax(output.button_logits, dim=-1).gather(
-        -1, frame.button[:, None]
-    ).squeeze(-1)
-    phase = F.log_softmax(output.button_phase_logits, dim=-1).gather(
-        -1, frame.button_phase[:, None]
-    ).squeeze(-1)
+    button = categorical_logprob(output.button_logits, frame.button)
+    phase = categorical_logprob(output.button_phase_logits, frame.button_phase)
     scroll_unit = ((frame.scroll_delta + 1.0) * 0.5).clamp(eps, 1.0 - eps)
     scroll = (
         Beta(output.scroll_alpha, output.scroll_beta).log_prob(scroll_unit) - math.log(2.0)
     ).sum(dim=-1)
-    text_length = F.log_softmax(output.text_length_logits, dim=-1).gather(
-        -1, frame.text_length[:, None]
-    ).squeeze(-1)
-    text_bytes = F.log_softmax(output.text_byte_logits, dim=-1).gather(
-        -1, frame.text_bytes[:, :, None]
-    ).squeeze(-1)
+    text_length = categorical_logprob(output.text_length_logits, frame.text_length)
+    text_bytes = categorical_logprob(output.text_byte_logits, frame.text_bytes)
     text_positions = torch.arange(TYPE_BYTES_PER_UNIT, device=frame.kind.device)[None]
     text_mask = text_positions < frame.text_length[:, None]
-    text = text_length + (text_bytes * text_mask).sum(dim=-1)
-    hotkey_length = F.log_softmax(output.hotkey_length_logits, dim=-1).gather(
-        -1, frame.hotkey_length[:, None]
-    ).squeeze(-1)
-    keys = F.log_softmax(output.hotkey_key_logits, dim=-1).gather(
-        -1, frame.hotkey_keys[:, :, None]
-    ).squeeze(-1)
+    text = text_length + torch.where(
+        text_mask, text_bytes, torch.zeros_like(text_bytes)
+    ).sum(dim=-1)
+    hotkey_length = categorical_logprob(output.hotkey_length_logits, frame.hotkey_length)
+    keys = categorical_logprob(output.hotkey_key_logits, frame.hotkey_keys)
     key_positions = torch.arange(HOTKEY_KEYS_PER_UNIT, device=frame.kind.device)[None]
     key_mask = key_positions < frame.hotkey_length[:, None]
-    hotkey = hotkey_length + (keys * key_mask).sum(dim=-1)
+    hotkey = hotkey_length + torch.where(
+        key_mask, keys, torch.zeros_like(keys)
+    ).sum(dim=-1)
     return {
         "kind": kind,
         "pointer_move": cell + residual,
@@ -559,8 +559,12 @@ def action_log_prob_components(
     }
 
 
-def action_frame_log_prob(output: ActionHeadOutput, frame: ActionFrame) -> Tensor:
-    components = action_log_prob_components(output, frame)
+def action_frame_log_prob(
+    output: ActionHeadOutput,
+    frame: ActionFrame,
+    sampling_temperature: float | None = None,
+) -> Tensor:
+    components = action_log_prob_components(output, frame, sampling_temperature)
     result = components["kind"]
     conditions = (
         (ActionKind.POINTER_MOVE, "pointer_move"),
@@ -570,5 +574,12 @@ def action_frame_log_prob(output: ActionHeadOutput, frame: ActionFrame) -> Tenso
         (ActionKind.HOTKEY, "hotkey"),
     )
     for kind, name in conditions:
-        result = result + frame.kind.eq(int(kind)) * components[name]
+        # Irrelevant conditional distributions may contain -inf after grammar
+        # masking. Multiplication would turn 0 * -inf into NaN, so select the
+        # active branch explicitly.
+        result = result + torch.where(
+            frame.kind.eq(int(kind)), components[name], torch.zeros_like(result)
+        )
+    if not torch.isfinite(result).all():
+        raise RuntimeError("structured action log-probability is not finite")
     return result

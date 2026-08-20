@@ -45,6 +45,17 @@ def test_recurrent_state_is_bounded_and_heads_receive_gradients(
     assert model.speech_head.depth_embeddings[0].weight.grad is not None
     assert model.action_head.kind_output.weight.grad is not None
     assert model.speech_head.mode.weight.grad is not None
+    assert output.value.shape == (1,)
+
+
+def test_training_value_head_receives_policy_value_gradient(smoke_config: ProjectConfig) -> None:
+    model = StreamingLatentLoop(smoke_config.model)
+    unit = SyntheticEpisodeDataset(smoke_config.data, smoke_config.model).make_episode(0).units[0]
+    output = model(unit, model.initial_state(1, "cpu"), unit.speech_codes)
+
+    output.value.square().mean().backward()
+
+    assert model.value_head.network[-1].weight.grad is not None
 
 
 def test_detach_breaks_tbptt_graph(smoke_config: ProjectConfig) -> None:

@@ -98,21 +98,38 @@ class TrainingConfig:
 
 @dataclass(slots=True)
 class RLConfig:
-    group_size: int = 4
+    algorithm: str = "recurrent_ppo"
+    ppo_window_units: int = 750
+    ppo_epochs: int = 4
+    gae_lambda: float = 0.95
+    discount_time_constant_ms: float = 10_000.0
+    value_coef: float = 0.5
+    entropy_coef: float = 0.01
+    sft_replay_coef: float = 0.1
+    max_pending_reward_units: int = 750
+    candidate_max_reference_kl: float = 1.0
+    candidate_max_eval_loss_ratio: float = 1.25
+    candidate_max_rejections: int = 3
     clip_epsilon: float = 0.2
     reference_kl_beta: float = 0.02
-    rollout_horizon_units: int = 750
-    groups_per_update: int = 1
-    environment_workers: int = 1
     environment_socket: str | None = None
     codec_socket: str | None = None
+    reward_socket: str | None = None
     environment_id: str = ""
     environment_version: str = "1"
     environment_protocol_version: str = "realtime-v2"
-    task_manifest: str | None = None
     reward_spec_id: str = "realtime-v2"
+    judge_model_id: str = "external-frozen-multimodal"
+    judge_revision: str = "unconfigured"
+    rubric_sha256: str = "unconfigured"
+    timeline_root: str | None = None
+    session_manifest: str | None = None
+    sft_replay_shards: str | None = None
+    sft_replay_manifest: str | None = None
+    sft_preservation_shards: str | None = None
+    sft_preservation_manifest: str | None = None
     sampling_temperature: float = 0.8
-    sampling_top_k: int = 250
+    sampling_top_k: int = 0
     advantage_epsilon: float = 1e-6
 
 
@@ -212,6 +229,12 @@ class ProjectConfig:
             raise ValueError("codec identity and weight hash are required")
         if self.data.unit_audio_samples * 1_000 != self.data.audio_sample_rate * self.data.unit_ms:
             raise ValueError("unit_audio_samples must exactly match the audio clock")
+        audio_frames = self.data.unit_audio_samples // self.model.audio_stride
+        if (
+            self.data.unit_audio_samples % self.model.audio_stride
+            or audio_frames % self.model.audio_tokens
+        ):
+            raise ValueError("audio convolution frames must divide into model audio tokens")
         if self.data.screen_height != 224 or self.data.screen_width != 224:
             raise ValueError("screen input must be exactly 224x224")
         if self.data.codec_codebooks != self.model.speech_codebooks:
@@ -237,24 +260,44 @@ class ProjectConfig:
             raise ValueError("backbone_train_mode must be frozen, selective, or all")
         if self.training.stage not in {"pretrain", "sft", "rl"}:
             raise ValueError("training.stage must be pretrain, sft, or rl")
-        if self.training.objective not in {"supervised", "grpo"}:
-            raise ValueError("training.objective must be supervised or grpo")
+        if self.training.objective not in {"supervised", "ppo"}:
+            raise ValueError("training.objective must be supervised or ppo")
         if self.training.stage in {"pretrain", "sft"} and self.training.objective != "supervised":
             raise ValueError("pretrain and sft require supervised objective")
-        if self.training.stage == "rl" and self.training.objective != "grpo":
-            raise ValueError("rl stage requires GRPO objective")
+        if self.training.stage == "rl" and self.training.objective != "ppo":
+            raise ValueError("rl stage requires PPO objective")
         if self.data.dataset in {"canary", "pilot", "production"}:
             if self.training.backbone_train_mode != "all":
                 raise ValueError(
                     "formal stages must train the full model with backbone_train_mode=all"
                 )
         rl = self.training.rl
-        if rl.group_size < 2 or rl.groups_per_update < 1 or rl.environment_workers < 1:
-            raise ValueError("RL group_size must be >=2 and workers/groups must be positive")
+        if rl.algorithm != "recurrent_ppo":
+            raise ValueError("RL algorithm must be recurrent_ppo")
+        if rl.ppo_window_units < 1 or rl.ppo_epochs < 2 or rl.max_pending_reward_units < 0:
+            raise ValueError("PPO window and pending reward horizon must be non-negative")
+        if self.training.stage == "rl" and rl.ppo_window_units < self.training.memory_horizon_units:
+            raise ValueError("PPO window must cover the recurrent memory horizon")
+        if not 0 < rl.gae_lambda <= 1 or rl.discount_time_constant_ms <= 0:
+            raise ValueError("GAE lambda and discount time constant are invalid")
         if not 0 < rl.clip_epsilon < 1 or rl.reference_kl_beta < 0:
             raise ValueError("RL clip_epsilon must be in (0,1) and KL beta non-negative")
-        if rl.rollout_horizon_units < 1 or rl.sampling_temperature <= 0 or rl.sampling_top_k < 0:
-            raise ValueError("RL horizon, temperature and top_k are invalid")
+        if (
+            rl.candidate_max_reference_kl <= 0
+            or rl.candidate_max_eval_loss_ratio < 1
+            or rl.candidate_max_rejections < 1
+        ):
+            raise ValueError("PPO candidate acceptance gates are invalid")
+        if rl.sampling_temperature <= 0 or rl.sampling_top_k < 0:
+            raise ValueError("RL temperature and top_k are invalid")
+        if self.training.stage == "rl" and rl.sampling_top_k != 0:
+            raise ValueError("PPO requires full-support sampling_top_k=0")
+        if self.training.stage == "rl" and (
+            rl.judge_revision == "unconfigured"
+            or len(rl.rubric_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in rl.rubric_sha256)
+        ):
+            raise ValueError("PPO requires a locked Judge revision and rubric SHA-256")
         if self.training.stage == "rl" and self.data.dataset in {
             "canary",
             "pilot",
@@ -263,14 +306,27 @@ class ProjectConfig:
             if (
                 not rl.environment_socket
                 or not rl.codec_socket
+                or not rl.reward_socket
                 or not rl.environment_id
                 or not rl.environment_version
                 or not rl.environment_protocol_version
-                or not rl.task_manifest
+                or not rl.session_manifest
+                or not rl.sft_replay_shards
+                or not rl.sft_replay_manifest
+                or not rl.sft_preservation_shards
+                or not rl.sft_preservation_manifest
             ):
                 raise ValueError(
-                    "formal RL requires environment_socket, environment_id and task_manifest"
+                    "formal RL requires environment, codec and reward sockets, "
+                    "environment identity, session_manifest and SFT guard datasets"
                 )
+            if (
+                Path(rl.sft_replay_shards).expanduser()
+                == Path(rl.sft_preservation_shards).expanduser()
+                or Path(rl.sft_replay_manifest).expanduser()
+                == Path(rl.sft_preservation_manifest).expanduser()
+            ):
+                raise ValueError("PPO replay and preservation datasets must be independent")
         if self.training.speech_loss_weight <= 0 or self.training.action_loss_weight <= 0:
             raise ValueError("speech_loss_weight and action_loss_weight must be positive")
         if self.training.memory_horizon_units < 1:

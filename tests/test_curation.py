@@ -16,8 +16,9 @@ from data.curation import (
 from data.curation.common import dataset_path, read_jsonl, registry_path, sha256_file
 from data.curation.manifest import _duration_subset
 from data.curation.prepare import prepare_pilot_data
+from data.curation.readiness import check_readiness
 from model.types import SpeechMode
-from runtime.config import DataConfig, ModelConfig, ProjectConfig
+from runtime.config import DataConfig, ModelConfig, ProjectConfig, load_config
 
 
 def _fixture_pipeline(root: Path, dataset: str) -> None:
@@ -132,6 +133,12 @@ def test_production_fetch_requires_locked_source_lock(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires --lock"):
         fetch_pilot_data(tmp_path / "datasets")
     assert registry_path(tmp_path / "datasets", "source-lock.template.json").is_file()
+
+
+def test_formal_ppo_readiness_requires_sft_guard_assets(tmp_path: Path) -> None:
+    config = load_config("configs/stages/canary-rl.yaml")
+    with pytest.raises(ValueError, match="SFT replay"):
+        check_readiness(tmp_path, config=config)
 
 
 def test_production_text_plan_meets_scale_and_duration_mix(tmp_path: Path) -> None:

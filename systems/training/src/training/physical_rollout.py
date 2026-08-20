@@ -1,7 +1,8 @@
-"""Physical rollout client used by Online GRPO."""
+"""Physical lifetime rollout client used by Online Recurrent PPO."""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
@@ -10,7 +11,6 @@ from contracts import (
     ActuationSignal,
     EnvironmentReceipt,
     ObservationSignal,
-    RewardBreakdown,
     SpeechSignal,
 )
 from harness.transport.control import HarnessControlClient
@@ -33,9 +33,9 @@ class PhysicalRolloutClient:
         socket_path = config.training.rl.environment_socket
         codec_socket = config.training.rl.codec_socket
         if not socket_path:
-            raise ValueError("Online GRPO requires training.rl.environment_socket")
+            raise ValueError("Online Recurrent PPO requires training.rl.environment_socket")
         if not codec_socket:
-            raise ValueError("Online GRPO requires training.rl.codec_socket")
+            raise ValueError("Online Recurrent PPO requires training.rl.codec_socket")
         self.config = config
         self.harness = HarnessControlClient(socket_path)
         from runtime.codec import CodecIdentity
@@ -60,11 +60,26 @@ class PhysicalRolloutClient:
     def identity(self) -> dict[str, str]:
         return self.harness.identity()
 
-    def reset(self, task_id: str, seed: int, session_id: str) -> ObservationSignal:
+    def start_lifetime_session(
+        self, initial_snapshot_id: str, seed: int, session_id: str
+    ) -> ObservationSignal:
         self.session_id = session_id
         self.codec.reset(session_id, replay=False)
         self.actions.reset()
-        return self.harness.reset(task_id, seed, session_id)
+        return self.harness.start_lifetime_session(initial_snapshot_id, seed, session_id)
+
+    def resume_lifetime_session(
+        self,
+        session_id: str,
+        expected_next_unit: int,
+        *,
+        pending_utf8: bytes = b"",
+        speech_history: Iterable[torch.Tensor] = (),
+    ) -> ObservationSignal:
+        self.session_id = session_id
+        self.actions.pending_utf8 = pending_utf8
+        self.codec.restore_decode_history(session_id, speech_history)
+        return self.harness.resume_lifetime_session(session_id, expected_next_unit)
 
     def actuation(
         self,
@@ -107,15 +122,14 @@ class PhysicalRolloutClient:
         next_observation, receipt = self.harness.apply(output)
         return next_observation, receipt, output
 
-    def evaluate(self, task_id: str) -> RewardBreakdown:
-        if self.session_id is None:
-            raise RuntimeError("physical rollout session is not active")
-        return self.harness.evaluate(task_id, self.session_id)
-
     def close(self) -> None:
         if self.session_id is not None:
             self.harness.close(self.session_id)
             self.session_id = None
+
+    def detach(self) -> None:
+        """Disconnect this client without closing the persistent lifetime session."""
+        self.session_id = None
 
 
 def observation_to_stream_unit(observation: ObservationSignal, config: ProjectConfig) -> StreamUnit:
@@ -125,6 +139,8 @@ def observation_to_stream_unit(observation: ObservationSignal, config: ProjectCo
         mic = mic.astype(np.float32) / 32768.0
     if mic.size != config.data.unit_audio_samples:
         raise ValueError("physical observation microphone has wrong unit size")
+    if not np.isfinite(mic).all() or np.max(np.abs(mic)) > 1.0:
+        raise ValueError("physical observation microphone PCM is not normalized and finite")
     import io
 
     expected = observation.screen.width * observation.screen.height * 3

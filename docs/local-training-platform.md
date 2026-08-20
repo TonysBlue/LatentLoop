@@ -4,7 +4,7 @@
 > 日期：2026-08-08
 > 关联顶层架构：[实时流多模态 LatentLoop 完整方案](realtime-multimodal-latent-loop.md)
 > 输出协议：[直接流式语音实施说明](direct-speech.md) · [统一电脑动作输出协议](unified-action.md)
-> 训练协议：[统一三阶段训练架构](three-stage-training.md) · [Online GRPO 与真实隔离电脑环境](online-grpo-training.md)
+> 训练协议：[统一三阶段训练架构](three-stage-training.md) · [Online Recurrent PPO 与真实隔离电脑环境](online-recurrent-ppo-training.md)
 > 目标：在本地 WSL2/单 GPU 环境中提供与最终目标架构一致、可恢复、可观测的训练和验证闭环。
 
 ## 1. 设计结论
@@ -75,8 +75,8 @@ LatentLoop/
 │   └── runtime/       # 配置、codec worker、action continuation
 ├── systems/
 │   ├── model-service/ # ObservationSignal -> ActuationSignal 推理边界
-│   ├── training/      # Pretrain/SFT/Online GRPO、checkpoint、评估
-│   └── harness/       # QEMU/KVM、采集、执行、receipt/reward
+│   ├── training/      # Pretrain/SFT/Online Recurrent PPO、checkpoint、评估
+│   └── harness/       # QEMU/KVM、采集、执行、receipt、感知 Judge client
 ├── scripts/
 └── tests/
 
@@ -109,7 +109,7 @@ dataclass schema -> YAML profile -> CLI --set
 
 ### 4.3 统一代码路径
 
-Canary、Pilot、Production、Smoke 和 direct-speech gate 使用同一个 train/recipe/evaluate 代码路径。正式规模均按 `Pretrain -> SFT -> Online GRPO` 运行；差异只来自配置中的数据量、更新数、rollout group size、环境并发和资源预算，不得添加阶段专用 Python 或 shell 训练循环。Pretrain/SFT 使用共享监督分支，GRPO 使用共享在线环境分支，但两者仍由同一个 `training.py::train` 按 objective 分派。
+Canary、Pilot、Production、Smoke 和 direct-speech gate 使用同一个 train/recipe/evaluate 代码路径。正式规模均按 `Pretrain -> SFT -> Online Recurrent PPO` 运行；差异只来自配置中的数据量、更新数、PPO window、环境并发和资源预算，不得添加阶段专用 Python 或 shell 训练循环。Pretrain/SFT 使用共享监督分支，PPO 使用共享在线环境分支，但两者仍由同一个 `training.py::train` 按 objective 分派。
 
 ## 5. 多模态时间契约
 

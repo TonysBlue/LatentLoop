@@ -14,6 +14,14 @@ def test_vision_encoder_emits_sixteen_spatial_tokens(smoke_config) -> None:
     assert smoke_config.model.vision_tokens == 16
 
 
+def test_vision_encoder_has_no_nondeterministic_adaptive_pool(smoke_config) -> None:
+    model = StreamingLatentLoop(smoke_config.model)
+    assert not any(
+        isinstance(layer, (torch.nn.AdaptiveAvgPool2d, torch.nn.AvgPool2d))
+        for layer in model.vision_encoder.modules()
+    )
+
+
 def test_static_and_dynamic_frames_use_the_same_visual_path(smoke_config) -> None:
     model = StreamingLatentLoop(smoke_config.model)
     static = torch.zeros(1, 3, 224, 224)
