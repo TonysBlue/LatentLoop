@@ -32,25 +32,23 @@ def test_local_dev_and_production_profiles_are_explicit() -> None:
     assert production.model.action_schema_id == "structured-action-v1"
 
 
-def test_training_stage_and_objective_must_match() -> None:
-    with pytest.raises(ValueError, match="supervised objective"):
-        load_config("configs/smoke.yaml", ["training.stage=pretrain", "training.objective=ppo"])
-    with pytest.raises(ValueError, match="PPO objective"):
-        load_config("configs/smoke.yaml", ["training.stage=rl", "training.objective=supervised"])
-    with pytest.raises(ValueError, match="supervised or ppo"):
-        load_config("configs/smoke.yaml", ["training.stage=rl", "training.objective=obsolete"])
+def test_training_stage_is_the_only_top_level_dispatch_key() -> None:
+    with pytest.raises(ValueError, match="pretrain, sft, or rl"):
+        load_config("configs/smoke.yaml", ["training.stage=obsolete"])
+    with pytest.raises(ValueError, match="training.objective is removed"):
+        load_config("configs/smoke.yaml", ["training.objective=ppo"])
 
 
 def test_formal_rl_requires_real_environment_configuration() -> None:
     with pytest.raises(ValueError, match="environment, codec and reward sockets"):
         load_config(
             "configs/canary.yaml",
-            ["training.stage=rl", "training.objective=ppo", "training.rl.environment_socket=null"],
+            ["training.stage=rl", "training.rl.environment_socket=null"],
         )
     with pytest.raises(ValueError, match="SFT guard datasets"):
         load_config(
             "configs/canary.yaml",
-            ["training.stage=rl", "training.objective=ppo", "training.rl.sft_replay_shards=null"],
+            ["training.stage=rl", "training.rl.sft_replay_shards=null"],
         )
 
 
@@ -71,13 +69,20 @@ def test_ppo_candidate_acceptance_gates_are_validated() -> None:
     with pytest.raises(ValueError, match="full-support"):
         load_config(
             "configs/smoke.yaml",
-            ["training.stage=rl", "training.objective=ppo", "training.rl.sampling_top_k=4"],
+            ["training.stage=rl", "training.rl.sampling_top_k=4"],
         )
     with pytest.raises(ValueError, match="locked Judge revision"):
         load_config(
             "configs/smoke.yaml",
-            ["training.stage=rl", "training.objective=ppo"],
+            ["training.stage=rl"],
         )
+
+
+def test_online_rl_uses_the_online_recurrent_ppo_algorithm() -> None:
+    config = load_config("configs/canary.yaml")
+    assert config.training.rl.algorithm == "online_recurrent_ppo"
+    with pytest.raises(ValueError, match="online_recurrent_ppo"):
+        load_config("configs/smoke.yaml", ["training.rl.algorithm=recurrent_ppo"])
 
 
 def test_config_rejects_incompatible_attention_width() -> None:

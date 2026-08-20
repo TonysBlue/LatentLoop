@@ -37,6 +37,8 @@ def test_current_contract_has_no_project_version_numbers(smoke_config, tmp_path:
     payload = torch.load(path, map_location="cpu", weights_only=False)
     assert "format_version" not in payload
     assert "schema_version" not in payload["metadata"]
+    assert "objective" not in payload["metadata"]
+    assert payload["metadata"]["algorithm"] is None
     assert "world_state_update_version" not in payload["metadata"]
     assert "delta_time_encoder_version" not in payload["metadata"]
 

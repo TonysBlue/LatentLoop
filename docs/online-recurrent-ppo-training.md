@@ -1,12 +1,13 @@
-# Online Recurrent PPO 与真实隔离电脑环境
+# Online RL：Online Recurrent PPO 与真实隔离电脑环境
 
-> 状态：最终目标强化学习与环境协议
+> 状态：最终目标 Online RL 阶段、Online Recurrent PPO 算法与环境协议
 > 日期：2026-08-19
 > 关联文档：[统一三阶段训练架构](three-stage-training.md) · [统一电脑动作输出协议](unified-action.md) · [物理 Rollout 闭环](protocols/physical-rollout.md)
 
 ## 1. 环境选择
 
-Canary、Pilot、Production 全部使用同一种真实隔离电脑环境。正式 RL 使用一个生命期
+Canary、Pilot、Production 全部使用同一种真实隔离电脑环境。正式 Online RL
+当前唯一允许的算法是 Online Recurrent PPO。它使用一个生命期
 session 的连续物理时间线；任务完成不会重置模型或环境。只有显式 session close、设备
 更换或故障恢复才建立新的 lineage。Canary 不使用 fixture 或离线 rollout 替代环境。
 

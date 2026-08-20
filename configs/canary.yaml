@@ -1,5 +1,5 @@
-# Canary uses the complete Pretrain -> SFT -> Online Recurrent PPO recipe on a small real
-# dataset. All three formal stages train the full model.
+# Canary uses the complete Pretrain -> SFT -> Online RL recipe on a small real
+# dataset. Online RL uses Online Recurrent PPO; all three formal stages train the full model.
 model:
   model_dim: 512
   latent_dim: 512
@@ -52,7 +52,6 @@ data:
   seed: 17
 training:
   stage: pretrain
-  objective: supervised
   max_updates: 1000
   weight_decay: 0.1
   gradient_accumulation_steps: 16
@@ -72,7 +71,7 @@ training:
   memory_horizon_units: 750
   min_learning_rate_ratio: 0.1
   rl:
-    algorithm: recurrent_ppo
+    algorithm: online_recurrent_ppo
     ppo_window_units: 750
     ppo_epochs: 4
     candidate_max_reference_kl: 1.0

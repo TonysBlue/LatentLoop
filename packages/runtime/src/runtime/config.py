@@ -74,7 +74,6 @@ class DataConfig:
 @dataclass(slots=True)
 class TrainingConfig:
     stage: str = "pretrain"
-    objective: str = "supervised"
     max_updates: int = 10_000
     weight_decay: float = 0.1
     gradient_accumulation_steps: int = 16
@@ -98,7 +97,7 @@ class TrainingConfig:
 
 @dataclass(slots=True)
 class RLConfig:
-    algorithm: str = "recurrent_ppo"
+    algorithm: str = "online_recurrent_ppo"
     ppo_window_units: int = 750
     ppo_epochs: int = 4
     gae_lambda: float = 0.95
@@ -260,20 +259,14 @@ class ProjectConfig:
             raise ValueError("backbone_train_mode must be frozen, selective, or all")
         if self.training.stage not in {"pretrain", "sft", "rl"}:
             raise ValueError("training.stage must be pretrain, sft, or rl")
-        if self.training.objective not in {"supervised", "ppo"}:
-            raise ValueError("training.objective must be supervised or ppo")
-        if self.training.stage in {"pretrain", "sft"} and self.training.objective != "supervised":
-            raise ValueError("pretrain and sft require supervised objective")
-        if self.training.stage == "rl" and self.training.objective != "ppo":
-            raise ValueError("rl stage requires PPO objective")
         if self.data.dataset in {"canary", "pilot", "production"}:
             if self.training.backbone_train_mode != "all":
                 raise ValueError(
                     "formal stages must train the full model with backbone_train_mode=all"
                 )
         rl = self.training.rl
-        if rl.algorithm != "recurrent_ppo":
-            raise ValueError("RL algorithm must be recurrent_ppo")
+        if rl.algorithm != "online_recurrent_ppo":
+            raise ValueError("RL algorithm must be online_recurrent_ppo")
         if rl.ppo_window_units < 1 or rl.ppo_epochs < 2 or rl.max_pending_reward_units < 0:
             raise ValueError("PPO window and pending reward horizon must be non-negative")
         if self.training.stage == "rl" and rl.ppo_window_units < self.training.memory_horizon_units:
@@ -347,9 +340,11 @@ class ProjectConfig:
 
 
 def load_config(path: str | Path, overrides: list[str] | None = None) -> ProjectConfig:
-    # Old objective keys are rejected explicitly instead of being silently
-    # interpreted as compatibility settings.
     for override in overrides or []:
+        if override.split("=", 1)[0] == "training.objective":
+            raise ValueError(
+                "training.objective is removed; use training.stage and training.rl.algorithm"
+            )
         if "speech_control_class_weights" in override:
             raise ValueError("speech_control_class_weights is removed; use speech_loss_weight")
         if "speech_control_loss_weight" in override:

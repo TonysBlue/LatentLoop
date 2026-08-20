@@ -285,7 +285,7 @@ identity。恢复后下一 frame 的 logits、采样和 UTF-8 assembler 状态�
 - receipt/reward/accepted/safety 不进入 ObservationSignal；
 - Harness 拒绝越界参数和非法 held-input 转移；
 - 不完整 checkpoint、flat action array 和旧配置字段 fail closed；
-- formal Pretrain、SFT、Online Recurrent PPO 共享同一 Action Head 与概率路径。
+- formal Pretrain、SFT、Online RL 共享同一 Action Head 与概率路径；Online RL 当前使用 Online Recurrent PPO。
 
 ## 12. 结论
 

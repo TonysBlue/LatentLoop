@@ -1,6 +1,6 @@
 # 当前轨迹契约
 
-监督 episode、SFT 样本和 Online Recurrent PPO window 统一使用当前轨迹契约。项目只维护这一份
+监督 episode、SFT 样本和 Online RL 的 Online Recurrent PPO window 统一使用当前轨迹契约。项目只维护这一份
 数据契约，不维护 schema 编号或历史迁移路径。
 
 每个 `meta.json` 和 manifest entry 必须包含 `dataset_scale`、

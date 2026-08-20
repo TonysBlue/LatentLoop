@@ -2,19 +2,20 @@
 
 > 状态：最终目标训练契约
 > 日期：2026-08-19
-> 关联文档：[实时流多模态 LatentLoop](realtime-multimodal-latent-loop.md) · [Online Recurrent PPO 与隔离环境](online-recurrent-ppo-training.md)
+> 关联文档：[实时流多模态 LatentLoop](realtime-multimodal-latent-loop.md) · [Online RL：Online Recurrent PPO 与隔离环境](online-recurrent-ppo-training.md)
 
 ## 1. 总体定义
 
 LatentLoop 的正式训练顺序固定为：
 
 ```text
-Pretrain -> SFT -> Online Recurrent PPO
+Pretrain -> SFT -> Online RL
 ```
 
 Canary、Pilot、Production 都完整执行相同的三个阶段。它们使用同一模型语义、
 同一 `training.py::train`、同一 `recipe.py::run_recipe`、同一环境协议、同一
-reward 公式和同一 checkpoint 格式。规模之间只改变数据数量、更新数、PPO 窗口和计算
+reward 公式和同一 checkpoint 格式。Online RL 的当前正式算法固定为
+Online Recurrent PPO。规模之间只改变数据数量、更新数、PPO 窗口和计算
 资源，不改变单 active lifetime 或训练目标。
 
 模型运行时始终只有两个输出头：Speech Head 直接输出 speech mode 与 Mimi codec token；
@@ -29,7 +30,7 @@ Unified Action Head 通过一个结构化 ActionFrame schema 输出全部电脑�
 |---|---|---|
 | Pretrain | 广覆盖多模态监督 episode | 学习音频、屏幕、时间、语言、动作和状态转移的通用规律 |
 | SFT | 独立的高质量专家轨迹 | 学习可靠交互、语音响应和电脑操作策略 |
-| Online Recurrent PPO | 当前 policy 在真实隔离环境生命期时间线中的窗口 | 按感知 Reward Event、交互质量、延迟、效率和安全反馈优化策略 |
+| Online RL | 当前 policy 在真实隔离环境生命期时间线中的窗口 | 使用 Online Recurrent PPO，按感知 Reward Event、交互质量、延迟、效率和安全反馈优化策略 |
 
 Pretrain/SFT episode 按 80 ms unit 保存。没有专家 action 的 unit 必须设置
 `action_supervision_mask=false`；不得把“无 action 标签”伪造成有监督 `NO_ACTION`。
@@ -53,18 +54,22 @@ InputEncoder、Backbone 和 WorldStateUpdate 全部更新。WorldStateUpdate 没
 
 SFT 与 Pretrain 使用相同的模型 forward 和损失形式，但输入是独立、审核过的专家
 交互轨迹。SFT 不是“只训练 head”的适配阶段，全模型继续更新。SFT 最终 checkpoint
-同时成为 Online Recurrent PPO 的初始 policy 与冻结 reference policy。
+同时成为 Online RL 的初始 policy 与冻结 reference policy。
 
-Pretrain checkpoint 只能作为 SFT 的父 checkpoint；SFT 数据身份、stage、objective
+Pretrain checkpoint 只能作为 SFT 的父 checkpoint；SFT 数据身份、stage
 和父 checkpoint hash 都进入谱系。SFT 不读取 Pretrain 数据作为隐式回退。
 
-## 5. Online Recurrent PPO
+## 5. Online RL
 
-Online Recurrent PPO 运行在单一生命期 ObservationSignal 时间线上。冻结的外部多模态
+Online RL 当前使用 Online Recurrent PPO，运行在单一生命期
+ObservationSignal 时间线上。冻结的外部多模态
 Judge 只读取 canonical observation bytes，推断单 active goal 的 Reward Event；完成
 finalization watermark 后，后台候选策略用时间折扣 GAE、Value Head 和 clipped policy
 ratio 更新。旧策略继续服务，候选通过验证后在 unit 边界原子切换。详细数学定义见
 `online-recurrent-ppo-training.md`。
+
+配置不使用重复的 `training.objective`。`training.stage` 唯一决定三阶段分派；
+仅当 `stage=rl` 时，`training.rl.algorithm=online_recurrent_ppo` 决定具体 RL 更新规则。
 
 ## 6. 当前数据契约
 
@@ -98,7 +103,7 @@ checkpoint 不写入 format/schema 编号，metadata 至少包含：
 
 ```text
 stage
-objective
+algorithm
 data_identity
 codec identity
 action_schema_id
@@ -115,9 +120,11 @@ observation_chain_sha256
 policy_sample_chain_sha256
 ```
 
-Pretrain checkpoint 的 parent 可以为空；SFT 的 parent 必须是 Pretrain；PPO 的 parent
+Pretrain checkpoint 的 parent 可以为空；SFT 的 parent 必须是 Pretrain；Online RL 的 parent
 必须沿训练更新链前进，同时 reference hash 始终指向冻结的 SFT checkpoint。旧 flat-action
 checkpoint 直接拒绝，不能 resume 或 warm-start Action Head 权重。
+Pretrain/SFT checkpoint 的 `algorithm=null`；Online RL checkpoint 的
+`algorithm=online_recurrent_ppo`。checkpoint 不保存 `objective` 字段。
 
 ## 8. 三种规模配置
 
@@ -125,7 +132,7 @@ checkpoint 直接拒绝，不能 resume 或 warm-start Action Head 权重。
 |---|---:|---:|---:|
 | Pretrain updates | 1,000 | 50,000 | 100,000 |
 | SFT updates | 600 | 30,000 | 60,000 |
-| PPO updates | 400 | 20,000 | 40,000 |
+| Online RL updates | 400 | 20,000 | 40,000 |
 | PPO window | 750 units | 750 units | 750 units |
 | active lifetime | 1 | 1 | 1 |
 | memory / rollout horizon | 750 units | 750 units | 750 units |
@@ -137,7 +144,7 @@ Canary 是完整训练链的小规模证明，不是删减版算法。它同样�
 
 实现必须由以下测试保护：
 
-- 配置拒绝错误 stage/objective、正式 RL 缺失环境/Judge identity/socket、非法 PPO 参数；
+- 配置拒绝错误 stage/algorithm、正式 RL 缺失环境/Judge identity/socket、非法 PPO 参数；
 - 三个正式 recipe 都严格包含 `pretrain -> sft -> rl`，且全部 `backbone_train_mode=all`；
 - 当前数据契约往返保存结构化 frame、runtime identity、decoded controls、receipts 与 metadata；
 - speech-only 导入保持 action mask 全 false，显式专家动作可正确编码；

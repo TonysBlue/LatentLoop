@@ -223,7 +223,6 @@ def test_formal_physical_online_recurrent_ppo_runs_one_update(
             "data.dataset=synthetic",
             "data.audio_sample_rate=24000",
             "data.unit_audio_samples=1920",
-            "training.objective=ppo",
             "training.stage=rl",
             "training.max_updates=1",
             "training.rl.ppo_window_units=8",
@@ -277,7 +276,6 @@ def test_formal_physical_online_recurrent_ppo_runs_one_update(
             "data.audio_sample_rate=24000",
             "data.unit_audio_samples=1920",
             "training.stage=sft",
-            "training.objective=supervised",
         ],
     )
     manager.save(
@@ -328,7 +326,6 @@ def test_online_recurrent_ppo_resumes_the_same_lifetime_session(
             "data.dataset=synthetic",
             "data.audio_sample_rate=24000",
             "data.unit_audio_samples=1920",
-            "training.objective=ppo",
             "training.stage=rl",
             "training.max_updates=2",
             "training.rl.ppo_window_units=8",
@@ -383,7 +380,6 @@ def test_online_recurrent_ppo_resumes_the_same_lifetime_session(
             "data.audio_sample_rate=24000",
             "data.unit_audio_samples=1920",
             "training.stage=sft",
-            "training.objective=supervised",
         ],
     )
     init_manager.save(

@@ -33,7 +33,7 @@ class CheckpointMetadata:
     codec_revision: str = "unknown"
     parent_sha256: str | None = None
     stage: str = "pretrain"
-    objective: str = "supervised"
+    algorithm: str | None = None
     action_schema_id: str = "structured-action-v1"
     reference_checkpoint_sha256: str | None = None
     environment_id: str | None = None
@@ -124,6 +124,18 @@ def _deserialize_state(
         ),
         unit_index=payload["unit_index"].to(device),
     )
+
+
+def _parse_metadata(payload: Any) -> CheckpointMetadata:
+    if not isinstance(payload, dict):
+        raise ValueError("checkpoint metadata is incomplete")
+    if "objective" in payload:
+        raise ValueError(
+            "checkpoint objective is removed; create a new stage/algorithm checkpoint"
+        )
+    if "algorithm" not in payload:
+        raise ValueError("checkpoint algorithm identity is missing")
+    return CheckpointMetadata(**payload)
 
 
 class CheckpointManager:
@@ -259,14 +271,14 @@ class CheckpointManager:
             )
         if payload["config_hash"] != config_hash(config):
             raise ValueError("checkpoint configuration does not match the current run")
-        restored_metadata = CheckpointMetadata(**payload["metadata"])
+        restored_metadata = _parse_metadata(payload["metadata"])
         for field_name in (
             "data_identity",
             "codec_id",
             "codec_weight_hash",
             "codec_revision",
             "stage",
-            "objective",
+            "algorithm",
             "action_schema_id",
             "reference_checkpoint_sha256",
             "environment_id",
@@ -309,7 +321,7 @@ def inspect_checkpoint(
         payload.get("metadata"), dict
     ):
         raise ValueError("checkpoint is incomplete; only the current contract is supported")
-    return payload["train_state"], CheckpointMetadata(**payload["metadata"])
+    return payload["train_state"], _parse_metadata(payload["metadata"])
 
 
 def load_reference_recurrent_state(

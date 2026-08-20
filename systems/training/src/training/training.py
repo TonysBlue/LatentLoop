@@ -160,7 +160,9 @@ def _checkpoint_metadata(
         parent_sha256=parent_sha256,
         reference_checkpoint_sha256=reference_checkpoint_sha256,
         stage=config.training.stage,
-        objective=config.training.objective,
+        algorithm=(
+            config.training.rl.algorithm if config.training.stage == "rl" else None
+        ),
         action_schema_id=ACTION_SCHEMA_ID,
         environment_id=config.training.rl.environment_id or None,
         session_manifest_sha256=(
@@ -220,7 +222,7 @@ def train(
 ) -> dict[str, Any]:
     if resume and init_from:
         raise ValueError("resume and init_from are mutually exclusive")
-    if config.training.objective == "ppo":
+    if config.training.stage == "rl":
         return train_online_ppo(
             config,
             resume=resume,
@@ -1146,7 +1148,7 @@ def train_online_ppo(
         assert init_from is not None
         sft_checkpoint = Path(init_from).expanduser().resolve()
     _, sft_metadata = inspect_checkpoint(sft_checkpoint)
-    if sft_metadata.stage != "sft" or sft_metadata.objective != "supervised":
+    if sft_metadata.stage != "sft" or sft_metadata.algorithm is not None:
         raise ValueError("Online Recurrent PPO requires a final supervised SFT checkpoint")
     sft_sha256 = file_sha256(sft_checkpoint)
     initialize_exact_weights(policy, sft_checkpoint)

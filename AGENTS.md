@@ -52,16 +52,17 @@ When a stage needs new behavior, first add a configuration field or a shared
 capability with tests. Only add stage-specific branching when the data/model
 contract genuinely differs, and document why in the design documentation.
 
-正式训练 recipe 的阶段语义固定为 `Pretrain -> SFT -> Online Recurrent PPO`。Canary、
+正式训练 recipe 的阶段语义固定为 `Pretrain -> SFT -> Online RL`。Canary、
 Pilot、Production 必须完整执行这三个阶段，且共享模型、训练循环、真实隔离电脑
-环境协议、reward 定义和 checkpoint 谱系；三种规模只能通过 YAML 改变数据量、
-optimizer update 数、PPO window 和资源预算。正式单智能体 PPO 始终只有一个 active
+环境协议、reward 定义和 checkpoint 谱系；Online RL 的当前正式算法固定为
+Online Recurrent PPO。三种规模只能通过 YAML 改变数据量、optimizer update 数、
+PPO window 和资源预算。正式单智能体 Online RL 始终只有一个 active
 lifetime session，不以环境并发分叉时间线。不得用 fixture、
 离线 rollout、critic/value head 或只训练输出 head 来替代任何正式阶段。测试可以
 使用显式标记的进程内环境实现协议契约，但该实现不得成为正式配置的回退路径。
 
 Pretrain 和 SFT 都训练 InputEncoder、Backbone、MemoryUpdater、Speech Head 与
-Unified Action Head。Online Recurrent PPO 使用冻结的 SFT reference policy、单一生命期
+Unified Action Head。Online RL 使用 Online Recurrent PPO：冻结的 SFT reference policy、单一生命期
 ObservationSignal 时间线、感知 Reward Event、time-discount GAE 和 clipped policy ratio，
 全模型接受策略梯度；训练专用 Value Head 不跨 Model Service 物理边界，也不新增独立
 memory loss。所有优化仍由
@@ -79,7 +80,7 @@ The final architecture has three runtime systems and shared packages:
   microphone PCM, screen pixels/revision, and time; it returns speech PCM and
   decoded `ControlSignal` events. It never captures devices or executes OS
   input.
-- `Training System` owns Pretrain, SFT, Online Recurrent PPO, replay, optimizer,
+- `Training System` owns Pretrain, SFT, Online RL, replay, optimizer,
   checkpoint lineage, and evaluation. It uses the same Model Core as serving.
 - `Harness System` owns microphone/screen capture, playback, isolated computer
   lifecycle, ControlSignal validation/safety, execution, receipts, and reward.
@@ -274,8 +275,9 @@ changes or rewrite generated artifacts.
 `docs/unified-action.md`。顶层架构文档不得停留在脱离代码的研究草案，且应保留
 完整结构和中文表达。
 
-三阶段训练的专项契约由 `docs/three-stage-training.md` 描述，Online Recurrent PPO、真实
-隔离环境和 reward 协议由 `docs/online-recurrent-ppo-training.md` 描述。它们是最终系统
+三阶段训练的专项契约由 `docs/three-stage-training.md` 描述，Online RL 的
+Online Recurrent PPO 算法、真实隔离环境和 reward 协议由
+`docs/online-recurrent-ppo-training.md` 描述。它们是最终系统
 架构的一部分，不写中间讨论过程、开发排期或阶段性妥协方案；顶层架构和本地平台
 文档应引用并保持语义一致。
 

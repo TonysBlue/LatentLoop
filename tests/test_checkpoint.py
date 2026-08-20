@@ -145,6 +145,43 @@ def test_checkpoint_rejects_codec_mismatch(tmp_path: Path, smoke_config: Project
         raise AssertionError("codec mismatch must be rejected")
 
 
+def test_checkpoint_rejects_rl_algorithm_mismatch(
+    tmp_path: Path, smoke_config: ProjectConfig
+) -> None:
+    model = StreamingLatentLoop(smoke_config.model)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    manager = CheckpointManager(tmp_path)
+    metadata = CheckpointMetadata(
+        "data", "codec", "hash", "test", stage="rl", algorithm="online_recurrent_ppo"
+    )
+    path, _ = manager.save(
+        "rl",
+        model=model,
+        optimizer=optimizer,
+        scheduler=None,
+        scaler=None,
+        recurrent_state=None,
+        train_state={"update": 0},
+        data_cursor=DataCursor(),
+        metadata=metadata,
+        config=smoke_config.as_dict(),
+    )
+
+    with pytest.raises(ValueError, match="algorithm"):
+        manager.load(
+            path,
+            model=model,
+            optimizer=optimizer,
+            scheduler=None,
+            scaler=None,
+            device=torch.device("cpu"),
+            config=smoke_config.as_dict(),
+            expected_metadata=CheckpointMetadata(
+                "data", "codec", "hash", "test", stage="rl", algorithm="other"
+            ),
+        )
+
+
 def test_checkpoint_rejects_incomplete_current_payload(
     tmp_path: Path, smoke_config: ProjectConfig
 ) -> None:
@@ -171,6 +208,42 @@ def test_checkpoint_rejects_incomplete_current_payload(
     with pytest.raises(ValueError, match="checkpoint is incomplete"):
         manager.load(
             incomplete_path,
+            model=model,
+            optimizer=optimizer,
+            scheduler=None,
+            scaler=None,
+            device=torch.device("cpu"),
+            config=smoke_config.as_dict(),
+            expected_metadata=CheckpointMetadata("data", "codec", "hash", "test"),
+        )
+
+
+def test_checkpoint_rejects_removed_objective_metadata(
+    tmp_path: Path, smoke_config: ProjectConfig
+) -> None:
+    model = StreamingLatentLoop(smoke_config.model)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    manager = CheckpointManager(tmp_path)
+    path, _ = manager.save(
+        "obsolete-objective",
+        model=model,
+        optimizer=optimizer,
+        scheduler=None,
+        scaler=None,
+        recurrent_state=None,
+        train_state={"update": 0},
+        data_cursor=DataCursor(),
+        metadata=CheckpointMetadata("data", "codec", "hash", "test"),
+        config=smoke_config.as_dict(),
+    )
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    payload["metadata"]["objective"] = "supervised"
+    obsolete = tmp_path / "obsolete.pt"
+    torch.save(payload, obsolete)
+
+    with pytest.raises(ValueError, match="objective is removed"):
+        manager.load(
+            obsolete,
             model=model,
             optimizer=optimizer,
             scheduler=None,

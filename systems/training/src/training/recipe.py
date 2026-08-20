@@ -108,7 +108,13 @@ def _checkpoint_matches(path: Path, config: ProjectConfig) -> bool:
             and payload.get("metadata", {}).get("codec_weight_hash")
             == config.data.codec_weight_hash
             and payload.get("metadata", {}).get("stage") == config.training.stage
-            and payload.get("metadata", {}).get("objective") == config.training.objective
+            and payload.get("metadata", {}).get("algorithm")
+            == (
+                config.training.rl.algorithm
+                if config.training.stage == "rl"
+                else None
+            )
+            and "objective" not in payload.get("metadata", {})
         )
     except (OSError, RuntimeError, ValueError, KeyError, TypeError, pickle.UnpicklingError):
         return False
@@ -138,7 +144,7 @@ def _checkpoint_metadata(path: Path) -> dict[str, Any]:
     }
 
 
-def _require_parent_stage(path: Path, *, stage: str, objective: str) -> None:
+def _require_parent_stage(path: Path, *, stage: str) -> None:
     import torch
 
     try:
@@ -150,10 +156,14 @@ def _require_parent_stage(path: Path, *, stage: str, objective: str) -> None:
     ):
         raise ValueError("formal stage parent checkpoint is incomplete")
     metadata = payload.get("metadata", {})
-    if metadata.get("stage") != stage or metadata.get("objective") != objective:
+    if (
+        metadata.get("stage") != stage
+        or metadata.get("algorithm") is not None
+        or "objective" in metadata
+    ):
         raise ValueError(
-            f"formal stage requires parent {stage}/{objective} checkpoint, got "
-            f"{metadata.get('stage')}/{metadata.get('objective')}"
+            f"formal stage requires a current supervised {stage} checkpoint, got "
+            f"stage={metadata.get('stage')}, algorithm={metadata.get('algorithm')}"
         )
 
 
@@ -213,18 +223,15 @@ def run_recipe(
                 f"stage {stage.name} dataset {config.data.dataset!r} differs from "
                 f"recipe {recipe.dataset!r}"
             )
-        expected_stage, expected_objective = (
-            (stage.name, "ppo" if stage.name == "rl" else "supervised")
+        expected_stage = (
+            stage.name
             if recipe.dataset in {"canary", "pilot", "production"}
-            else (config.training.stage, config.training.objective)
+            else config.training.stage
         )
-        if (
-            config.training.stage != expected_stage
-            or config.training.objective != expected_objective
-        ):
+        if config.training.stage != expected_stage:
             raise ValueError(
-                f"stage {stage.name} must use {expected_stage}/{expected_objective}, got "
-                f"{config.training.stage}/{config.training.objective}"
+                f"stage {stage.name} must use training.stage={expected_stage}, got "
+                f"{config.training.stage}"
             )
         config.runtime.run_name = f"{recipe.name}-{stage.name}"
         config.runtime.recipe_name = recipe.name
@@ -273,10 +280,7 @@ def run_recipe(
         init_from = None if resume else (str(parent) if parent else None)
         if recipe.dataset in {"canary", "pilot", "production"} and init_from:
             required_parent = "pretrain" if stage.name == "sft" else "sft"
-            required_objective = "supervised"
-            _require_parent_stage(
-                Path(init_from), stage=required_parent, objective=required_objective
-            )
+            _require_parent_stage(Path(init_from), stage=required_parent)
         result = train(config, resume=resume, init_from=init_from)
         final_checkpoint = _checkpoint_path(config, result["train_state"]["update"])
         stage_report: dict[str, Any] = {
