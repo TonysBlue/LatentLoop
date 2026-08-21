@@ -147,13 +147,15 @@ class StreamUnit:
 
 ### 5.3 编码和状态顺序
 
-```text
-E_t       = InputEncoder(U_t)
-Z_t       = WorldStateUpdate(Z_(t-1), H_(t-1))
-H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
-Speech_t  = SpeechHead(H_t, speech_local_(t-1))
-Action_t  = ActionHead(H_t, action_local_(t-1))
-```
+$$
+\begin{aligned}
+E_t &= \mathrm{InputEncoder}(U_t), \\
+Z_t &= \mathrm{WorldStateUpdate}(Z_{t-1}, H_{t-1}), \\
+(H_t, KV_t) &= \mathrm{Backbone}(E_t, KV_{t-1}, Z_t), \\
+\mathrm{Speech}_t &= \mathrm{SpeechHead}(H_t, \mathrm{speech\_local}_{t-1}), \\
+\mathrm{Action}_t &= \mathrm{ActionHead}(H_t, \mathrm{action\_local}_{t-1}).
+\end{aligned}
+$$
 
 `H_t` 保存完整 `[B,tokens_per_unit,model_dim]`，不能只保存 state query。
 
@@ -341,11 +343,18 @@ optimizer、学习率、梯度累积、FP16、梯度裁剪和 checkpoint cadence
 
 ### 10.3 Loss 契约
 
-```text
-L_speech = L_speech_mode + L_speech_codec
-L_action = masked_structured_action_nll(action_output, action_frame)
-L_total  = speech_weight * L_speech + action_weight * L_action
-```
+$$
+\begin{aligned}
+\mathcal{L}_{\mathrm{speech}}
+&= \mathcal{L}_{\mathrm{speech\_mode}} + \mathcal{L}_{\mathrm{speech\_codec}}, \\
+\mathcal{L}_{\mathrm{action}}
+&= \mathrm{masked\_structured\_action\_nll}
+   \left(\mathrm{action\_output}, \mathrm{action\_frame}\right), \\
+\mathcal{L}_{\mathrm{total}}
+&= w_{\mathrm{speech}}\mathcal{L}_{\mathrm{speech}}
+ + w_{\mathrm{action}}\mathcal{L}_{\mathrm{action}}.
+\end{aligned}
+$$
 
 SILENCE unit 的 codec loss 被 mask。Action 参数按 kind 激活，连续参数 NLL 与 rollout
 log-prob 使用同一 bounded 参数化。没有 memory probe、future auxiliary、write-budget、
@@ -364,12 +373,12 @@ diversity、control 或 confidence loss。
 
 ### 10.5 长时监督
 
-```text
-future Speech/Action loss
- -> future H
- -> future Z
- -> earlier WorldStateUpdate
-```
+$$
+\mathcal{L}_{\mathrm{Speech/Action}}^{\mathrm{future}}
+\longrightarrow H_{\mathrm{future}}
+\longrightarrow Z_{\mathrm{future}}
+\longrightarrow \mathrm{WorldStateUpdate}_{\mathrm{earlier}}
+$$
 
 TBPTT 不能短于要验证的 memory horizon；生产使用 750 units。
 

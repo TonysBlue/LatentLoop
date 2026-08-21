@@ -56,13 +56,15 @@ readiness，不隶属于 Training System。
 
 每个时间单元严格执行：
 
-~~~
-E_t       = InputEncoder(U_t)
-Z_t       = WorldStateUpdate(Z_(t-1), H_(t-1))
-H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
-speech_t  = SpeechHead(H_t, speech_local_(t-1))
-action_t  = ActionHead(H_t, action_local_(t-1))
-~~~
+$$
+\begin{aligned}
+E_t &= \mathrm{InputEncoder}(U_t), \\
+Z_t &= \mathrm{WorldStateUpdate}(Z_{t-1}, H_{t-1}), \\
+(H_t, KV_t) &= \mathrm{Backbone}(E_t, KV_{t-1}, Z_t), \\
+\mathrm{speech}_t &= \mathrm{SpeechHead}(H_t, \mathrm{speech\_local}_{t-1}), \\
+\mathrm{action}_t &= \mathrm{ActionHead}(H_t, \mathrm{action\_local}_{t-1}).
+\end{aligned}
+$$
 
 H_t 是主干经过 final normalization 后的完整 hidden 序列，必须暂存到下一单元；不存在额外的 r_t、q_t 或其它摘要状态。环境执行结果只通过下一 unit 的真实混合音频和屏幕输入返回模型。
 
@@ -436,10 +438,14 @@ Harness 在执行前校验：
 
 语音和 action 可以在同一 unit 并行产生，但两者保持独立输出空间：
 
-~~~
-H_t -> Speech Head -> SILENCE/SPEECH + codec
-H_t -> Action Head -> one Structured ActionFrame
-~~~
+$$
+\begin{aligned}
+H_t &\longrightarrow \mathrm{SpeechHead}
+    \longrightarrow \mathrm{SILENCE/SPEECH} + \mathrm{codec}, \\
+H_t &\longrightarrow \mathrm{ActionHead}
+    \longrightarrow \mathrm{StructuredActionFrame}.
+\end{aligned}
+$$
 
 不存在独立 Speech Control、Action Control 或 Cognitive Control head。静音由 Speech Head
 的 SILENCE mode 表达，等待由 Action Head 的 NO_ACTION 表达；session reset 和紧急停止是
@@ -450,40 +456,41 @@ Harness control-plane 操作，不是模型 action kind。
 ### 11.1 感知
 
 $$
-E_t=InputEncoder(U_t)
+E_t=\mathrm{InputEncoder}(U_t)
 $$
 
 ### 11.2 记忆
 
 $$
-Z_t=WorldStateUpdate(Z_{t-1},H_{t-1})
+Z_t=\mathrm{WorldStateUpdate}(Z_{t-1},H_{t-1})
 $$
 
 ### 11.3 主干
 
 $$
-H_t,KV_t=Backbone(E_t,KV_{t-1},Z_t)
+(H_t,KV_t)=\mathrm{Backbone}(E_t,KV_{t-1},Z_t)
 $$
 
 ### 11.4 输出
 
 $$
-speech_t=SpeechHead(H_t,speech\_local_{t-1})
+\mathrm{speech}_t=\mathrm{SpeechHead}(H_t,\mathrm{speech\_local}_{t-1})
 $$
 
 $$
-action_t=ActionHead(H_t,action\_local_{t-1})
+\mathrm{action}_t=\mathrm{ActionHead}(H_t,\mathrm{action\_local}_{t-1})
 $$
 
 ### 11.5 状态保存
 
 $$
-state_{t+1}=(Z_t,H_t,KV_t,audio\_cache_t,speech\_local_t,action\_local_t)
+\mathrm{state}_{t+1}=
+(Z_t,H_t,KV_t,\mathrm{audio\_cache}_t,\mathrm{speech\_local}_t,\mathrm{action\_local}_t)
 $$
 
 ### 11.6 环境演化
 
-语音播放和 action 执行改变真实环境；其后续麦克风、屏幕和时间输入构成 U_(t+1)。模型不读取隐藏的执行成功标签。
+语音播放和 action 执行改变真实环境；其后续麦克风、屏幕和时间输入构成 $U_{t+1}$。模型不读取隐藏的执行成功标签。
 
 ## 12. 上下文管理
 
@@ -491,9 +498,11 @@ $$
 
 KV 按模态保留最近配置窗口：
 
-~~~
-KV_t = ordered_merge(TEMPORAL[t-749:t], VISUAL[t-99:t])
-~~~
+$$
+KV_t = \mathrm{ordered\_merge}\!\left(
+\mathrm{TEMPORAL}[t-749:t],\ \mathrm{VISUAL}[t-99:t]
+\right)
+$$
 
 生产非视觉上下文为 750 units（60 秒），视觉上下文为 100 units（8 秒）。两类 token
 独立淘汰，保留后的 token 仍按原始时间顺序参与 causal attention。
@@ -587,7 +596,8 @@ control-plane 审计，不进入模型输入。旧 flat `action_tokens/action_to
 ### 15.1 Speech loss
 
 $$
-L_{speech}=L_{speech\_mode}+L_{speech\_codec}
+\mathcal{L}_{\mathrm{speech}}
+=\mathcal{L}_{\mathrm{speech\_mode}}+\mathcal{L}_{\mathrm{speech\_codec}}
 $$
 
 mode loss 对有效 SILENCE/SPEECH 标签计算 CE；codec loss 只对 SPEECH unit 的有效 Mimi frame/codebook 计算 CE。
@@ -595,7 +605,10 @@ mode loss 对有效 SILENCE/SPEECH 标签计算 CE；codec loss 只对 SPEECH un
 ### 15.2 Action loss
 
 $$
-L_{action}=-E[\log p(ActionFrame_t\mid H_t,action\_local_{t-1})]
+\mathcal{L}_{\mathrm{action}}
+=-\mathbb{E}\!\left[
+\log p\!\left(\mathrm{ActionFrame}_t\mid H_t,\mathrm{action\_local}_{t-1}\right)
+\right]
 $$
 
 frame joint log-prob 由 kind categorical 与对应的 coordinate/button/scroll/text/key 参数项
@@ -610,16 +623,21 @@ Speech 和 Action 共享 Backbone 梯度，但使用独立 loss 和独立输出 
 
 没有独立 memory loss、future embedding loss、probe loss、write-budget 或 diversity loss。未来 Speech/Action loss 通过：
 
-~~~
-future loss -> future H -> future Z -> earlier WorldStateUpdate
-~~~
+$$
+\mathcal{L}_{\mathrm{future}}
+\longrightarrow H_{\mathrm{future}}
+\longrightarrow Z_{\mathrm{future}}
+\longrightarrow \mathrm{WorldStateUpdate}_{\mathrm{earlier}}
+$$
 
 监督 Z_t 的长期信息选择。
 
 ### 15.5 总损失
 
 $$
-L_{total}=w_{speech}L_{speech}+w_{action}L_{action}
+\mathcal{L}_{\mathrm{total}}
+=w_{\mathrm{speech}}\mathcal{L}_{\mathrm{speech}}
++w_{\mathrm{action}}\mathcal{L}_{\mathrm{action}}
 $$
 
 这是当前最终目标架构的唯一训练目标。各模块影响关系为：
@@ -693,7 +711,7 @@ MiniCPM 或同类多模态主干可以提供视觉编码、音频编码、多模
 
 1. 固定 80 ms unit；
 2. 完整 H_t 暂存；
-3. Z_t = WorldStateUpdate(Z_(t-1), H_(t-1))；
+3. $Z_t=\mathrm{WorldStateUpdate}(Z_{t-1},H_{t-1})$；
 4. 独立 Speech Head；
 5. Unified Action Head；
 6. 单路混合麦克风输入；

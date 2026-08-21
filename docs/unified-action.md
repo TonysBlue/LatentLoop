@@ -12,13 +12,15 @@ Unified Action Head 是模型唯一的电脑操控输出头。统一的是 Actio
 每个 unit 都产生一个完整的 `ActionFrame`，Model Service 在该 unit 内把 frame 解码成
 零个或多个有序 `ControlSignal`，Harness 校验后立即执行。
 
-```text
-E_t       = InputEncoder(U_t)
-Z_t       = WorldStateUpdate(Z_(t-1), H_(t-1))
-H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
-frame_t   = ActionHead(H_t, action_local_(t-1))
-controls  = decode(frame_t)
-```
+$$
+\begin{aligned}
+E_t &= \mathrm{InputEncoder}(U_t), \\
+Z_t &= \mathrm{WorldStateUpdate}(Z_{t-1}, H_{t-1}), \\
+(H_t, KV_t) &= \mathrm{Backbone}(E_t, KV_{t-1}, Z_t), \\
+\mathrm{frame}_t &= \mathrm{ActionHead}(H_t, \mathrm{action\_local}_{t-1}), \\
+\mathrm{controls}_t &= \mathrm{decode}(\mathrm{frame}_t).
+\end{aligned}
+$$
 
 Action Head 不调用操作系统。Model Service 和 Harness 之间只传递物理
 `ControlSignal`，不传递模型 logits、训练 target 或 action 参数 token。
@@ -87,15 +89,19 @@ ActionFrame {
 
 绝对坐标使用 32x32 joint coarse grid categorical 和 cell 内 bounded residual：
 
-```text
-cell_x = floor(clamp(x, 0, 1) * 32)
-cell_y = floor(clamp(y, 0, 1) * 32)
-cell   = cell_y * 32 + cell_x
-residual = (x * 32 - cell_x, y * 32 - cell_y) in [0, 1]
-
-x_hat = (cell_x + residual_x) / 32
-y_hat = (cell_y + residual_y) / 32
-```
+$$
+\begin{aligned}
+\bar{x} &= \mathrm{clamp}(x, 0, 1),
+& \bar{y} &= \mathrm{clamp}(y, 0, 1), \\
+c_x &= \min\!\left(31, \left\lfloor 32\bar{x} \right\rfloor\right),
+& c_y &= \min\!\left(31, \left\lfloor 32\bar{y} \right\rfloor\right), \\
+c &= 32c_y + c_x, \\
+\mathbf{r} &= \left(32\bar{x} - c_x,\ 32\bar{y} - c_y\right)
+\in [0,1]^2, \\
+\hat{x} &= \frac{c_x + r_x}{32},
+& \hat{y} &= \frac{c_y + r_y}{32}.
+\end{aligned}
+$$
 
 边界值 1.0 映射到最后一个 cell 且 residual 为 1.0。分类项表达全局多峰位置，
 bounded residual 提供 cell 内精度。动态画面中的运动与动作时延由连续视觉流训练学习，
@@ -107,7 +113,7 @@ button 是 `{LEFT, MIDDLE, RIGHT}` 分类变量，phase 是 `{CLICK, DOWN, UP}` 
 `DOWN/UP` 更新 action local 的 held-button 状态，Harness 仍需在 session reset 和紧急停止
 时释放残留按键。
 
-scroll 是二维连续量 `(dx, dy) in [-1, 1]^2`。Harness 通过版本化适配器把归一化量
+scroll 是二维连续量 $(d_x,d_y)\in[-1,1]^2$。Harness 通过版本化适配器把归一化量
 转换成物理滚轮 tick 或触控板距离。
 
 ### 3.3 TYPE
@@ -135,12 +141,19 @@ HOTKEY 使用版本化 32-key table，每 frame 最多 8 keys 且至少一个。
 
 Action Head 读取当前 `H_t` 和 action-local state，先预测 kind，再只激活对应参数分支：
 
-```text
-action_query_t = f(H_t[STATE_QUERY], previous_frame_embedding)
-visual_context_t = Attention(action_query_t, H_t[VISION_0:VISION_15])
-context_t = action_query_t + visual_context_t
-kind_t    ~ Categorical(kind_logits(context_t))
+$$
+\begin{aligned}
+q_t^{\mathrm{action}}
+&= f\!\left(H_t[\mathrm{STATE\_QUERY}], e_{t-1}^{\mathrm{frame}}\right), \\
+c_t^{\mathrm{visual}}
+&= \mathrm{Attention}\!\left(q_t^{\mathrm{action}},
+H_t[\mathrm{VISION}_0:\mathrm{VISION}_{15}]\right), \\
+c_t &= q_t^{\mathrm{action}} + c_t^{\mathrm{visual}}, \\
+k_t &\sim \mathrm{Categorical}\!\left(\mathrm{kind\_logits}(c_t)\right).
+\end{aligned}
+$$
 
+```text
 POINTER_MOVE   -> joint cell categorical + bounded residual distribution
 POINTER_BUTTON -> button categorical + phase categorical
 SCROLL         -> bounded continuous distribution
@@ -220,26 +233,34 @@ action_hotkey_length        [B]
 
 一个 frame 的条件化联合 log-prob 为：
 
-```text
-log p(frame|state) = log p(kind|state)
-                   + 1[kind=POINTER_MOVE]   * (log p(cell) + log p(residual|cell))
-                   + 1[kind=POINTER_BUTTON] * (log p(button) + log p(phase))
-                   + 1[kind=SCROLL]         * log p(scroll)
-                   + 1[kind=TYPE]           * (log p(length) + sum_i log p(byte_i))
-                   + 1[kind=HOTKEY]         * (log p(length) + sum_i log p(key_i))
-```
+$$
+\begin{aligned}
+\log p(\mathrm{frame}\mid\mathrm{state})
+={}& \log p(\mathrm{kind}\mid\mathrm{state}) \\
+&+ \mathbf{1}_{\{\mathrm{kind}=\mathrm{POINTER\_MOVE}\}}
+  \left(\log p(\mathrm{cell}) + \log p(\mathrm{residual}\mid\mathrm{cell})\right) \\
+&+ \mathbf{1}_{\{\mathrm{kind}=\mathrm{POINTER\_BUTTON}\}}
+  \left(\log p(\mathrm{button}) + \log p(\mathrm{phase})\right) \\
+&+ \mathbf{1}_{\{\mathrm{kind}=\mathrm{SCROLL}\}}\log p(\mathrm{scroll}) \\
+&+ \mathbf{1}_{\{\mathrm{kind}=\mathrm{TYPE}\}}
+  \left(\log p(\mathrm{length}) + \sum_i \log p(\mathrm{byte}_i)\right) \\
+&+ \mathbf{1}_{\{\mathrm{kind}=\mathrm{HOTKEY}\}}
+  \left(\log p(\mathrm{length}) + \sum_i \log p(\mathrm{key}_i)\right).
+\end{aligned}
+$$
 
 监督目标是上述有效项的负 log-likelihood。连续参数使用有界分布的 NLL；实现可用
 固定尺度的 bounded regression NLL，但必须和 sampling/log-prob 使用同一参数化。
-各分支先按有效 frame 归一化，再组成唯一 `L_action`，避免 TYPE 长度自动放大其权重。
+各分支先按有效 frame 归一化，再组成唯一 $\mathcal{L}_{\mathrm{action}}$，避免 TYPE 长度自动放大其权重。
 
 Online Recurrent PPO 保存并重算同一个 frame joint log-prob。clipped ratio 与 reference KL 以
 frame 为动作概率单位，而不是把 kind、每个 byte 和坐标重复当作独立环境 step。
 
-```text
-L_total = speech_loss_weight * L_speech
-        + action_loss_weight * L_action
-```
+$$
+\mathcal{L}_{\mathrm{total}}
+= w_{\mathrm{speech}}\mathcal{L}_{\mathrm{speech}}
++ w_{\mathrm{action}}\mathcal{L}_{\mathrm{action}}
+$$
 
 Action loss 通过 Action Head、Backbone、InputEncoder 和 WorldStateUpdate 训练全模型；没有
 额外 action-control、confidence、success、memory 或 rollback loss。

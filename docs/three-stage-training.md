@@ -41,14 +41,18 @@ Pretrain/SFT episode 按 80 ms unit 保存。没有专家 action 的 unit 必须
 
 Pretrain 使用 teacher forcing 的结构化 frame negative log-likelihood：
 
-```text
-L_pretrain = speech_weight * (L_speech_mode + L_speech_codec)
-           + action_weight * L_action_frame
-```
+$$
+\mathcal{L}_{\mathrm{pretrain}}
+= w_{\mathrm{speech}}
+  \left(\mathcal{L}_{\mathrm{speech\_mode}} + \mathcal{L}_{\mathrm{speech\_codec}}\right)
++ w_{\mathrm{action}}\mathcal{L}_{\mathrm{action\_frame}}
+$$
 
 各项只在自己的有效 mask 上归一化。Speech Head、Unified Action Head、
 InputEncoder、Backbone 和 WorldStateUpdate 全部更新。WorldStateUpdate 没有独立 target；
-未来 speech/action loss 通过 `Z_t -> Backbone -> H_t -> heads` 反向监督记忆更新。
+未来 speech/action loss 通过
+$Z_t \longrightarrow \mathrm{Backbone} \longrightarrow H_t \longrightarrow \mathrm{heads}$
+反向监督记忆更新。
 
 ## 4. SFT
 

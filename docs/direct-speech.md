@@ -13,12 +13,14 @@ SILENCE 由 Model Service 输出全零 80 ms PCM，Harness 不理解 Mimi。
 
 直接语音路径将模型时钟固定为 80 ms。每个 unit 接收一路 24 kHz、1920 样本的混合麦克风输入。完整状态顺序为：
 
-~~~
-E_t       = InputEncoder(U_t)
-Z_t       = WorldStateUpdate(Z_(t-1), H_(t-1))
-H_t, KV_t = Backbone(E_t, KV_(t-1), Z_t)
-speech_t  = SpeechHead(H_t, speech_local_(t-1))
-~~~
+$$
+\begin{aligned}
+E_t &= \mathrm{InputEncoder}(U_t), \\
+Z_t &= \mathrm{WorldStateUpdate}(Z_{t-1}, H_{t-1}), \\
+(H_t, KV_t) &= \mathrm{Backbone}(E_t, KV_{t-1}, Z_t), \\
+\mathrm{speech}_t &= \mathrm{SpeechHead}(H_t, \mathrm{speech\_local}_{t-1}).
+\end{aligned}
+$$
 
 Speech Head 每个 unit 预测 SILENCE 或 SPEECH。只有 SPEECH unit 输出一个 Mimi 帧，冻结的因果 decoder 将其转换为 1920 个波形采样。运行路径不经过文本或 TTS；播放回流在下一 unit 作为混合麦克风输入重新进入模型。
 
@@ -90,20 +92,23 @@ speech_codec_mask    [B, 1]
 
 语音相关目标只有：
 
-~~~
-L_speech = L_speech_mode + L_speech_codec
-~~~
+$$
+\mathcal{L}_{\mathrm{speech}}
+= \mathcal{L}_{\mathrm{speech\_mode}}
++ \mathcal{L}_{\mathrm{speech\_codec}}
+$$
 
-`L_speech_mode` 对有效 SILENCE/SPEECH 标签计算 CE；`L_speech_codec` 只对 SPEECH unit 的有效 frame/codebook 计算 CE。没有独立 SpeechControl、prosody、boundary、memory 或 write loss。
+$\mathcal{L}_{\mathrm{speech\_mode}}$ 对有效 SILENCE/SPEECH 标签计算 CE；
+$\mathcal{L}_{\mathrm{speech\_codec}}$ 只对 SPEECH unit 的有效 frame/codebook 计算 CE。没有独立 SpeechControl、prosody、boundary、memory 或 write loss。
 
 未来 speech loss 通过：
 
-~~~
-future speech loss
-  -> future H
-  -> future Z
-  -> WorldStateUpdate
-~~~
+$$
+\mathcal{L}_{\mathrm{speech}}^{\mathrm{future}}
+\longrightarrow H_{\mathrm{future}}
+\longrightarrow Z_{\mathrm{future}}
+\longrightarrow \mathrm{WorldStateUpdate}
+$$
 
 监督长期记忆是否保留有用信息。
 
